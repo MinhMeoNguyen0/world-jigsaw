@@ -19,6 +19,5 @@ export default defineConfig({
   webServer: {
     command: `pnpm exec vite preview --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
-    reuseExistingServer: !isCI,
   },
 })
