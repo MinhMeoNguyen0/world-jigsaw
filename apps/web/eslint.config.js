@@ -7,6 +7,12 @@ import tseslint from 'typescript-eslint'
 
 const i18nMessage = 'Put user-facing text in src/i18n/locales/en.json and render it with t().'
 
+// Attributes whose values are shown or read out to the user.
+const textAttribute =
+  'JSXAttribute[name.name=/^(alt|title|placeholder|label|aria-(label|description|placeholder|roledescription|valuetext))$/]'
+// A `{...}` whose value renders as text: an element or fragment child, or a text attribute value.
+const textExpression = `:matches(JSXElement, JSXFragment, ${textAttribute}) > JSXExpressionContainer`
+
 export default defineConfig([
   globalIgnores(['dist', 'playwright-report', 'test-results']),
   {
@@ -31,12 +37,12 @@ export default defineConfig([
       // Interface text lives in translation files: no literal text in JSX.
       'no-restricted-syntax': [
         'error',
-        { selector: 'JSXText[value=/\\S/]', message: i18nMessage },
-        {
-          selector:
-            'JSXAttribute[name.name=/^(alt|title|placeholder|aria-label|aria-description)$/] > Literal',
-          message: i18nMessage,
-        },
+        ...[
+          'JSXText[value=/\\S/]',
+          `${textAttribute} > Literal[value=/\\S/]`,
+          `${textExpression} > Literal[value=/\\S/]`,
+          `${textExpression} > TemplateLiteral`,
+        ].map((selector) => ({ selector, message: i18nMessage })),
       ],
     },
   },

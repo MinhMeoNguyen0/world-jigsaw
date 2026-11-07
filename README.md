@@ -47,11 +47,20 @@ pull request and on pushes to `main`.
 | `pnpm test:e2e`     | Builds the web app, then runs the Playwright smoke test |
 | `pnpm check`        | All of the above, in CI order                           |
 
-A separate workflow (`.github/workflows/secret-scan.yml`) scans the full git history for leaked
-secrets with [Gitleaks](https://github.com/gitleaks/gitleaks) on every pull request, on pushes to
-`main`, and weekly.
+A separate workflow (`.github/workflows/secret-scan.yml`) scans for leaked secrets with
+[Gitleaks](https://github.com/gitleaks/gitleaks). Pull requests and pushes to `main` scan their new
+commits; the weekly run (or a manual run) scans the full git history.
 
 ## Interface text
 
 User-facing text lives in `apps/web/src/i18n/locales/en.json`. Components render it with `t()`
-from `apps/web/src/i18n/translate.ts`; ESLint rejects literal text in JSX.
+from `apps/web/src/i18n/translate.ts`. ESLint rejects literal text written directly in JSX:
+
+- text between tags, such as `<p>Play now</p>`;
+- a string or template literal written as a child, such as `<p>{'Play now'}</p>`;
+- a string or template literal given to a text attribute (`alt`, `title`, `placeholder`, `label`,
+  `aria-label`, `aria-description`, `aria-placeholder`, `aria-roledescription`,
+  `aria-valuetext`), such as `alt="Map"` or `aria-label={'Close'}`.
+
+Whitespace-only string literals such as `{' '}` and `alt=""` are allowed. Text assembled in other
+expressions (variables, conditionals, concatenation) is not detected, so keep it in the catalog too.
