@@ -1,0 +1,24 @@
+{
+  "name": "world-jigsaw",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=26.13.0 <27",
+    "pnpm": ">=12.18.0 <13"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @world-jigsaw/web dev",
+    "build": "pnpm --filter @world-jigsaw/web build",
+    "typecheck": "pnpm --filter @world-jigsaw/web typecheck",
+    "lint": "pnpm --filter @world-jigsaw/web lint",
+    "test": "pnpm --filter @world-jigsaw/web test",
+    "test:e2e": "pnpm build && pnpm --filter @world-jigsaw/web test:e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm test:e2e"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  }
+}
