@@ -4,7 +4,8 @@ const port = '4173'
 const isCI = Boolean(process.env.CI)
 
 // Smoke tests run against the production build served by `vite preview`.
-// Run `pnpm build` first (the root `pnpm test:e2e` script expects a fresh build).
+// The root `pnpm test:e2e` script builds first; run `pnpm build` before calling this package's
+// `test:e2e` directly, as CI does.
 export default defineConfig({
   testDir: './e2e',
   forbidOnly: isCI,
