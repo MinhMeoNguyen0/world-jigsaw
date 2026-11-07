@@ -16,7 +16,7 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 
 Requirements:
 
-- **Node.js 26.13.0** (the Active LTS release, pinned in `.nvmrc`). With nvm: `nvm install && nvm use`.
+- **Node.js 26.13.0** (pinned in `.nvmrc`). With nvm: `nvm install && nvm use`.
 - **pnpm 12.18.0** (pinned in `package.json` `packageManager`). Install it with
   `npm install --global pnpm@12.18.0`, or run `corepack enable` if your Node.js ships Corepack.
 
@@ -54,8 +54,9 @@ commits; the weekly run (or a manual run) scans the full git history.
 
 ## Interface text
 
-User-facing text lives in `apps/web/src/i18n/locales/en.json`. Components render it with `t()`
-from `apps/web/src/i18n/translate.ts`. ESLint rejects literal text written directly in JSX:
+Keep user-facing component text in `apps/web/src/i18n/locales/en.json` and render it with `t()`
+from `apps/web/src/i18n/translate.ts`. The initial HTML title is in `apps/web/index.html`.
+ESLint rejects literal text written directly in JSX under `apps/web/src`:
 
 - text between tags, such as `<p>Play now</p>`;
 - a string or template literal written as a child, such as `<p>{'Play now'}</p>`;
