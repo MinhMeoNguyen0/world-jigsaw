@@ -7,3 +7,6 @@ test-results/
 .claude/
 # Hand-formatted product plan; reformatting it would churn a large document
 docs/PLAN.md
+# Backend-owned files are outside the web formatting scope.
+.github/workflows/backend.yml
+docker-compose.yml

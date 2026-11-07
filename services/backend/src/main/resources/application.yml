@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: world-jigsaw-backend
+  datasource:
+    # Local defaults match docker-compose.yml at the repository root.
+    # Override with SPRING_DATASOURCE_URL, SPRING_DATASOURCE_USERNAME and SPRING_DATASOURCE_PASSWORD.
+    url: jdbc:postgresql://localhost:5432/worldjigsaw
+    username: worldjigsaw
+    password: worldjigsaw
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

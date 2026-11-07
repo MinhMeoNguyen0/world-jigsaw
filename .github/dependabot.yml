@@ -1,5 +1,4 @@
-# One entry per ecosystem and directory. Add new workspaces (for example a Gradle
-# backend) as further entries in the list below.
+# One entry per ecosystem and directory.
 version: 2
 updates:
   # pnpm workspace: the root manifest and lockfile cover apps/web.
@@ -19,3 +18,8 @@ updates:
     groups:
       github-actions:
         patterns: ['*']
+
+  - package-ecosystem: gradle
+    directory: /services/backend
+    schedule:
+      interval: weekly
