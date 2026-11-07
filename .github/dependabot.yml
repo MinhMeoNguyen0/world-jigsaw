@@ -1,5 +1,24 @@
+# One entry per ecosystem and directory.
 version: 2
 updates:
+  # pnpm workspace: the root manifest and lockfile cover apps/web.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      web-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ['*']
+
   - package-ecosystem: gradle
     directory: /services/backend
     schedule:

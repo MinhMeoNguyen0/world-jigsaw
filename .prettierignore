@@ -1,0 +1,12 @@
+pnpm-lock.yaml
+dist/
+coverage/
+playwright-report/
+test-results/
+# Local agent settings (not committed)
+.claude/
+# Hand-formatted product plan; reformatting it would churn a large document
+docs/PLAN.md
+# Backend-owned files are outside the web formatting scope.
+.github/workflows/backend.yml
+docker-compose.yml
