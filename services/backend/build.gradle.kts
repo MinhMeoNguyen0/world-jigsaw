@@ -41,7 +41,7 @@ tasks.withType<Test> {
 
 spotless {
     java {
-        googleJavaFormat()
+        googleJavaFormat("2.0.0")
     }
     kotlinGradle {
         ktlint()

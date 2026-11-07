@@ -2,7 +2,7 @@
 
 ## Backend local setup
 
-The backend is a Java 21 Spring Boot service in `services/backend`, built with the Gradle wrapper. You need a JDK (any version Gradle can run on; the build downloads Java 21 through a toolchain if it is missing) and Docker.
+The backend is a Java 21 Spring Boot service in `services/backend`, built with the Gradle wrapper. You need JDK 21 or newer to run Gradle (the formatter, google-java-format 2.0.0, requires it) and Docker.
 
 1. Start PostgreSQL from the repository root:
 
