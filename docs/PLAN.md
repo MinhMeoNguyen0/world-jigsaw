@@ -861,7 +861,7 @@ Outbox republish and client revision-gap detection ensure eventual state converg
 
 ## 17. Java backend design and packages
 
-Use Java 21, Spring Boot, Gradle or Maven, PostgreSQL JDBC/JPA for catalogs and identity, explicit transactional SQL for hot move path, Redis client, Micrometer/OpenTelemetry.
+Use Java 21, Spring Boot, Gradle, PostgreSQL JDBC/JPA for catalogs and identity, explicit transactional SQL for hot move path, Redis client, Micrometer/OpenTelemetry.
 
 ```text
 services/backend/src/main/java/com/worldjigsaw/
