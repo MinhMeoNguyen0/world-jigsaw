@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: backend-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: backend-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
 
 jobs:
   build:
