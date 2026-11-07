@@ -1,0 +1,21 @@
+# Local development services. Credentials match the backend's defaults in
+# services/backend/src/main/resources/application.yml. Local use only.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: worldjigsaw
+      POSTGRES_USER: worldjigsaw
+      POSTGRES_PASSWORD: worldjigsaw
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worldjigsaw -d worldjigsaw"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
