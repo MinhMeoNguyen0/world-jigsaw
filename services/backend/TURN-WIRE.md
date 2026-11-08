@@ -1,7 +1,7 @@
 # Local turn wire interpretation
 
-This is the private-local service's interpretation of the existing closed v1 schema. The frontend
-has not yet agreed to or integrated it; coordinate the handoff through Firstmate. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
+This is the private-local service's interpretation of the shared schema. The `LiveGame` adapter
+uses this wire, but remains unmounted. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
 A position frame should not irreversibly join a group merely because a pointer passed a neighbor.
 
 For a normal move or adjustment, `targetId` identifies a draft group or one of its pieces and
@@ -23,8 +23,8 @@ is the server-authored draft group ID for a multi-piece group, or the piece ID f
 actions remain distinct and keep their own charges. Each accepted change can re-emit the latest
 preview for each affected action. The server allocates strictly increasing outgoing preview
 sequences within each generation; the client's submitted sequence is tracked independently for
-rejecting stale submissions and is reported on rejection. A reconnect receives every current action
-in outgoing sequence order. This separation needs frontend agreement before use.
+rejecting stale submissions and is reported on rejection and v2 acceptance. A reconnect receives
+every current action in outgoing sequence order.
 
 Undo fences and clears the old generation, rejects removal of an action with joined dependencies,
 then re-emits surviving previews under the new generation. Cancel clears only the draft and reveals
