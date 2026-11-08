@@ -24,7 +24,7 @@ export interface GeneratedBoard {
   definition: Definition
   snapshot: Snapshot
 }
-const VERSION = 'world-jigsaw-grid-1'
+const VERSION = 'world-jigsaw-grid-2'
 const digest = (s: string) => createHash('sha256').update(s).digest('hex')
 function uuid(s: string): string {
   const h = digest(s).slice(0, 32).split('')
@@ -64,12 +64,17 @@ function seam(start: Point, end: Point, key: string, depth: number): ContourSegm
   return [
     {
       kind: 'cubic',
-      control1: at(0.12, depth * 0.6),
-      control2: at(0.25, depth * 0.6),
+      control1: at(0.12, depth * 0.8),
+      control2: at(0.25, depth * 0.8),
       to: at(0.33, 0),
     },
-    { kind: 'cubic', control1: at(0.32, depth), control2: at(0.68, depth), to: at(0.67, 0) },
-    { kind: 'cubic', control1: at(0.75, depth * 0.6), control2: at(0.88, depth * 0.6), to: end },
+    {
+      kind: 'cubic',
+      control1: at(0.32, (depth * 4) / 3),
+      control2: at(0.68, (depth * 4) / 3),
+      to: at(0.67, 0),
+    },
+    { kind: 'cubic', control1: at(0.75, depth * 0.8), control2: at(0.88, depth * 0.8), to: end },
   ]
 }
 function reverse(

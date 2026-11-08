@@ -53,8 +53,8 @@ test('fixtures are byte-reproducible and conform to the board contract', () => {
   assert.equal(review.definition.pieces.length, 60)
   assert.equal(sample.definition.pieces.length, 80)
   for (const [board, expectedChecksum] of [
-    [review, 'sha256:657ad4b207a1ee2a4d8e511ea62caefd18701142a601a82d07d8da7a877acc8e'],
-    [sample, 'sha256:d0e05f0a36c48576cb38ea5a808e12d181d8a2433c8881d6e0d1419661280e45'],
+    [review, 'sha256:5db41b8d2065183955c8b2d6dc66a651bdba59935ed60bfe46fa134cbd9c61bd'],
+    [sample, 'sha256:12d1de1822a2d3d8789c190af7e86bb4c47e40cfc18dc5ba399db3fc849c301d'],
   ] as const) {
     assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
     assert.equal(board.definition.checksum, expectedChecksum)
