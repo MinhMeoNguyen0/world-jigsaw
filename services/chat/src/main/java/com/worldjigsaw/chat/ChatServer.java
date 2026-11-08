@@ -28,6 +28,10 @@ import java.util.concurrent.TimeUnit;
 
 /** Private local development relay. No message body is persisted or replayed. */
 public final class ChatServer implements AutoCloseable {
+  static {
+    System.setProperty("sun.net.httpserver.drainAmount", "0");
+  }
+
   private static final ObjectMapper JSON =
       new ObjectMapper()
           .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
