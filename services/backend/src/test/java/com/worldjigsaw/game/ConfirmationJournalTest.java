@@ -42,6 +42,7 @@ class ConfirmationJournalTest {
   @Autowired GameBoards boards;
   @Autowired ConfirmationJournal journal;
   @Autowired BoardValidator validator;
+  @Autowired DraftRules rules;
   @Autowired JdbcTemplate jdbc;
   @Autowired PlatformTransactionManager transactions;
   @Autowired Clock clock;
@@ -90,7 +91,24 @@ class ConfirmationJournalTest {
     UUID subject = UUID.randomUUID();
     UUID command = UUID.randomUUID();
     JsonNode payload = payload(puzzle, command, 1);
-    JsonNode result = journal.confirm(subject, puzzle, command, payload, move(2, 500));
+    ObjectNode firstTransform = initial.path("groups").get(0).path("transform").deepCopy();
+    ((ObjectNode) firstTransform.path("translation")).put("x", -500);
+    DraftRules.Draft draft =
+        rules.move(
+            rules.begin(fixture.path("definition"), initial, 5),
+            initial.path("groups").get(0).path("groupId").textValue(),
+            UUID.randomUUID().toString(),
+            firstTransform);
+    JsonNode result =
+        journal.confirm(
+            subject,
+            puzzle,
+            command,
+            payload,
+            (definition, latest, remaining) -> {
+              DraftRules.Confirmation confirmed = rules.confirm(draft, latest, remaining);
+              return new ConfirmationJournal.Plan(confirmed.snapshot(), confirmed.charged());
+            });
     assertThat(result.path("outcome").asText()).isEqualTo("confirmed");
     assertThat(result.path("boardVersion").intValue()).isEqualTo(8);
     assertThat(result.path("allowance").path("used").intValue()).isEqualTo(1);

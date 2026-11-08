@@ -24,9 +24,9 @@ orientations return `INVALID_ACTION` with message `UNSUPPORTED_LEGACY_ORIENTATIO
 board. That message uses an existing v1 error code because the closed v1 schema has no dedicated
 legacy code.
 
-Tests use a real isolated PostgreSQL container and stub planners to exercise the journal. They cover
+Tests use a real isolated PostgreSQL container, a trusted Java draft, and stub planners to exercise the journal. They cover
 lost replies with a newly constructed journal, conflicting retries, two concurrent subjects, a forced
 post-write database failure, pre-close admission finishing after close, waiting for the board lock
-across close, and legacy data preservation. Stub planners are not evidence of a working game rules
-integration, a process restart, WebSocket fanout, or two independent browser clients. No public
+across close, and legacy data preservation. The internal draft integration and stub planners do not establish a process restart, WebSocket
+fanout, or two independent browser clients. No public
 security or resource-exhaustion review has been performed.
