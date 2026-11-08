@@ -70,7 +70,6 @@ allowed. Browser counts are advisory; server validation is authoritative. The S3
 and Unicode 15.1 grapheme-break data are exercised in tests; the actual shared contract and game
 issuer must still be integrated before an interoperability claim.
 
-The complete UTF-8 JSON request body is limited to 64 KiB (65,536 bytes), including syntax,
-escapes and whitespace, before text normalization. Larger bodies receive 413 `MESSAGE_TOO_LARGE`
-when detected; invalid input may be rejected earlier. Clients can measure their serialized body
-with `TextEncoder`. Under worker saturation the server closes excess connections.
+The [shared chat contract](../../packages/contracts/README.md#ephemeral-chat) specifies the request
+body limit and error behavior. Clients can measure their serialized body with `TextEncoder`. Under
+worker saturation the server closes excess connections.
