@@ -608,7 +608,7 @@
           "maximum": 9007199254740991
         },
         "reason": {
-          "enum": ["canceled", "confirmed", "expired", "rollover", "restart", "rejected"]
+          "enum": ["canceled", "confirmed", "expired", "rollover", "restart", "rejected", "undone"]
         }
       },
       "required": ["schemaVersion", "type", "puzzleId", "turnId", "generation", "reason"],

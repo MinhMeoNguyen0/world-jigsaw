@@ -264,7 +264,7 @@ export interface PreviewCleared {
   puzzleId: string
   turnId: string
   generation: number
-  reason: 'canceled' | 'confirmed' | 'expired' | 'rollover' | 'restart' | 'rejected'
+  reason: 'canceled' | 'confirmed' | 'expired' | 'rollover' | 'restart' | 'rejected' | 'undone'
 }
 export interface BoardChanged {
   schemaVersion: 1

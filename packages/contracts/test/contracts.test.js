@@ -136,6 +136,28 @@ test('clear fences late frames and a later generation may start', () => {
   assert.equal(Object.keys(state.actions).length, 1)
 })
 
+test('undo clears the old preview generation and restores surviving actions', () => {
+  const [removed, surviving] = fixture.activePreviews
+  let state = applyPreview(applyPreview(null, removed), surviving)
+  const clear = {
+    schemaVersion: 1,
+    type: 'previewCleared',
+    puzzleId: removed.puzzleId,
+    turnId: removed.turnId,
+    generation: removed.generation,
+    reason: 'undone',
+  }
+  assert.equal(validate('PreviewCleared', clear).valid, true)
+  state = applyPreview(state, clear)
+  assert.equal(state.closed, true)
+  assert.deepEqual(state.actions, {})
+  state = applyPreview(state, { ...removed, sequence: surviving.sequence + 1 })
+  assert.deepEqual(state.actions, {})
+  state = applyPreview(state, { ...surviving, generation: clear.generation + 1, sequence: 0 })
+  assert.equal(state.closed, false)
+  assert.deepEqual(Object.keys(state.actions), [surviving.action.actionId])
+})
+
 test('outcomes distinguish unknown, confirmed and rejected; quota is committed', () => {
   const result = {
     schemaVersion: 1,
