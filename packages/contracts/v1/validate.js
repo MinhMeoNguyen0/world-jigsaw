@@ -18,7 +18,7 @@ function uniqueUuidArrays(value) {
   })
 }
 
-/** Shape validation only. Cross-record and game authority checks are separate. */
+/** Validate shape and selected invariants; game authority checks are separate. */
 export function validate(type, value) {
   if (!Object.hasOwn(schema.$defs, type)) throw new Error(`Unknown contract type: ${type}`)
   const check = ajv.getSchema(`${schema.$id}#/$defs/${type}`)
