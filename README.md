@@ -69,28 +69,35 @@ expressions (variables, conditionals, concatenation) is not detected, so keep it
 
 ## Backend local setup
 
-The backend is a Java 21 Spring Boot service in `services/backend`, built with the Gradle wrapper. You need JDK 21 or newer to run Gradle (the formatter, google-java-format 2.0.0, requires it) and Docker.
+The Java 21 Spring Boot backend runs independently of the web app and deployment tooling.
+You need JDK 21 or newer and a reachable PostgreSQL database. The database and its user must
+already exist, and the user needs permission to run Flyway migrations. Connection settings
+default to `jdbc:postgresql://localhost:5432/worldjigsaw`, user `worldjigsaw`, password
+`worldjigsaw` (local development only). Override them for your database with
+`SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and `SPRING_DATASOURCE_PASSWORD`.
 
-1. Start PostgreSQL from the repository root:
+For example, if Docker Compose is available, it can provide the local database from the
+repository root. Docker and Compose are optional when using another PostgreSQL instance:
 
-   ```sh
-   docker compose up -d postgres
-   ```
+```sh
+docker compose up -d postgres
+```
 
-2. Run the backend (it applies Flyway migrations on startup):
+Run the service from `services/backend`; Flyway applies migrations on startup:
 
-   ```sh
-   cd services/backend
-   ./gradlew bootRun
-   ```
+```sh
+./gradlew bootRun
+```
 
-   Check it is up: `curl http://localhost:8080/actuator/health` reports `"status":"UP"`.
+Check it with `curl http://localhost:8080/actuator/health`; a healthy service reports
+`"status":"UP"`. No frontend, gateway, dashboard, Kubernetes, or self-host platform is needed.
 
-3. Run the build: formatting check and tests. The tests start their own PostgreSQL container with Testcontainers, so Docker must be running, but the Compose database is not needed:
+Run formatting checks and tests from `services/backend`:
 
-   ```sh
-   cd services/backend
-   ./gradlew build
-   ```
+```sh
+./gradlew build
+```
 
-   Fix formatting with `./gradlew spotlessApply`.
+The integration tests start their own PostgreSQL container with Testcontainers, so Docker must
+be running for the tests; the Compose database is not needed. Fix formatting with
+`./gradlew spotlessApply`.
