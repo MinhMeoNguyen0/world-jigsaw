@@ -210,7 +210,8 @@ class DraftRules {
 
   record JoinCharge(String id, Boolean charged) {}
 
-  record JoinState(Set<String> sources, String firstAction, JsonNode transform, List<JoinCharge> charges) {}
+  record JoinState(
+      Set<String> sources, String firstAction, JsonNode transform, List<JoinCharge> charges) {}
 
   JoinState joinState(Draft draft, String movingId) {
     DraftGroup moving = group(draft, uuid(movingId));

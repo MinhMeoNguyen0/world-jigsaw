@@ -2,14 +2,14 @@
 
 This document and `packages/contracts/v1/fixtures/local-geometry-v1.json` describe a provisional
 engineering policy for private local integration. They do not assert frontend agreement, public
-security, frontend agreement, or a production deployment. The private-local service uses these rules;
+security, or a production deployment. The private-local service uses these rules;
 coordinate this fixture and its thresholds through Firstmate before changing the frontend.
 
 The Java geometry helper is deliberately internal and is not an endpoint or a complete validator.
 The caller must first verify the definition, checksum, membership, connected groups, workspace,
 revisions and actions. Any invalid geometry, unsupported orientation, topology exception or resource
 failure must reject the operation without saving or charging. For legacy arbitrary-angle boards,
-the eventual interaction API must report `UNSUPPORTED_LEGACY_ORIENTATION` without rewriting the
+the interaction API reports `UNSUPPORTED_LEGACY_ORIENTATION` without rewriting the
 board. All pieces in a candidate state must be checked together after locking the board, including
 pieces changed simultaneously and the result of snapping; a previous validation is not sufficient.
 

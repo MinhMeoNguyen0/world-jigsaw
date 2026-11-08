@@ -28,10 +28,7 @@ class GameCommandController {
   private final GameCoordinator game;
   private final ObjectMapper mapper = new ObjectMapper();
 
-  GameCommandController(
-      LocalSessions sessions,
-      GameWireValidator wire,
-      GameCoordinator game) {
+  GameCommandController(LocalSessions sessions, GameWireValidator wire, GameCoordinator game) {
     this.sessions = sessions;
     this.wire = wire;
     this.game = game;

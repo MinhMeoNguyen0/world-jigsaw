@@ -1,18 +1,18 @@
 package com.worldjigsaw.game;
 
 import jakarta.annotation.PreDestroy;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.io.IOException;
-import java.util.HashSet;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -68,7 +68,10 @@ class GameWriterGuard {
       connection = candidate;
     } catch (SQLException | RuntimeException ex) {
       candidate.close();
-      if (registered) synchronized (GameWriterGuard.class) { usedDatabases.remove(reserved); }
+      if (registered)
+        synchronized (GameWriterGuard.class) {
+          usedDatabases.remove(reserved);
+        }
       throw ex;
     }
   }
@@ -81,7 +84,8 @@ class GameWriterGuard {
       return;
     }
     try {
-      FileChannel channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+      FileChannel channel =
+          FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
       try {
         FileLock lock = channel.tryLock();
         if (lock == null) throw new IllegalStateException("Another local game writer is running");
@@ -164,6 +168,8 @@ class GameWriterGuard {
       } catch (SQLException ignored) {
       }
     }
-    synchronized (GameWriterGuard.class) { usedDatabases.remove(database); }
+    synchronized (GameWriterGuard.class) {
+      usedDatabases.remove(database);
+    }
   }
 }

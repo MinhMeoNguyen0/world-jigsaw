@@ -258,16 +258,23 @@ class GameCoordinator {
       if (LocalGeometry.hasForbiddenOverlap(
           turn.definition, combined(current.path("snapshot"), turn, candidate)))
         throw error("INVALID_ACTION", "Forbidden piece overlap");
-      List<String> targets = new ArrayList<>(
-          selected.stream()
-              .map(g -> g.group().path("groupId").textValue())
-              .filter(id -> !id.equalsIgnoreCase(moving))
-              .sorted(String.CASE_INSENSITIVE_ORDER)
-              .toList());
+      List<String> targets =
+          new ArrayList<>(
+              selected.stream()
+                  .map(g -> g.group().path("groupId").textValue())
+                  .filter(id -> !id.equalsIgnoreCase(moving))
+                  .sorted(String.CASE_INSENSITIVE_ORDER)
+                  .toList());
       List<String> order =
           targets.isEmpty()
               ? List.of()
-              : attachmentOrder(candidate, moving, targets, turn, current, new HashSet<>(),
+              : attachmentOrder(
+                  candidate,
+                  moving,
+                  targets,
+                  turn,
+                  current,
+                  new HashSet<>(),
                   LocalGeometry.snapToleranceUpperBound(turn.definition, actualPieces));
       if (order == null) throw error("INVALID_ACTION", "Cannot join selected groups");
       String currentGroup = moving;
@@ -305,17 +312,25 @@ class GameCoordinator {
   }
 
   private List<String> attachmentOrder(
-      DraftRules.Draft draft, String moving, List<String> remaining, Turn turn, JsonNode current,
-      Set<DraftRules.JoinState> visited, double maxTolerance) {
+      DraftRules.Draft draft,
+      String moving,
+      List<String> remaining,
+      Turn turn,
+      JsonNode current,
+      Set<DraftRules.JoinState> visited,
+      double maxTolerance) {
     DraftRules.JoinState state = rules.joinState(draft, moving);
     if (!visited.add(state)) return null;
     if (visited.size() > MAX_JOIN_STATES)
       throw error("INTERNAL_ERROR", "Join search limit reached; retry with fewer groups");
     if (remaining.isEmpty()) {
       try {
-        rules.confirm(draft, current.path("snapshot"), current.path("allowance").path("remaining").intValue());
-        if (LocalGeometry.hasForbiddenOverlap(turn.definition, combined(current.path("snapshot"), turn, draft)))
-          return null;
+        rules.confirm(
+            draft,
+            current.path("snapshot"),
+            current.path("allowance").path("remaining").intValue());
+        if (LocalGeometry.hasForbiddenOverlap(
+            turn.definition, combined(current.path("snapshot"), turn, draft))) return null;
         return new ArrayList<>();
       } catch (DraftRules.RuleError invalid) {
         return null;
@@ -333,7 +348,8 @@ class GameCoordinator {
       }
       List<String> rest = new ArrayList<>(remaining);
       rest.remove(target);
-      List<String> order = attachmentOrder(next, merged, rest, turn, current, visited, maxTolerance);
+      List<String> order =
+          attachmentOrder(next, merged, rest, turn, current, visited, maxTolerance);
       if (order != null) {
         order.addFirst(target);
         return order;
@@ -344,7 +360,8 @@ class GameCoordinator {
 
   private boolean remainingTransformsConnected(
       DraftRules.Draft draft, List<String> remaining, double maxTolerance) {
-    List<JsonNode> transforms = remaining.stream().map(id -> rules.groupTransform(draft, id)).toList();
+    List<JsonNode> transforms =
+        remaining.stream().map(id -> rules.groupTransform(draft, id)).toList();
     Set<Integer> reached = new HashSet<>();
     List<Integer> pending = new ArrayList<>(List.of(0));
     reached.add(0);
@@ -354,10 +371,12 @@ class GameCoordinator {
         if (reached.contains(j)) continue;
         JsonNode to = transforms.get(j);
         if (from.path("rotation").intValue() != to.path("rotation").intValue()) continue;
-        double dx = (double) from.path("translation").path("x").longValue()
-            - to.path("translation").path("x").longValue();
-        double dy = (double) from.path("translation").path("y").longValue()
-            - to.path("translation").path("y").longValue();
+        double dx =
+            (double) from.path("translation").path("x").longValue()
+                - to.path("translation").path("x").longValue();
+        double dy =
+            (double) from.path("translation").path("y").longValue()
+                - to.path("translation").path("y").longValue();
         if (Math.hypot(dx, dy) <= maxTolerance && reached.add(j)) pending.add(j);
       }
     }
@@ -580,7 +599,9 @@ class GameCoordinator {
     drainLeaseClears();
     long generation = payload.path("generation").longValue();
     Turn pending = turns.get(turnId);
-    if (pending != null && pending.subject.equals(subject) && pending.puzzle.equals(puzzle)
+    if (pending != null
+        && pending.subject.equals(subject)
+        && pending.puzzle.equals(puzzle)
         && pending.generation == generation
         && command.equals(leases.confirming(subject, turnId, generation)))
       unpinConfirm(pending, command);
@@ -830,8 +851,12 @@ class GameCoordinator {
     if (turn != null && processing == null) leases.info(subject, turnId, turn.generation);
     UUID pinned = processing;
     if (turn != null)
-      turn.pendingReceipt = new PendingReceipt(requestId, "cancel", payload.deepCopy(),
-          () -> applyCancel(turn, confirmed, pinned, acceptedAt));
+      turn.pendingReceipt =
+          new PendingReceipt(
+              requestId,
+              "cancel",
+              payload.deepCopy(),
+              () -> applyCancel(turn, confirmed, pinned, acceptedAt));
     GameIdentityLedger.Receipt saved =
         identities.record(subject, puzzle, requestId, "cancel", payload, result);
     if (turn != null) turn.pendingReceipt = null;
@@ -901,8 +926,12 @@ class GameCoordinator {
             .put("turnRevision", turn.revision + 1)
             .put("generation", generation + 1)
             .put("actionId", actionId.toString());
-    turn.pendingReceipt = new PendingReceipt(requestId, "undo", payload.deepCopy(),
-        () -> applyUndo(turn, updated, survivors, acceptedAt));
+    turn.pendingReceipt =
+        new PendingReceipt(
+            requestId,
+            "undo",
+            payload.deepCopy(),
+            () -> applyUndo(turn, updated, survivors, acceptedAt));
     GameIdentityLedger.Receipt saved =
         identities.record(subject, puzzle, requestId, "undo", payload, result);
     turn.pendingReceipt = null;
@@ -918,7 +947,10 @@ class GameCoordinator {
   }
 
   private void applyUndo(
-      Turn turn, DraftRules.Draft updated, List<PreviewGeneration.Action> survivors, Instant acceptedAt) {
+      Turn turn,
+      DraftRules.Draft updated,
+      List<PreviewGeneration.Action> survivors,
+      Instant acceptedAt) {
     TurnLeaseRegistry.Info info =
         leases.fenceUndoAt(turn.subject, turn.id, turn.generation, survivors, acceptedAt);
     turn.draft = updated;
