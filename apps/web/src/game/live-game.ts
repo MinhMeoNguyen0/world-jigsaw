@@ -35,8 +35,6 @@ export interface LiveGameDependencies {
   socket: (url: string) => Socket
   origin: string
   id: () => string
-  setInterval: typeof setInterval
-  clearInterval: typeof clearInterval
 }
 
 const defaults = (): LiveGameDependencies => ({
@@ -44,8 +42,6 @@ const defaults = (): LiveGameDependencies => ({
   socket: (url) => new WebSocket(url),
   origin: window.location.origin,
   id: () => crypto.randomUUID(),
-  setInterval: window.setInterval.bind(window),
-  clearInterval: window.clearInterval.bind(window),
 })
 
 const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
@@ -99,8 +95,6 @@ export class LiveGame {
   private listeners = new Set<(state: LiveGameState) => void>()
   private socket: Socket | null = null
   private epoch = 0
-  private heartbeat: ReturnType<typeof setInterval> | null = null
-  private heartbeatPending = false
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
   private sequence = 0
   private uncertainDraft = false
@@ -162,6 +156,7 @@ export class LiveGame {
     this.publish({ connection: 'connecting', previews: {}, previewPending: false })
     try {
       await this.request('/api/v1/session', 'Session', {})
+      if (epoch !== this.epoch) return
       const game = await this.request<CurrentGame>('/api/v1/game/current', 'CurrentGame')
       await verifyGame(game)
       if (epoch !== this.epoch) return
@@ -174,6 +169,7 @@ export class LiveGame {
         this.undoRequest = null
       this.history = { byVersion: new Map(), eventIds: new Set() }
       this.publish({ game, connection: 'resyncing' })
+      if (epoch !== this.epoch) return
       const url = new URL('/api/v1/game/stream', this.deps.origin)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       const socket = this.deps.socket(url.toString())
@@ -194,6 +190,7 @@ export class LiveGame {
       }
       socket.onclose = () => {
         if (epoch !== this.epoch) return
+        ++this.epoch
         if (this.inFlight) this.uncertainDraft = true
         this.inFlight = null
         this.stopSocket()
@@ -223,9 +220,6 @@ export class LiveGame {
   }
 
   private stopSocket() {
-    if (this.heartbeat !== null) this.deps.clearInterval(this.heartbeat)
-    this.heartbeat = null
-    this.heartbeatPending = false
     const socket = this.socket
     this.socket = null
     if (socket) {
@@ -235,7 +229,9 @@ export class LiveGame {
   }
 
   private resync(reason: string) {
+    const epoch = this.epoch
     this.publish({ issue: reason, connection: 'resyncing', previews: {} })
+    if (epoch !== this.epoch) return
     void this.connect().catch(() => {
       // connect() has already published the error.
     })
@@ -272,14 +268,9 @@ export class LiveGame {
         this.publish({
           game: { ...game, snapshot: reply.snapshot },
           previews,
-          connection: 'ready',
-          issue: this.uncertainDraft
-            ? 'Draft submission state is unknown; cancel the turn before editing.'
-            : this.state.issue,
+          connection: 'resyncing',
+          issue: 'Service must provide identity state atomically with the subscription.',
         })
-        this.heartbeat = this.deps.setInterval(() => {
-          this.sendHeartbeat()
-        }, 5000)
       } else if (type === 'preview' || type === 'previewCleared') {
         const event = checked<Preview | PreviewCleared>(
           type === 'preview' ? 'Preview' : 'PreviewCleared',
@@ -332,18 +323,20 @@ export class LiveGame {
         }
       } else if (type === 'leaseRenewed') {
         checked('LeaseRenewed', message)
-        this.heartbeatPending = false
       } else if (type === 'resyncRequired' || type === 'puzzleChanged') {
         checked(type === 'resyncRequired' ? 'ResyncRequired' : 'PuzzleChanged', message)
         this.resync('Game changed; resynchronizing.')
       } else if (type === 'error') {
         const error = checked<{ error: { code: string; message: string } }>('SocketError', message)
-        this.heartbeatPending = false
         this.publish({ issue: `${error.error.code}: ${error.error.message}` })
       } else throw new Error('Unsupported stream event')
     } catch (error) {
       this.resync(String(error))
     }
+  }
+
+  private requireEpoch(epoch: number) {
+    if (epoch !== this.epoch) throw new Error('Connection changed while request was pending')
   }
 
   private readyGame(): CurrentGame {
@@ -368,13 +361,16 @@ export class LiveGame {
       puzzleId: game.snapshot.puzzleId,
       requestId: this.deps.id(),
     }
+    const epoch = this.epoch
     let turn: Turn
     try {
       turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', this.beginRequest)
     } catch (error) {
-      if (error instanceof GameRequestError && error.definitive) this.beginRequest = null
+      if (epoch === this.epoch && error instanceof GameRequestError && error.definitive)
+        this.beginRequest = null
       throw error
     }
+    this.requireEpoch(epoch)
     if (!sameId(turn.puzzleId, game.snapshot.puzzleId)) throw new Error('Turn puzzle mismatch')
     this.beginRequest = null
     this.sequence = 0
@@ -395,7 +391,6 @@ export class LiveGame {
       this.state.unresolvedCommand ||
       this.uncertainDraft ||
       this.inFlight ||
-      this.heartbeatPending ||
       this.undoRequest ||
       this.cancelRequest
     )
@@ -416,21 +411,6 @@ export class LiveGame {
     )
     this.inFlight = { sequence, actionId: action.actionId }
     this.publish({ previewPending: true, issue: null })
-  }
-
-  private sendHeartbeat() {
-    const turn = this.state.game?.ownTurn
-    if (!turn || this.state.connection !== 'ready' || this.inFlight || this.heartbeatPending) return
-    this.heartbeatPending = true
-    this.socket?.send(
-      JSON.stringify({
-        schemaVersion: 1,
-        type: 'heartbeat',
-        puzzleId: turn.puzzleId,
-        turnId: turn.turnId,
-        generation: turn.generation,
-      }),
-    )
   }
 
   async undo(actionId: string): Promise<UndoResult> {
@@ -455,6 +435,7 @@ export class LiveGame {
     const payload = this.undoRequest
     if (!sameId(payload.actionId, actionId))
       throw new Error('Retry the pending undo first')
+    const epoch = this.epoch
     let result: UndoResult
     try {
       result = await this.request<UndoResult>(
@@ -463,10 +444,13 @@ export class LiveGame {
         payload,
       )
     } catch (error) {
-      if (error instanceof GameRequestError && error.definitive) this.undoRequest = null
-      this.publish({ issue: String(error) })
+      if (epoch === this.epoch) {
+        if (error instanceof GameRequestError && error.definitive) this.undoRequest = null
+        this.publish({ issue: String(error) })
+      }
       throw error
     }
+    this.requireEpoch(epoch)
     if (
       !sameId(result.requestId, payload.requestId) ||
       !sameId(result.turnId, payload.turnId) ||
@@ -496,6 +480,7 @@ export class LiveGame {
       }
     }
     const payload = this.cancelRequest
+    const epoch = this.epoch
     let result: CancelResult
     try {
       result = await this.request<CancelResult>(
@@ -504,12 +489,13 @@ export class LiveGame {
         payload,
       )
     } catch (error) {
-      if (error instanceof GameRequestError && error.definitive) {
+      if (epoch === this.epoch && error instanceof GameRequestError && error.definitive) {
         this.cancelRequest = null
         this.resync('Cancel rejected; refreshing turn before retry.')
       }
       throw error
     }
+    this.requireEpoch(epoch)
     if (
       !sameId(result.requestId, payload.requestId) ||
       !sameId(result.turnId, payload.turnId) ||
@@ -542,7 +528,6 @@ export class LiveGame {
         this.state.unresolvedCommand ||
         this.uncertainDraft ||
         this.inFlight ||
-        this.heartbeatPending ||
         this.undoRequest ||
         this.cancelRequest
       )
@@ -551,6 +536,7 @@ export class LiveGame {
     }
     const payload = this.state.pendingConfirm
     if (!payload) throw new Error('No confirmation payload')
+    const epoch = this.epoch
     this.confirmBusy = true
     try {
       const result = await this.request<CommandResult>(
@@ -558,9 +544,11 @@ export class LiveGame {
         'CommandResult',
         payload,
       )
-      return this.acceptResult(result, payload)
+      this.requireEpoch(epoch)
+      return this.acceptResult(result, payload, epoch)
     } catch (error) {
-      this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
+      if (epoch === this.epoch)
+        this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
       throw error
     } finally {
       this.confirmBusy = false
@@ -570,26 +558,30 @@ export class LiveGame {
   async resolveConfirm(): Promise<CommandResult> {
     const payload = this.state.pendingConfirm
     if (!payload) throw new Error('No pending confirmation')
+    const epoch = this.epoch
     const result = await this.request<CommandResult>(
       `/api/v1/game/commands/${payload.commandId}?puzzleId=${encodeURIComponent(payload.puzzleId)}`,
       'CommandResult',
     )
-    return this.acceptResult(result, payload)
+    this.requireEpoch(epoch)
+    return this.acceptResult(result, payload, epoch)
   }
 
   /** Look up a command reported by Cancel when another tab is confirming the turn. */
   async resolveCancelCommand(): Promise<CommandResult> {
     const command = this.state.unresolvedCommand
     if (!command) throw new Error('No command reported by cancel')
+    const epoch = this.epoch
     const result = await this.request<CommandResult>(
       `/api/v1/game/commands/${command.commandId}?puzzleId=${encodeURIComponent(command.puzzleId)}`,
       'CommandResult',
     )
+    this.requireEpoch(epoch)
     if (!sameId(result.commandId, command.commandId) || !sameId(result.puzzleId, command.puzzleId))
       throw new Error('Command response mismatch')
     if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
       this.publish({ unresolvedCommand: null })
-      this.resync(
+      if (epoch === this.epoch && this.state.connection !== 'disconnected') this.resync(
         result.outcome === 'rejected'
           ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
           : 'Confirmation confirmed; synchronizing the latest board.',
@@ -608,7 +600,7 @@ export class LiveGame {
     })
   }
 
-  private acceptResult(result: CommandResult, payload: Confirm): CommandResult {
+  private acceptResult(result: CommandResult, payload: Confirm, epoch: number): CommandResult {
     if (!sameId(result.commandId, payload.commandId) || !sameId(result.puzzleId, payload.puzzleId))
       throw new Error('Confirmation response mismatch')
     if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
@@ -619,7 +611,7 @@ export class LiveGame {
             ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
             : null,
       })
-      this.resync(
+      if (epoch === this.epoch && this.state.connection !== 'disconnected') this.resync(
         result.outcome === 'rejected'
           ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
           : 'Confirmation confirmed; synchronizing the latest board.',
