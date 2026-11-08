@@ -35,6 +35,7 @@ export interface LiveGameState {
 }
 
 type Socket = Pick<WebSocket, 'send' | 'close' | 'onopen' | 'onmessage' | 'onclose' | 'onerror'>
+type DraftProof = { turn: Turn; revision: number; nextSequence: number; actions: Action[] }
 export interface LiveGameDependencies {
   fetch: typeof fetch
   socket: (url: string) => Socket
@@ -111,6 +112,7 @@ export class LiveGame {
   private inFlight: { sequence: number; actionId: string; draftRevision: number } | null = null
   private draftRevision: number | null = null
   private acceptedActions: Action[] = []
+  private draftProof: DraftProof | null = null
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
   private cancelRequest: Cancel | null = null
   private undoRequest: Undo | null = null
@@ -264,6 +266,29 @@ export class LiveGame {
     })
   }
 
+  private undoProof(payload: Undo): DraftProof | null {
+    const proof = this.draftProof
+    if (
+      !proof ||
+      !sameId(proof.turn.puzzleId, payload.puzzleId) ||
+      !sameId(proof.turn.turnId, payload.turnId) ||
+      proof.turn.generation !== payload.generation ||
+      proof.turn.turnRevision !== payload.turnRevision ||
+      !proof.actions.some((action) => sameId(action.actionId, payload.actionId))
+    )
+      return null
+    return {
+      turn: {
+        ...proof.turn,
+        generation: payload.generation + 1,
+        turnRevision: payload.turnRevision + 1,
+      },
+      revision: proof.revision + 1,
+      nextSequence: 0,
+      actions: proof.actions.filter((action) => !sameId(action.actionId, payload.actionId)),
+    }
+  }
+
   private receive(raw: unknown) {
     const epoch = this.epoch
     try {
@@ -325,12 +350,34 @@ export class LiveGame {
           const next = applyPreview(previews[key] ?? null, preview)
           if (next) previews[key] = next
         }
+        const proof = this.draftProof
+        const undoneProof = this.undoRequest ? this.undoProof(this.undoRequest) : null
+        const matches = (candidate: DraftProof | null) =>
+          Boolean(
+            candidate &&
+              reply.ownTurn &&
+              sameId(candidate.turn.puzzleId, reply.ownTurn.puzzleId) &&
+              sameId(candidate.turn.turnId, reply.ownTurn.turnId) &&
+              candidate.turn.generation === reply.ownTurn.generation &&
+              candidate.turn.turnRevision === reply.ownTurn.turnRevision &&
+              candidate.revision === reply.draftRevision &&
+              candidate.nextSequence === reply.nextSequence &&
+              canonical(candidate.actions) === canonical(reply.actions),
+          )
+        this.uncertainDraft = reply.actions.length > 0 && !matches(proof) && !matches(undoneProof)
+        this.draftProof =
+          reply.ownTurn && reply.draftRevision !== null && !this.uncertainDraft
+            ? {
+                turn: reply.ownTurn,
+                revision: reply.draftRevision,
+                nextSequence: reply.nextSequence,
+                actions: structuredClone(reply.actions),
+              }
+            : null
         this.history = { byVersion: new Map(), eventIds: new Set() }
         this.sequence = reply.nextSequence
         this.draftRevision = reply.draftRevision
         this.acceptedActions = structuredClone(reply.actions)
-        // A recovered draft may include work from another tab or an unknown submit.
-        this.uncertainDraft = reply.actions.length > 0
         this.publish({
           game: {
             ...game,
@@ -372,6 +419,12 @@ export class LiveGame {
         this.inFlight = null
         this.acceptedActions = structuredClone(receipt.actions)
         this.draftRevision = receipt.draftRevision
+        this.draftProof = {
+          turn,
+          revision: receipt.draftRevision,
+          nextSequence: this.sequence,
+          actions: structuredClone(receipt.actions),
+        }
         this.publish({ previewPending: false, issue: null })
       } else if (type === 'preview' || type === 'previewCleared') {
         const event = checked<Preview | PreviewCleared>(
@@ -505,6 +558,7 @@ export class LiveGame {
     this.sequence = 0
     this.draftRevision = 0
     this.acceptedActions = []
+    this.draftProof = { turn, revision: 0, nextSequence: 0, actions: [] }
     this.uncertainDraft = false
     this.publish({ game: { ...this.readyGame(), ownTurn: turn }, issue: null })
     return turn
@@ -602,24 +656,39 @@ export class LiveGame {
         payload,
       )
     } catch (error) {
-      if (epoch === this.epoch) {
+      if (this.undoRequest === payload) {
         if (error instanceof GameRequestError && error.definitive) this.undoRequest = null
-        this.publish({ issue: String(error) })
+        if (epoch === this.epoch) this.publish({ issue: String(error) })
       }
       throw error
     }
-    this.requireEpoch(epoch)
     if (
       !sameId(result.requestId, payload.requestId) ||
       !sameId(result.turnId, payload.turnId) ||
       !sameId(result.puzzleId, payload.puzzleId) ||
-      !sameId(result.actionId, actionId)
+      !sameId(result.actionId, actionId) ||
+      result.generation !== payload.generation + 1 ||
+      result.turnRevision !== payload.turnRevision + 1
     )
       throw new Error('Undo response mismatch')
+    if (this.undoRequest !== payload) {
+      this.requireEpoch(epoch)
+      return result
+    }
+    const undoneProof = this.undoProof(payload)
+    if (undoneProof) this.draftProof = undoneProof
     this.undoRequest = null
-    this.sequence = 0
-    this.uncertainDraft = true
-    this.resync('Turn changed; refreshing turn and previews.')
+    const activeTurn = this.state.game?.ownTurn
+    if (
+      epoch === this.epoch ||
+      (this.state.connection === 'ready' &&
+        activeTurn &&
+        sameId(activeTurn.puzzleId, payload.puzzleId) &&
+        sameId(activeTurn.turnId, payload.turnId) &&
+        activeTurn.generation === payload.generation &&
+        activeTurn.turnRevision === payload.turnRevision)
+    )
+      this.resync('Turn changed; refreshing turn and previews.')
     return result
   }
 

@@ -50,15 +50,26 @@ class TestSocket {
   }
 }
 
+function socketAt(sockets: TestSocket[], index: number) {
+  const socket = sockets[index]
+  if (!socket) throw new Error('Game socket was not created')
+  return socket
+}
+
 function harness() {
   const sockets: TestSocket[] = []
   let game = structuredClone(current)
   let commandReply: Promise<Response> | null = null
+  let undoReply: Promise<Response> | null = null
   let currentUnavailable = false
   const calls: string[] = []
   const fetcher = vi.fn((input: RequestInfo | URL) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     calls.push(path)
+    if (path.endsWith('/undo')) {
+      if (!undoReply) throw new Error('Missing undo response')
+      return undoReply
+    }
     if (path.includes('/commands/') || path.endsWith('/confirm')) {
       if (!commandReply) throw new Error('Missing command response')
       return commandReply
@@ -128,6 +139,9 @@ function harness() {
     },
     setCommandReply: (value: Promise<Response>) => {
       commandReply = value
+    },
+    setUndoReply: (value: Promise<Response>) => {
+      undoReply = value
     },
   }
 }
@@ -575,4 +589,184 @@ describe('versioned subscription and preview receipts', () => {
       h.client.preview(action)
     }).toThrow('not ready')
   })
+
+  it('preserves an acknowledged draft after another player changes the board', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    const changedGroup = fixture.boardChanged.groups[0]
+    const unchangedGroup = current.snapshot.groups[1]
+    if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
+    const snapshot = {
+      ...current.snapshot,
+      boardVersion: fixture.boardChanged.boardVersion,
+      groups: [changedGroup, unchangedGroup],
+    }
+    h.setGame({ ...current, snapshot, ownTurn: turn })
+    socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...handoff([action], 1), snapshot, watermark: snapshot.boardVersion })
+    expect(h.client.getState().issue).toBeNull()
+    const response = deferred<Response>()
+    h.setCommandReply(response.promise)
+    const pending = h.client.confirm()
+    expect(h.client.getState().pendingConfirm).toMatchObject({
+      draftRevision: 1,
+      actions: [action],
+    })
+    response.resolve(
+      new Response(
+        JSON.stringify({
+          ...fixture.commandResult,
+          commandId: h.client.getState().pendingConfirm?.commandId,
+        }),
+      ),
+    )
+    await pending
+  })
+
+  it('preserves acknowledged work after a rejected preview', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.client.preview(action)
+    socket.emit({
+      schemaVersion: 1,
+      type: 'preview.rejected',
+      puzzleId,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 1,
+      actionId: action.actionId,
+      error: {
+        code: 'INVALID_ACTION',
+        message: 'Invalid move',
+        requestId: action.actionId,
+        retryable: false,
+      },
+    })
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 1))
+    h.client.preview(action)
+    expect(next.sent).toHaveLength(2)
+  })
+
+  it('preserves acknowledged work after a rejected confirmation', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.setCommandReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'INVALID_ACTION',
+              message: 'Invalid move',
+              requestId: action.actionId,
+              retryable: false,
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    )
+    await expect(h.client.confirm()).rejects.toThrow('INVALID_ACTION')
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 1))
+    h.client.preview(action)
+    expect(next.sent).toHaveLength(2)
+  })
+
+  it.each(['handoff first', 'response first'] as const)(
+    'keeps surviving actions after undo when %s',
+    async (order) => {
+      const h = harness()
+      const second = fixture.confirm.actions[1] as Confirm['actions'][number]
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      h.client.preview(second)
+      socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
+      const response = deferred<Response>()
+      h.setUndoReply(response.promise)
+      const pending = h.client.undo(action.actionId)
+      const newTurn = {
+        ...turn,
+        generation: turn.generation + 1,
+        turnRevision: turn.turnRevision + 1,
+      }
+      const result = new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          puzzleId,
+          turnId: turn.turnId,
+          requestId: '00000000-0000-4000-8000-000000000001',
+          turnRevision: newTurn.turnRevision,
+          generation: newTurn.generation,
+          actionId: action.actionId,
+        }),
+      )
+      h.setGame({ ...current, ownTurn: newTurn })
+      if (order === 'handoff first') {
+        socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        socketAt(h.sockets, 1).open()
+        socketAt(h.sockets, 1).emit({ ...handoff([second], 3), ownTurn: newTurn, nextSequence: 0 })
+        response.resolve(result)
+        await pending
+      } else {
+        response.resolve(result)
+        await pending
+        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        socketAt(h.sockets, 1).open()
+        socketAt(h.sockets, 1).emit({ ...handoff([second], 3), ownTurn: newTurn, nextSequence: 0 })
+      }
+      expect(h.client.getState().issue).toBeNull()
+      h.client.preview(second)
+      expect(socketAt(h.sockets, 1).sent).toHaveLength(2)
+    },
+  )
+
+  it.each(['revision', 'actions', 'generation', 'turn revision', 'sequence'] as const)(
+    'blocks a recovered draft when its %s conflicts with acknowledged work',
+    async (conflict) => {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit({
+        ...handoff(
+          [conflict === 'actions' ? { ...action, kind: 'sort' } : action],
+          conflict === 'revision' ? 2 : 1,
+        ),
+        ownTurn: {
+          ...turn,
+          generation: turn.generation + (conflict === 'generation' ? 1 : 0),
+          turnRevision: turn.turnRevision + (conflict === 'turn revision' ? 1 : 0),
+        },
+        nextSequence: conflict === 'sequence' ? 2 : 1,
+      })
+      expect(h.client.getState().connection).toBe('ready')
+      expect(() => h.client.preview(action)).toThrow('not ready')
+      await expect(h.client.confirm()).rejects.toThrow('not ready')
+    },
+  )
 })
