@@ -52,13 +52,12 @@ test('fixtures are byte-reproducible and conform to the board contract', () => {
   assert.equal(`${JSON.stringify(sample, null, 2)}\n`, fixture('sample-80'))
   assert.equal(review.definition.pieces.length, 60)
   assert.equal(sample.definition.pieces.length, 80)
-  for (const board of [review, sample]) {
+  for (const [board, expectedChecksum] of [
+    [review, 'sha256:657ad4b207a1ee2a4d8e511ea62caefd18701142a601a82d07d8da7a877acc8e'],
+    [sample, 'sha256:d0e05f0a36c48576cb38ea5a808e12d181d8a2433c8881d6e0d1419661280e45'],
+  ] as const) {
     assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
-    const { checksum, ...body } = board.definition
-    assert.equal(
-      checksum,
-      `sha256:${createHash('sha256').update(canonicalJson(body)).digest('hex')}`,
-    )
+    assert.equal(board.definition.checksum, expectedChecksum)
   }
   assert.notDeepEqual(generate({ ...options, seed: 'different' }), review)
   assert.equal(
@@ -114,10 +113,12 @@ test('review placements and rotated tray references lie in their intended zones'
   assert.equal(new Set(centers.map((p) => `${p.x},${p.y}`)).size, centers.length)
   assert.ok(snapshot.groups.some((g) => g.transform.rotation % 90000 !== 0))
 })
-test('canonical JSON sorts keys and escapes strings', () => {
+test('canonical JSON and SHA-256 match a worked example', () => {
+  const canonical = canonicalJson({ z: [1, true, null], a: 'a\n"' })
+  assert.equal(canonical, '{"a":"a\\n\\\"","z":[1,true,null]}')
   assert.equal(
-    canonicalJson({ z: [1, true, null], a: 'a\n"' }),
-    '{"a":"a\\n\\\"","z":[1,true,null]}',
+    createHash('sha256').update(canonical).digest('hex'),
+    'd93430ef8a41c1f6c5531640c9d1fa619b675225fa6eb1da719962f82f924b99',
   )
 })
 test('CLI produces fixture and rejects invalid inputs', () => {
@@ -142,13 +143,12 @@ test('CLI produces fixture and rejects invalid inputs', () => {
     execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8' }),
     fixture('review-60'),
   )
-  for (const bad of [
-    ['--columns', '0'],
-    ['--columns', '81'],
-    ['--columns', '1.5'],
-    ['--bad', '1'],
-    ['--seed', 'again'],
-  ]) {
+  for (const value of ['0', '81', '1.5']) {
+    const invalidArgs = [...args]
+    invalidArgs[invalidArgs.indexOf('--columns') + 1] = value
+    assert.notEqual(spawnSync(process.execPath, [cli, ...invalidArgs]).status, 0)
+  }
+  for (const bad of [['--bad', '1'], ['--seed', 'again'], ['--columns', '10']]) {
     assert.notEqual(spawnSync(process.execPath, [cli, ...args, ...bad]).status, 0)
   }
   for (const invalid of [

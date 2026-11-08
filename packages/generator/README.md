@@ -3,7 +3,7 @@
 This standalone Node 26 TypeScript generator produces a contract-v1 `{ definition, snapshot }` JSON document. The definition is immutable and its checksum is SHA-256 over RFC 8785 canonical JSON excluding `checksum`. Given the same inputs and generator version it produces identical bytes, IDs, contours and initial groups. Seed, grid, dimensions, image and definition version determine the puzzle ID; do not reuse an ID for a different definition. Publishing/importing, selecting a UTC day, and persisting a snapshot belong to the game service.
 
 ```sh
-pnpm --filter @world-jigsaw/generator generate --seed review-60 --columns 10 --rows 6 --width 1200000 --height 800000 --image fixture://original-landscape --placed-pieces 3 > board.json
+pnpm --silent --filter @world-jigsaw/generator generate --seed review-60 --columns 10 --rows 6 --width 1200000 --height 800000 --image fixture://original-landscape --placed-pieces 3 > board.json
 pnpm --filter @world-jigsaw/generator test
 ```
 
