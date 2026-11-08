@@ -51,9 +51,20 @@ class PreviewDemoServerTest {
       assertThat(writerEvents.next()).isEqualTo("active");
       assertThat(observerEvents.next()).isEqualTo("active");
 
-      sendAndExpect(writer, writerEvents, observerEvents, "preview|1|" + A + "|10", "active|1," + A + ",10");
-      sendAndExpect(writer, writerEvents, observerEvents, "preview|2|" + B + "|20", "active|1," + A + ",10|2," + B + ",20");
-      sendAndExpect(writer, writerEvents, observerEvents, "preview|3|" + A + "|30", "active|2," + B + ",20|3," + A + ",30");
+      sendAndExpect(
+          writer, writerEvents, observerEvents, "preview|1|" + A + "|10", "active|1," + A + ",10");
+      sendAndExpect(
+          writer,
+          writerEvents,
+          observerEvents,
+          "preview|2|" + B + "|20",
+          "active|1," + A + ",10|2," + B + ",20");
+      sendAndExpect(
+          writer,
+          writerEvents,
+          observerEvents,
+          "preview|3|" + A + "|30",
+          "active|2," + B + ",20|3," + A + ",30");
 
       observer.sendClose(WebSocket.NORMAL_CLOSURE, "reconnect").join();
       Receiver reconnectedEvents = new Receiver();
@@ -78,7 +89,11 @@ class PreviewDemoServerTest {
   }
 
   private static void sendAndExpect(
-      WebSocket writer, Receiver writerEvents, Receiver observerEvents, String message, String expected)
+      WebSocket writer,
+      Receiver writerEvents,
+      Receiver observerEvents,
+      String message,
+      String expected)
       throws Exception {
     writer.sendText(message, true).join();
     assertThat(writerEvents.next()).isEqualTo(expected);
