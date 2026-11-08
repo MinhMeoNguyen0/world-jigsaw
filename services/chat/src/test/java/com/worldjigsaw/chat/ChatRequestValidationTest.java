@@ -20,6 +20,11 @@ class ChatRequestValidationTest {
             "{\"unknown\": [",
             "{\"" + "z".repeat(20),
             "{\"text\":\"" + "x".repeat(1024),
+            "{\"text\":\"" + "a" + "\u0301".repeat(511) + "x".repeat(40),
+            "{\"text\":\"" + "a" + "\\u0301".repeat(511) + "\\u0061".repeat(40),
+            "{\"text\":\"" + "a" + "\u0301".repeat(511) + "🙂".repeat(40),
+            "{\"text\":\"" + "a" + "\u0301".repeat(511) + " ".repeat(39) + "中",
+            "{\"text\":\"" + "a" + "\u0301".repeat(511) + " ".repeat(40) + "\u0301",
             "{\"schemaVersion\":2"
           }) {
         try (var socket = new Socket()) {
@@ -31,7 +36,7 @@ class ChatRequestValidationTest {
                       + "X-Local-Subject: 12345678-1234-1234-1234-123456789abc\r\n"
                       + "Content-Length: 134217728\r\n\r\n"
                       + prefix)
-                  .getBytes(StandardCharsets.US_ASCII));
+                  .getBytes(StandardCharsets.UTF_8));
           out.flush();
           var reader =
               new BufferedReader(
@@ -70,6 +75,60 @@ class ChatRequestValidationTest {
               vector.path("name").asText());
         }
       }
+    }
+  }
+
+  @Test
+  void incrementalValidationMatchesUnicode151BoundaryFixtures() throws Exception {
+    var json = new com.fasterxml.jackson.databind.ObjectMapper();
+    try (var stream = getClass().getResourceAsStream("/GraphemeBreakTest-15.1.0.txt");
+        var lines = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+      String line;
+      int cases = 0;
+      while ((line = lines.readLine()) != null) {
+        String spec = line.split("#", 2)[0].trim();
+        if (spec.isEmpty()) continue;
+        var sample = new StringBuilder();
+        for (String token : spec.split("\\s+")) {
+          if (!token.equals("÷") && !token.equals("×"))
+            sample.appendCodePoint(Integer.parseInt(token, 16));
+        }
+        if (sample
+            .codePoints()
+            .anyMatch(cp ->
+                com.ibm.icu.lang.UCharacter.getType(cp) == com.ibm.icu.lang.UCharacter.CONTROL
+                    || com.ibm.icu.lang.UCharacter.hasBinaryProperty(
+                        cp, com.ibm.icu.lang.UProperty.WHITE_SPACE))) continue;
+        String text = "a".repeat(39) + sample;
+        var iterator =
+            com.ibm.icu.text.BreakIterator.getCharacterInstance(com.ibm.icu.util.ULocale.ROOT);
+        iterator.setText(text);
+        int clusters = 0;
+        for (int boundary = iterator.first();
+            (boundary = iterator.next()) != com.ibm.icu.text.BreakIterator.DONE; ) clusters++;
+        byte[] body =
+            json.writeValueAsBytes(
+                java.util.Map.of(
+                    "schemaVersion",
+                    1,
+                    "messageId",
+                    "00000000-0000-4000-8000-000000000700",
+                    "text",
+                    text));
+        if (clusters <= 40) {
+          assertEquals(
+              java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC),
+              ChatRequest.read(new java.io.ByteArrayInputStream(body), 40).text(),
+              spec);
+        } else {
+          assertThrows(
+              java.io.IOException.class,
+              () -> ChatRequest.read(new java.io.ByteArrayInputStream(body), 40),
+              spec);
+        }
+        cases++;
+      }
+      assertTrue(cases > 500);
     }
   }
 

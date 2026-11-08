@@ -79,7 +79,6 @@ record ChatRequest(String messageId, String text) {
       StringBuilder value = new StringBuilder();
       StringBuilder spaces = new StringBuilder();
       int spaceCount = 0;
-      int nextCheck = 256;
       int unit;
       while ((unit = character()) != -1) {
         int cp = unit;
@@ -99,21 +98,22 @@ record ChatRequest(String messageId, String text) {
           continue;
         }
         if (spaceCount > maxGraphemes) throw invalid();
+        boolean hasSpaces = !spaces.isEmpty();
         value.append(spaces);
         spaces.setLength(0);
         spaceCount = 0;
         value.appendCodePoint(cp);
-        if (value.length() >= nextCheck) {
+        int graphemeBreak = UCharacter.getIntPropertyValue(cp, UProperty.GRAPHEME_CLUSTER_BREAK);
+        if (hasSpaces
+            || (graphemeBreak != UCharacter.GraphemeClusterBreak.EXTEND
+                && graphemeBreak != UCharacter.GraphemeClusterBreak.ZWJ
+                && graphemeBreak != UCharacter.GraphemeClusterBreak.SPACING_MARK)) {
           BreakIterator iterator = BreakIterator.getCharacterInstance(ULocale.ROOT);
           iterator.setText(value.toString());
           int count = 0;
           for (int pos = iterator.first(); (pos = iterator.next()) != BreakIterator.DONE; ) {
             if (++count > maxGraphemes) throw invalid();
           }
-          nextCheck =
-              value.length() > Integer.MAX_VALUE / 2
-                  ? Integer.MAX_VALUE
-                  : Math.max(value.length() + 256, value.length() * 2);
         }
       }
       String normalized = ChatServer.normalize(value.toString(), maxGraphemes);
