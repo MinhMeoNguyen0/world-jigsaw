@@ -4,16 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.sql.Connection;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
@@ -48,7 +54,7 @@ class GameWriterGuardIntegrationTest {
   }
 
   @Test
-  void lossOfWriterConnectionClosesStreamsAndRejectsNewStateReads() throws Exception {
+  void lossOfWriterConnectionRecoversStateReads() throws Exception {
     JsonNode board =
         mapper.readTree(
             Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
@@ -83,6 +89,24 @@ class GameWriterGuardIntegrationTest {
             .toString();
     socket.sendText(subscribe, true).get();
     assertThat(listener.subscribed.get(10, TimeUnit.SECONDS)).isTrue();
+    String begin =
+        mapper.createObjectNode()
+            .put("schemaVersion", 1)
+            .put("puzzleId", board.path("snapshot").path("puzzleId").asText())
+            .put("requestId", UUID.randomUUID().toString())
+            .toString();
+    var started =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/v1/game/turns"))
+                .header("Origin", origin)
+                .header("Cookie", cookie)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(begin))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(started.statusCode()).isEqualTo(200);
+    String turnId = mapper.readTree(started.body()).path("turnId").asText();
+    assertThat(turnId).isNotEmpty();
     long key = 0x574a494753415645L, high = key >>> 32, low = key & 0xffffffffL;
     Integer pid =
         jdbc.queryForObject(
@@ -91,27 +115,89 @@ class GameWriterGuardIntegrationTest {
             high,
             low);
     assertThat(pid).isNotNull();
-    assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, pid)).isTrue();
-    assertThat(listener.closed.get(10, TimeUnit.SECONDS)).isTrue();
-    assertThat(writer.healthy()).isFalse();
-    Integer sessionCount = jdbc.queryForObject("SELECT count(*) FROM game_sessions", Integer.class);
-    assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> sessions.getOrCreate(null)))
-        .isInstanceOf(IllegalStateException.class);
-    assertThat(jdbc.queryForObject("SELECT count(*) FROM game_sessions", Integer.class))
-        .isEqualTo(sessionCount);
-    var current =
-        client.send(
-            HttpRequest.newBuilder(URI.create(origin + "/api/v1/game/current"))
-                .header("Cookie", cookie)
-                .GET()
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertThat(current.statusCode()).isEqualTo(500);
-    assertThat(mapper.readTree(current.body()).path("error").path("code").asText())
-        .isEqualTo("INTERNAL_ERROR");
+    try (Connection outstanding = dataSource.getConnection()) {
+      outstanding.setAutoCommit(false);
+      try (var barrier = outstanding.prepareStatement("SELECT pg_advisory_xact_lock_shared(?)")) {
+        barrier.setLong(1, 0x574a494744524149L);
+        barrier.execute();
+      }
+      synchronized (writer) {
+        assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, pid)).isTrue();
+        assertThat(writer.healthy()).isFalse();
+      }
+      long waitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      int waiting;
+      do {
+        waiting = jdbc.queryForObject(
+            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT pg_advisory_xact_lock(%'",
+            Integer.class);
+        if (waiting == 0) Thread.sleep(50);
+      } while (waiting == 0 && System.nanoTime() < waitDeadline);
+      assertThat(waiting).isPositive();
+      assertThat(CompletableFuture.supplyAsync(writer::healthy).get(2, TimeUnit.SECONDS)).isFalse();
+      outstanding.commit();
+    }
+    HttpResponse<String> current = null;
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+    do {
+      current =
+          client.send(
+              HttpRequest.newBuilder(URI.create(origin + "/api/v1/game/current"))
+                  .header("Cookie", cookie)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (current.statusCode() == 200) break;
+      Thread.sleep(100);
+    } while (System.nanoTime() < deadline);
+    assertThat(current.statusCode()).isEqualTo(200);
+    assertThat(writer.healthy()).isTrue();
+    assertThat(mapper.readTree(current.body()).path("snapshot").path("puzzleId").asText())
+        .isEqualTo(board.path("snapshot").path("puzzleId").asText());
+    assertThat(mapper.readTree(current.body()).path("ownTurn").path("turnId").asText())
+        .isEqualTo(turnId);
     assertThat(
             org.assertj.core.api.Assertions.catchThrowable(() -> new GameWriterGuard(dataSource)))
         .isInstanceOf(IllegalStateException.class);
+
+    // A writer in a different working directory can take the database lock while this one is
+    // disconnected. Even if that writer exits, the original must not resume its stale drafts.
+    Path directory = Files.createTempDirectory(Path.of("."), ".writer-recovery-").toAbsolutePath();
+    Process competing = null;
+    var reader = Executors.newSingleThreadExecutor();
+    try {
+      synchronized (writer) {
+        Integer recoveredPid = jdbc.queryForObject(
+            "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = ? AND objid::bigint = ? AND granted",
+            Integer.class, high, low);
+        assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, recoveredPid))
+            .isTrue();
+        assertThat(writer.healthy()).isFalse();
+        competing = new ProcessBuilder(
+            Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+            "-cp", System.getProperty("worldjigsaw.test.classpath"),
+            GameWriterProcess.class.getName(), postgres.getJdbcUrl(),
+            postgres.getUsername(), postgres.getPassword())
+            .directory(directory.toFile()).redirectErrorStream(true).start();
+        BufferedReader output = new BufferedReader(new InputStreamReader(competing.getInputStream()));
+        assertThat(reader.submit(() -> {
+          String line;
+          while ((line = output.readLine()) != null) if (line.equals("READY")) return line;
+          return null;
+        }).get(15, TimeUnit.SECONDS)).isEqualTo("READY");
+        competing.getOutputStream().write("EXIT\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        competing.getOutputStream().flush();
+        assertThat(competing.waitFor(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(competing.exitValue()).isZero();
+        assertThat(writer.recover()).isFalse();
+        assertThat(writer.healthy()).isFalse();
+      }
+    } finally {
+      if (competing != null && competing.isAlive()) competing.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+      reader.shutdownNow();
+      Files.deleteIfExists(directory.resolve(".world-jigsaw-writer.lock"));
+      Files.deleteIfExists(directory);
+    }
     writer.close();
     GameWriterGuard successor = new GameWriterGuard(dataSource);
     try {

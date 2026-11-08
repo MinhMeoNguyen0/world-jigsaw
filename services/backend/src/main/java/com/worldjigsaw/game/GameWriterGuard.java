@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,13 +30,18 @@ class GameWriterGuard {
   private static FileLock hostLock;
   private static Path hostPath;
   private static final Set<String> usedDatabases = new HashSet<>();
-  private final Connection connection;
+  private Connection connection;
+  private final DataSource dataSource;
+  private final UUID ownership = UUID.randomUUID();
   private final String database;
   private final AtomicBoolean valid = new AtomicBoolean(true);
   private final List<Object> operationBoundaries = new ArrayList<>();
   private boolean closing;
+  private boolean superseded;
+  private boolean recovering;
 
   GameWriterGuard(DataSource dataSource) throws SQLException {
+    this.dataSource = dataSource;
     Connection candidate = dataSource.getConnection();
     String reserved = null;
     boolean registered = false;
@@ -61,6 +67,12 @@ class GameWriterGuard {
         barrier.setLong(1, DRAIN_KEY);
         barrier.setQueryTimeout(30);
         barrier.execute();
+      }
+      try (PreparedStatement epoch = candidate.prepareStatement(
+          "INSERT INTO game_writer_ownership(singleton, owner) VALUES (true, ?) "
+              + "ON CONFLICT (singleton) DO UPDATE SET owner = EXCLUDED.owner")) {
+        epoch.setObject(1, ownership);
+        epoch.executeUpdate();
       }
       candidate.commit();
       candidate.setAutoCommit(true);
@@ -120,6 +132,11 @@ class GameWriterGuard {
     } catch (SQLException ex) {
       valid.set(false);
       try {
+        // Do not return a possibly live advisory-lock session to the connection pool.
+        connection.abort(Runnable::run);
+      } catch (SQLException ignored) {
+      }
+      try {
         connection.close();
       } catch (SQLException ignored) {
       }
@@ -133,6 +150,77 @@ class GameWriterGuard {
       return true;
     } catch (IllegalStateException ex) {
       return false;
+    }
+  }
+
+  // Called outside database transactions, while the coordinator excludes game operations.
+  boolean recover() {
+    synchronized (this) {
+      if (closing || superseded || recovering) return false;
+      if (valid.get()) return true;
+      if (hostLock == null || !hostLock.isValid() || !hostChannel.isOpen()) return false;
+      recovering = true;
+    }
+    Connection candidate = null;
+    boolean locked = false;
+    try {
+      candidate = dataSource.getConnection();
+      try (PreparedStatement lock = candidate.prepareStatement("SELECT pg_try_advisory_lock(?)")) {
+        lock.setLong(1, LOCK_KEY);
+        try (ResultSet result = lock.executeQuery()) {
+          if (!result.next() || !result.getBoolean(1)) return false;
+          locked = true;
+        }
+      }
+      candidate.setAutoCommit(false);
+      try (PreparedStatement barrier = candidate.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+        barrier.setLong(1, DRAIN_KEY);
+        barrier.setQueryTimeout(30);
+        barrier.execute();
+      }
+      try (PreparedStatement query = candidate.prepareStatement(
+          "SELECT owner FROM game_writer_ownership WHERE singleton = true");
+          ResultSet result = query.executeQuery()) {
+        if (!result.next() || !ownership.equals(result.getObject(1, UUID.class))) {
+          synchronized (this) {
+            superseded = true;
+          }
+          return false;
+        }
+      }
+      candidate.commit();
+      candidate.setAutoCommit(true);
+      synchronized (this) {
+        if (closing) return false;
+        connection = candidate;
+        candidate = null;
+        valid.set(true);
+      }
+      return true;
+    } catch (SQLException ex) {
+      return false;
+    } finally {
+      if (candidate != null) {
+        try {
+          if (locked) {
+            if (!candidate.getAutoCommit()) candidate.rollback();
+            try (PreparedStatement unlock = candidate.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+              unlock.setLong(1, LOCK_KEY);
+              unlock.execute();
+            }
+          }
+          candidate.close();
+        } catch (SQLException ignored) {
+          try {
+            candidate.abort(Runnable::run);
+          } catch (SQLException alsoIgnored) {
+          }
+        }
+      }
+      synchronized (this) {
+        recovering = false;
+        notifyAll();
+      }
     }
   }
 
@@ -155,6 +243,15 @@ class GameWriterGuard {
       return;
     }
     synchronized (this) {
+      boolean interrupted = false;
+      while (recovering) {
+        try {
+          wait();
+        } catch (InterruptedException ex) {
+          interrupted = true;
+        }
+      }
+      if (interrupted) Thread.currentThread().interrupt();
       if (valid.getAndSet(false)) {
         try (PreparedStatement statement =
             connection.prepareStatement("SELECT pg_advisory_unlock(?)")) {

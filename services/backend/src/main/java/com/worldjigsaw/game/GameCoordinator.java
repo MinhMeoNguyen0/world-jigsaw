@@ -497,7 +497,7 @@ class GameCoordinator {
   public synchronized void tick() {
     if (!writer.healthy()) {
       forceResyncAll("restart");
-      return;
+      if (!writer.recover()) return;
     }
     drainLeaseClears();
     recoverConfirmation();
