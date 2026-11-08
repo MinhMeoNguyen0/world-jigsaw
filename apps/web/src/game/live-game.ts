@@ -537,6 +537,7 @@ export class LiveGame {
     const payload = this.state.pendingConfirm
     if (!payload) throw new Error('No confirmation payload')
     const epoch = this.epoch
+    const unresolvedCommand = this.state.unresolvedCommand
     this.confirmBusy = true
     try {
       const result = await this.request<CommandResult>(
@@ -545,9 +546,9 @@ export class LiveGame {
         payload,
       )
       this.requireEpoch(epoch)
-      return this.acceptResult(result, payload, epoch)
+      return this.acceptResult(result, payload, epoch, unresolvedCommand)
     } catch (error) {
-      if (epoch === this.epoch)
+      if (epoch === this.epoch && this.state.pendingConfirm === payload && this.state.unresolvedCommand === unresolvedCommand)
         this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
       throw error
     } finally {
@@ -559,12 +560,13 @@ export class LiveGame {
     const payload = this.state.pendingConfirm
     if (!payload) throw new Error('No pending confirmation')
     const epoch = this.epoch
+    const unresolvedCommand = this.state.unresolvedCommand
     const result = await this.request<CommandResult>(
       `/api/v1/game/commands/${payload.commandId}?puzzleId=${encodeURIComponent(payload.puzzleId)}`,
       'CommandResult',
     )
     this.requireEpoch(epoch)
-    return this.acceptResult(result, payload, epoch)
+    return this.acceptResult(result, payload, epoch, unresolvedCommand)
   }
 
   /** Look up a command reported by Cancel when another tab is confirming the turn. */
@@ -572,6 +574,7 @@ export class LiveGame {
     const command = this.state.unresolvedCommand
     if (!command) throw new Error('No command reported by cancel')
     const epoch = this.epoch
+    const pendingConfirm = this.state.pendingConfirm
     const result = await this.request<CommandResult>(
       `/api/v1/game/commands/${command.commandId}?puzzleId=${encodeURIComponent(command.puzzleId)}`,
       'CommandResult',
@@ -579,9 +582,11 @@ export class LiveGame {
     this.requireEpoch(epoch)
     if (!sameId(result.commandId, command.commandId) || !sameId(result.puzzleId, command.puzzleId))
       throw new Error('Command response mismatch')
+    if (this.state.unresolvedCommand !== command || this.state.pendingConfirm !== pendingConfirm)
+      return result
     if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
       this.publish({ unresolvedCommand: null })
-      if (epoch === this.epoch && this.state.connection !== 'disconnected') this.resync(
+      if (epoch === this.epoch && this.state.unresolvedCommand === null && this.state.pendingConfirm === pendingConfirm && this.state.connection !== 'disconnected') this.resync(
         result.outcome === 'rejected'
           ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
           : 'Confirmation confirmed; synchronizing the latest board.',
@@ -600,9 +605,16 @@ export class LiveGame {
     })
   }
 
-  private acceptResult(result: CommandResult, payload: Confirm, epoch: number): CommandResult {
+  private acceptResult(
+    result: CommandResult,
+    payload: Confirm,
+    epoch: number,
+    unresolvedCommand: LiveGameState['unresolvedCommand'],
+  ): CommandResult {
     if (!sameId(result.commandId, payload.commandId) || !sameId(result.puzzleId, payload.puzzleId))
       throw new Error('Confirmation response mismatch')
+    if (this.state.pendingConfirm !== payload || this.state.unresolvedCommand !== unresolvedCommand)
+      return result
     if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
       this.publish({
         pendingConfirm: null,
@@ -611,7 +623,7 @@ export class LiveGame {
             ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
             : null,
       })
-      if (epoch === this.epoch && this.state.connection !== 'disconnected') this.resync(
+      if (epoch === this.epoch && this.state.pendingConfirm === null && this.state.unresolvedCommand === unresolvedCommand && this.state.connection !== 'disconnected') this.resync(
         result.outcome === 'rejected'
           ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
           : 'Confirmation confirmed; synchronizing the latest board.',

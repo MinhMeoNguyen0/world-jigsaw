@@ -221,6 +221,64 @@ describe('live game adapter', () => {
     expect(h.client.getState()).toEqual(state)
   })
 
+  it.each([
+    ['lookup', 'confirmed'],
+    ['lookup', 'unknown'],
+    ['confirm', 'confirmed'],
+    ['confirm', 'unknown'],
+    ['confirm', 'failure'],
+  ] as const)('preserves a newer retained command after a stale %s %s response', async (operation, outcome) => {
+    const h = harness()
+    const commandA = fixture.confirm as Confirm
+    const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
+    h.client.restorePendingConfirm(commandA)
+    const delayed = deferred<Response>()
+    h.setCommandReply(delayed.promise)
+    const stale = operation === 'confirm' ? h.client.confirm() : h.client.resolveConfirm()
+    h.setCommandReply(Promise.resolve(confirmed()))
+    await h.client.resolveConfirm()
+    h.client.restorePendingConfirm(commandB)
+    const state = h.client.getState()
+    if (outcome === 'failure') {
+      delayed.reject(new TypeError('lost response'))
+      await expect(stale).rejects.toThrow('lost response')
+    } else {
+      delayed.resolve(outcome === 'confirmed' ? confirmed() : new Response(JSON.stringify({
+        schemaVersion: 1,
+        puzzleId,
+        commandId: commandA.commandId,
+        outcome: 'unknown',
+        boardVersion: null,
+        allowance: null,
+        error: null,
+      })))
+      await stale
+    }
+    expect(h.client.getState()).toEqual(state)
+    expect(h.client.getState().pendingConfirm).toEqual(commandB)
+  })
+
+  it('preserves a command restored by a listener during confirmation resolution', async () => {
+    const h = harness()
+    const socket = await h.start()
+    h.subscribe(socket)
+    const commandA = fixture.confirm as Confirm
+    const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
+    h.client.restorePendingConfirm(commandA)
+    let restored = false
+    h.client.subscribe((state) => {
+      if (!restored && state.pendingConfirm === null) {
+        restored = true
+        h.client.restorePendingConfirm(commandB)
+      }
+    })
+    h.setCommandReply(Promise.resolve(confirmed()))
+    await h.client.resolveConfirm()
+    expect(h.client.getState().pendingConfirm).toEqual(commandB)
+    expect(h.client.getState().issue).toContain('restored')
+    expect(h.calls.filter((path) => path === '/api/v1/session')).toHaveLength(1)
+  })
+
   it('resolves a retained confirmation without reconnecting a disposed adapter', async () => {
     const h = harness()
     h.client.restorePendingConfirm(fixture.confirm as Confirm)
