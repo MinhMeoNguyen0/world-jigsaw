@@ -30,6 +30,8 @@ import java.util.concurrent.TimeUnit;
 public final class ChatServer implements AutoCloseable {
   static {
     System.setProperty("sun.net.httpserver.drainAmount", "0");
+    System.setProperty("sun.net.httpserver.maxReqTime", "5");
+    System.setProperty("sun.net.httpserver.timerMillis", "1000");
   }
 
   private static final ObjectMapper JSON =
@@ -230,6 +232,9 @@ public final class ChatServer implements AutoCloseable {
     ChatRequest request;
     try {
       request = ChatRequest.read(e.getRequestBody(), settings.maxGraphemes());
+    } catch (ChatRequest.TooLarge ex) {
+      error(e, 413, "MESSAGE_TOO_LARGE");
+      return;
     } catch (IOException ex) {
       error(e, 400, "INVALID_REQUEST");
       return;

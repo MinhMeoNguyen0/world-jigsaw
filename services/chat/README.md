@@ -16,7 +16,9 @@ Run `./gradlew build` for formatting and tests. `GET /actuator/health` reports p
 and `GET /api/v1/chat/config` reports the loaded validation version and limit. The service disables
 the JDK HTTP server's automatic request-body draining so an unfinished request cannot hold a worker
 after its response; connections with unread bodies are closed. This is a JVM-wide JDK setting and
-must be initialized before any other JDK HTTP server in the process.
+must be initialized before any other JDK HTTP server in the process. The JDK request deadline is
+5 seconds with a one-second timer; incomplete uploads are disconnected, and these settings also
+apply JVM-wide.
 
 ## Identity and private use
 
@@ -70,6 +72,7 @@ allowed. Browser counts are advisory; server validation is authoritative. The S3
 and Unicode 15.1 grapheme-break data are exercised in tests; the actual shared contract and game
 issuer must still be integrated before an interoperability claim.
 
-The parser and JVM require memory proportional to the message size, but not to JSON whitespace;
-they have finite implementation limits even though this service does not impose a separate byte
-quota. Under worker saturation the server closes excess connections.
+The complete UTF-8 JSON request body is limited to 64 KiB (65,536 bytes), including syntax,
+escapes and whitespace, before text normalization. Larger bodies receive 413 `MESSAGE_TOO_LARGE`
+when detected; invalid input may be rejected earlier. Clients can measure their serialized body
+with `TextEncoder`. Under worker saturation the server closes excess connections.

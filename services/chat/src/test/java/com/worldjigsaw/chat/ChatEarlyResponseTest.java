@@ -89,6 +89,39 @@ class ChatEarlyResponseTest {
     }
   }
 
+  @Test
+  void stalledChunkedUploadIsDisconnected() throws Exception {
+    try (var server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"))) {
+      server.start();
+      try (var socket =
+          open(
+              server,
+              new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "{", 0),
+              true)) {
+        socket.setSoTimeout(12000);
+        assertClosed(socket);
+      }
+    }
+  }
+
+  @Test
+  void oversizedChunkedUploadIsRejectedWithoutWaitingForEnd() throws Exception {
+    try (var server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"))) {
+      server.start();
+      try (var socket = connect(server)) {
+        String body =
+            "{\"schemaVersion\":1,\"messageId\":\"00000000-0000-4000-8000-000000000700\",\"text\":\"hi\"}";
+        String payload = body + " ".repeat(65537 - body.length());
+        write(
+            socket,
+            new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "", 0),
+            "Transfer-Encoding: chunked\r\n",
+            Integer.toHexString(payload.length()) + "\r\n" + payload + "\r\n");
+        assertStatus(socket, 413);
+      }
+    }
+  }
+
   private static Socket open(ChatServer server, Request request, boolean chunked) throws Exception {
     Socket socket = connect(server);
     String framing = chunked ? "Transfer-Encoding: chunked\r\n" : "Content-Length: 134217728\r\n";

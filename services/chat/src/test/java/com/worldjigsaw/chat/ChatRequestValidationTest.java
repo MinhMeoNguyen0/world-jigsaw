@@ -144,10 +144,10 @@ class ChatRequestValidationTest {
           var json = new com.fasterxml.jackson.databind.ObjectMapper();
           for (String text :
               new String[] {
-                "\u1100".repeat(100000),
-                "\u0600".repeat(100000) + "a",
-                "👩‍".repeat(30000) + "👩",
-                "क्".repeat(30000) + "क"
+                "\u1100".repeat(10000),
+                "\u0600".repeat(10000) + "a",
+                "👩‍".repeat(3000) + "👩",
+                "क्".repeat(5000) + "क"
               }) {
             byte[] body =
                 json.writeValueAsBytes(
@@ -183,9 +183,9 @@ class ChatRequestValidationTest {
                 new java.io.ByteArrayInputStream(tooLong.getBytes(StandardCharsets.UTF_8)), 40));
     String trimmed =
         "{\"text\":\""
-            + " ".repeat(100000)
+            + " ".repeat(10000)
             + "ok"
-            + " ".repeat(100000)
+            + " ".repeat(10000)
             + "\",\"schemaVersion\":1,\"messageId\":\""
             + id
             + "\"}";
