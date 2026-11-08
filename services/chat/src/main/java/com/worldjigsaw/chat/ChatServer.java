@@ -236,6 +236,19 @@ public final class ChatServer implements AutoCloseable {
     }
     String command = request.messageId();
     String text = request.text();
+    String event =
+        JSON.writeValueAsString(
+            Map.of(
+                "schemaVersion",
+                1,
+                "messageId",
+                command,
+                "displayName",
+                identity.displayName(),
+                "text",
+                text,
+                "sentAt",
+                Instant.now().toString()));
     int status;
     synchronized (this) {
       if (System.currentTimeMillis() / 1000 >= identity.expiresAt()) {
@@ -243,19 +256,6 @@ public final class ChatServer implements AutoCloseable {
       } else if (subscribers.isEmpty()) {
         status = 503;
       } else {
-        String event =
-            JSON.writeValueAsString(
-                Map.of(
-                    "schemaVersion",
-                    1,
-                    "messageId",
-                    command,
-                    "displayName",
-                    identity.displayName(),
-                    "text",
-                    text,
-                    "sentAt",
-                    Instant.now().toString()));
         boolean offered = false;
         for (var iterator = subscribers.iterator(); iterator.hasNext(); ) {
           var subscriber = iterator.next();
