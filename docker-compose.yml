@@ -17,5 +17,22 @@ services:
       timeout: 5s
       retries: 10
 
+  chat-postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: worldjigsaw_chat
+      POSTGRES_USER: worldjigsaw_chat
+      POSTGRES_PASSWORD: worldjigsaw_chat
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - chat-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worldjigsaw_chat -d worldjigsaw_chat"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres-data:
+  chat-postgres-data:

@@ -1,15 +1,19 @@
 # Local chat service
 
 This independently runnable Java 21 service relays short messages in one live room. It binds
-only to `127.0.0.1` and does not contact the game, its database, a gateway, or any infrastructure
-service. It does not currently require a database: no durable chat state or retention policy has
-been agreed. A separate chat-owned database and credentials must be provisioned for integration;
-never add message bodies or a transcript to this scaffold.
+only to `127.0.0.1` and does not contact the game, its database, or a gateway. It uses its own
+PostgreSQL database for the room's validation settings. It never stores messages or transcripts.
+
+From the repository root, run `docker compose up -d chat-postgres`, or supply a separate
+PostgreSQL database with permission to create tables. The local defaults are
+`CHAT_DATABASE_URL=jdbc:postgresql://localhost:5433/worldjigsaw_chat`,
+`CHAT_DATABASE_USER=worldjigsaw_chat`, and `CHAT_DATABASE_PASSWORD=worldjigsaw_chat`.
+Override these independently of the game database. Startup requires the chat database; chat
+loads its validation settings once at startup. The default credentials are for local use only.
 
 From `services/chat`, run `./gradlew run`. Set `CHAT_PORT` to change the default port 8081.
-Run `./gradlew build` for formatting and tests. No Docker, game process or external service is
-required. `GET /actuator/health` reports process liveness and `GET /api/v1/chat/config` reports
-the local validation version and limit.
+Run `./gradlew build` for formatting and tests. `GET /actuator/health` reports process liveness
+and `GET /api/v1/chat/config` reports the loaded validation version and limit.
 
 ## Identity and private use
 
@@ -52,20 +56,18 @@ or capacity it returns 503; a disconnected stream may take up to a heartbeat to 
 a 202 can be lost. A stream that cannot keep up is disconnected. Show unavailable on failure, and
 unknown on a lost response; never claim delivery to all peers.
 
-For 60 seconds in the same process, the same identity and message ID with the same original decoded
-text returns the original 202 without sending again; different text returns 409. IDs are scoped by
-identity, so two different identities may use the same ID; consumers must not globally deduplicate
-by message ID alone. After expiry or restart an old retry may send again. The bounded in-memory
-receipt contains a SHA-256 digest of original text (which may be guessable), identity, ID and expiry,
-but no message body; it is not durable and is cleared on restart. Rate limiting allows five accepted
-messages per identity per ten seconds, returning 429. The local adapter's identities are spoofable.
-The service bounds body size, subscribers, queues, receipt and rate state. Content is never logged or
-persisted by this service.
+Each accepted request is sent independently, including retries and reused message IDs. A lost
+response has an unknown outcome, and retrying may duplicate the message. The service bounds
+subscribers and their queues. Content is never logged or persisted by this service.
 
-Original decoded text is limited to 1,024 UTF-8 bytes; the entire JSON body is independently limited
-to 4,096 bytes. Reject Unicode `Cc` controls before trimming, even at the edges, and reject malformed
+Reject Unicode `Cc` controls before trimming, even at the edges, and reject malformed
 input. Text is NFC-normalized using pinned ICU4J 74.2 (Unicode 15.1), trimmed using Unicode
 `White_Space`, and limited to 1–40 extended grapheme clusters. Format characters needed for emoji are
-allowed. Browser counts are advisory; server validation is authoritative. The S3 draft wire fixtures
+allowed. Browser counts are advisory; server validation is authoritative. The S3 draft message fixtures
 and Unicode 15.1 grapheme-break data are exercised in tests; the actual shared contract and game
 issuer must still be integrated before an interoperability claim.
+
+The parser and JVM require memory proportional to request and message size; they have finite
+implementation limits even though this service does not impose a separate byte quota. The draft
+S3 byte limits, retry deduplication, and rate policy are not implemented and require coordination
+with the shared contract owner.

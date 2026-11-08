@@ -1,6 +1,7 @@
 package com.worldjigsaw.chat;
 
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,16 +16,15 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -34,13 +34,33 @@ public final class ChatServer implements AutoCloseable {
       new ObjectMapper()
           .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-  private static final int MAX_BODY = 4096;
-  private static final int MAX_TEXT_BYTES = 1024;
+
+  static {
+    JSON.getFactory()
+        .setStreamReadConstraints(
+            StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build());
+  }
+
   private final IdentityAdapter identityAdapter;
+  private final ChatSettings settings;
   private final HttpServer server;
-  private final Set<ArrayBlockingQueue<String>> subscribers = new HashSet<>();
-  private final Map<String, ArrayDeque<Long>> rates = new HashMap<>();
-  private final Map<String, Receipt> receipts = new HashMap<>();
+  private final Set<Subscriber> subscribers = new HashSet<>();
+  private final ScheduledExecutorService expiry = Executors.newSingleThreadScheduledExecutor();
+
+  private static final class Subscriber {
+    final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(16);
+    final Thread worker = Thread.currentThread();
+    private boolean active = true;
+
+    synchronized void terminate() {
+      if (active) worker.interrupt();
+    }
+
+    synchronized void finish() {
+      active = false;
+    }
+  }
+
   private final ThreadPoolExecutor executor =
       new ThreadPoolExecutor(
           32,
@@ -50,14 +70,9 @@ public final class ChatServer implements AutoCloseable {
           new ArrayBlockingQueue<>(64),
           new ThreadPoolExecutor.CallerRunsPolicy());
 
-  private record Receipt(byte[] digest, long expires, String id) {}
-
-  public ChatServer(int port) throws IOException {
-    this(port, IdentityAdapter.local());
-  }
-
-  ChatServer(int port, IdentityAdapter identityAdapter) throws IOException {
+  ChatServer(int port, IdentityAdapter identityAdapter, ChatSettings settings) throws IOException {
     this.identityAdapter = identityAdapter;
+    this.settings = settings;
     server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 32);
     server.setExecutor(executor);
     server.createContext("/", this::handle);
@@ -74,12 +89,17 @@ public final class ChatServer implements AutoCloseable {
   @Override
   public void close() {
     server.stop(0);
+    expiry.shutdownNow();
     executor.shutdownNow();
   }
 
   public static void main(String[] args) throws Exception {
     int port = Integer.parseInt(System.getenv().getOrDefault("CHAT_PORT", "8081"));
-    ChatServer chat = new ChatServer(port, IdentityAdapter.fromEnvironment(System.getenv()));
+    ChatServer chat =
+        new ChatServer(
+            port,
+            IdentityAdapter.fromEnvironment(System.getenv()),
+            ChatSettings.fromEnvironment(System.getenv()));
     Runtime.getRuntime().addShutdownHook(new Thread(chat::close));
     chat.start();
     System.out.println("Local chat listening on 127.0.0.1:" + chat.port());
@@ -109,7 +129,13 @@ public final class ChatServer implements AutoCloseable {
         json(
             exchange,
             200,
-            Map.of("schemaVersion", 1, "maxGraphemes", 40, "unicodeVersion", "15.1"));
+            Map.of(
+                "schemaVersion",
+                1,
+                "maxGraphemes",
+                settings.maxGraphemes(),
+                "unicodeVersion",
+                settings.unicodeVersion()));
         return;
       }
       if (!path.equals("/api/v1/chat/stream") && !path.equals("/api/v1/chat/messages")) {
@@ -156,14 +182,21 @@ public final class ChatServer implements AutoCloseable {
   }
 
   private void stream(HttpExchange e, IdentityAdapter.Identity identity) throws IOException {
-    ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(16);
+    Subscriber subscriber = new Subscriber();
     synchronized (this) {
       if (subscribers.size() >= 16) {
         error(e, 503, "CHAT_UNAVAILABLE");
         return;
       }
-      subscribers.add(queue);
+      subscribers.add(subscriber);
     }
+    ScheduledFuture<?> deadline =
+        identity.expiresAt() == Long.MAX_VALUE
+            ? null
+            : expiry.schedule(
+                subscriber::terminate,
+                Math.max(0, identity.expiresAt() * 1000 - System.currentTimeMillis()),
+                TimeUnit.MILLISECONDS);
     try {
       e.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
       e.getResponseHeaders().set("Cache-Control", "no-store");
@@ -174,8 +207,8 @@ public final class ChatServer implements AutoCloseable {
       while (!Thread.currentThread().isInterrupted()) {
         long secondsLeft = identity.expiresAt() - Instant.now().getEpochSecond();
         if (secondsLeft <= 0) break;
-        String item = queue.poll(Math.min(5, secondsLeft), TimeUnit.SECONDS);
-        if (Instant.now().getEpochSecond() >= identity.expiresAt() || "".equals(item)) break;
+        String item = subscriber.queue.poll(Math.min(5, secondsLeft), TimeUnit.SECONDS);
+        if (Instant.now().getEpochSecond() >= identity.expiresAt()) break;
         out.write(
             (item == null ? ": heartbeat\n\n" : "data: " + item + "\n\n")
                 .getBytes(StandardCharsets.UTF_8));
@@ -186,20 +219,17 @@ public final class ChatServer implements AutoCloseable {
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
     } finally {
+      subscriber.finish();
+      if (deadline != null) deadline.cancel(false);
       synchronized (this) {
-        subscribers.remove(queue);
+        subscribers.remove(subscriber);
       }
       e.close();
     }
   }
 
   private void send(HttpExchange e, IdentityAdapter.Identity identity) throws IOException {
-    String subject = identity.subject();
-    byte[] body = e.getRequestBody().readNBytes(MAX_BODY + 1);
-    if (body.length > MAX_BODY) {
-      error(e, 413, "MESSAGE_TOO_LARGE");
-      return;
-    }
+    byte[] body = e.getRequestBody().readAllBytes();
     JsonNode input;
     try {
       input =
@@ -231,64 +261,27 @@ public final class ChatServer implements AutoCloseable {
       return;
     }
     String original = input.path("text").textValue();
-    if (original.getBytes(StandardCharsets.UTF_8).length > MAX_TEXT_BYTES) {
-      error(e, 413, "MESSAGE_TOO_LARGE");
-      return;
-    }
-    String text = normalize(original);
+    String text = normalize(original, settings.maxGraphemes());
     if (text == null) {
       error(e, 400, "INVALID_REQUEST");
       return;
     }
-    byte[] digest;
-    try {
-      digest =
-          MessageDigest.getInstance("SHA-256").digest(original.getBytes(StandardCharsets.UTF_8));
-    } catch (java.security.NoSuchAlgorithmException ex) {
-      throw new IllegalStateException(ex);
-    }
     synchronized (this) {
-      long now = System.currentTimeMillis();
-      if (now / 1000 >= identity.expiresAt()) {
+      if (System.currentTimeMillis() / 1000 >= identity.expiresAt()) {
         error(e, 401, "UNAUTHENTICATED");
         return;
       }
-      receipts.values().removeIf(r -> r.expires() <= now);
-      rates
-          .values()
-          .forEach(q -> {
-            while (!q.isEmpty() && q.peekFirst() <= now - 10000) q.removeFirst();
-          });
-      rates.values().removeIf(ArrayDeque::isEmpty);
-      String key = subject + ":" + command;
-      Receipt previous = receipts.get(key);
-      if (previous != null) {
-        if (!Arrays.equals(previous.digest(), digest)) {
-          error(e, 409, "MESSAGE_CONFLICT");
-          return;
-        }
-        json(e, 202, Map.of("schemaVersion", 1, "messageId", previous.id()));
-        return;
-      }
-      if (subscribers.isEmpty()
-          || receipts.size() >= 4096
-          || (rates.size() >= 1024 && !rates.containsKey(subject))) {
+      if (subscribers.isEmpty()) {
         error(e, 503, "CHAT_UNAVAILABLE");
         return;
       }
-      ArrayDeque<Long> rate = rates.computeIfAbsent(subject, unused -> new ArrayDeque<>());
-      if (rate.size() >= 5) {
-        error(e, 429, "RATE_LIMITED");
-        return;
-      }
-      String id = command;
       String event =
           JSON.writeValueAsString(
               Map.of(
                   "schemaVersion",
                   1,
                   "messageId",
-                  id,
+                  command,
                   "displayName",
                   identity.displayName(),
                   "text",
@@ -298,25 +291,26 @@ public final class ChatServer implements AutoCloseable {
       boolean offered = false;
       for (var iterator = subscribers.iterator(); iterator.hasNext(); ) {
         var subscriber = iterator.next();
-        if (subscriber.offer(event)) {
+        if (subscriber.queue.offer(event)) {
           offered = true;
         } else {
           iterator.remove();
-          subscriber.clear();
-          subscriber.offer(""); // terminate a slow stream rather than retain a backlog
+          subscriber.terminate();
         }
       }
       if (!offered) {
         error(e, 503, "CHAT_UNAVAILABLE");
         return;
       }
-      rate.addLast(now);
-      receipts.put(key, new Receipt(digest, now + 60000, id));
-      json(e, 202, Map.of("schemaVersion", 1, "messageId", id));
+      json(e, 202, Map.of("schemaVersion", 1, "messageId", command));
     }
   }
 
   static String normalize(String input) {
+    return normalize(input, 40);
+  }
+
+  private static String normalize(String input, int maxGraphemes) {
     // Reject malformed UTF-16 and controls even when they occur at the edges.
     for (int i = 0; i < input.length(); ) {
       char c = input.charAt(i);
@@ -341,7 +335,7 @@ public final class ChatServer implements AutoCloseable {
     it.setText(value);
     int count = 0;
     for (int pos = it.first(); (pos = it.next()) != BreakIterator.DONE; )
-      if (++count > 40) return null;
+      if (++count > maxGraphemes) return null;
     return count == 0 ? null : value;
   }
 
@@ -361,7 +355,7 @@ public final class ChatServer implements AutoCloseable {
                 "requestId",
                 UUID.randomUUID().toString(),
                 "retryable",
-                status == 429 || status == 503 || status == 500)));
+                status == 503 || status == 500)));
   }
 
   private static void json(HttpExchange e, int status, Object value) throws IOException {

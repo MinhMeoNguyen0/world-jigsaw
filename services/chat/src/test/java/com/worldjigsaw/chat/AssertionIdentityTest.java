@@ -81,7 +81,9 @@ class AssertionIdentityTest {
   void verifiesAssertionsLocallyAndRejectsBadClaimsAndSignatures() throws Exception {
     try (ChatServer server =
         new ChatServer(
-            0, new AssertionIdentity(key.getPublic(), "key-1", ISSUER, Clock.systemUTC()))) {
+            0,
+            new AssertionIdentity(key.getPublic(), "key-1", ISSUER, Clock.systemUTC()),
+            new ChatSettings(40, "15.1"))) {
       server.start();
       HttpClient client = HttpClient.newHttpClient();
       assertEquals(
@@ -125,7 +127,9 @@ class AssertionIdentityTest {
   void authenticatedClientsReceiveSignedDisplayNameWithoutCredentialsOrHistory() throws Exception {
     try (ChatServer server =
         new ChatServer(
-            0, new AssertionIdentity(key.getPublic(), "key-1", ISSUER, Clock.systemUTC()))) {
+            0,
+            new AssertionIdentity(key.getPublic(), "key-1", ISSUER, Clock.systemUTC()),
+            new ChatSettings(40, "15.1"))) {
       server.start();
       HttpClient client = HttpClient.newHttpClient();
       String bearer = token(claims(), key, "key-1");

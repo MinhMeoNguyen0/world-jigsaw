@@ -27,7 +27,7 @@ class ChatServerTest {
 
   @BeforeEach
   void start() throws Exception {
-    server = new ChatServer(0);
+    server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"));
     server.start();
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     base = "http://127.0.0.1:" + server.port();
@@ -75,7 +75,7 @@ class ChatServerTest {
   }
 
   @Test
-  void liveFanoutRetryConflictAndNoReplay() throws Exception {
+  void liveFanoutRepeatedIdsAndNoReplay() throws Exception {
     try (BufferedReader a = subscribe(subject);
         BufferedReader b = subscribe("87654321-1234-1234-1234-123456789abc")) {
       String id = UUID.randomUUID().toString();
@@ -90,20 +90,23 @@ class ChatServerTest {
       assertEquals(
           first.path("messageId").asText(),
           json.readTree(response.body()).path("messageId").asText());
-      assertEquals(response.body(), send(id, "  e\u0301 👩‍👩‍👧‍👦  ").body());
-      assertEquals(409, send(id, "é 👩‍👩‍👧‍👦").statusCode());
-      assertEquals(409, send(id, "different").statusCode());
+      assertEquals(202, send(id, "  e\u0301 👩‍👩‍👧‍👦  ").statusCode());
+      assertEquals(first.path("text"), event(a).path("text"));
+      assertEquals(first.path("text"), event(b).path("text"));
+      assertEquals(202, send(id, "different").statusCode());
+      assertEquals("different", event(a).path("text").asText());
+      assertEquals("different", event(b).path("text").asText());
       b.close();
       try (BufferedReader c = subscribe("87654321-1234-1234-1234-123456789abc")) {
         assertEquals(202, send(UUID.randomUUID().toString(), "new").statusCode());
         assertEquals("new", event(c).path("text").asText());
-        assertEquals("new", event(a).path("text").asText()); // retry did not fan out again
+        assertEquals("new", event(a).path("text").asText());
       }
     }
   }
 
   @Test
-  void healthUnavailableValidationAndRateLimit() throws Exception {
+  void healthUnavailableValidationAndRepeatedSends() throws Exception {
     assertEquals(
         200,
         client
@@ -120,48 +123,40 @@ class ChatServerTest {
       assertEquals(400, send(UUID.randomUUID().toString(), "x".repeat(41)).statusCode());
       assertEquals(400, send(UUID.randomUUID().toString(), "\tbad").statusCode());
       assertEquals(400, send(UUID.randomUUID().toString(), "\u2003").statusCode());
-      assertEquals(413, send(UUID.randomUUID().toString(), "x".repeat(5000)).statusCode());
-      for (int i = 0; i < 5; i++)
+      assertEquals(400, send(UUID.randomUUID().toString(), "x".repeat(5000)).statusCode());
+      for (int i = 0; i < 7; i++)
         assertEquals(
             202, send(UUID.randomUUID().toString(), "👨‍👩‍👧‍👦".repeat(40)).statusCode());
-      assertEquals(429, send(UUID.randomUUID().toString(), "six").statusCode());
     }
   }
 
   @Test
-  void s3WireByteAndErrorFixtures() throws Exception {
-    try (var fixtureStream = getClass().getResourceAsStream("/chat-wire-proposal.json");
-        BufferedReader live = subscribe(subject)) {
-      JsonNode fixtures = json.readTree(fixtureStream).path("wireFixtures");
-      for (JsonNode vector : fixtures.path("textByteCases")) {
-        String input = vector.path("input").asText();
-        assertEquals(
-            vector.path("utf8Bytes").asInt(), input.getBytes(StandardCharsets.UTF_8).length);
-        assertEquals(
-            vector.path("withinByteLimit").asBoolean() ? 202 : 413,
-            send(UUID.randomUUID().toString(), input).statusCode(),
-            vector.path("name").asText());
-      }
-      for (JsonNode vector : fixtures.path("bodyByteCases")) {
-        String body = vector.path("body").asText();
-        assertEquals(
-            vector.path("utf8Bytes").asInt(), body.getBytes(StandardCharsets.UTF_8).length);
-        var response =
-            client.send(
-                request("/api/v1/chat/messages")
-                    .header("X-Local-Subject", subject)
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(
-            vector.path("withinByteLimit").asBoolean() ? 202 : 413,
-            response.statusCode(),
-            vector.path("name").asText());
-        if (response.statusCode() == 413)
-          assertEquals(
-              "MESSAGE_TOO_LARGE",
-              json.readTree(response.body()).path("error").path("code").asText());
-      }
+  void largeValidMessagesAndErrors() throws Exception {
+    try (BufferedReader live = subscribe(subject)) {
+      String longCluster = "a" + "\u0301".repeat(3000);
+      assertEquals(202, send(UUID.randomUUID().toString(), longCluster).statusCode());
+      assertEquals(
+          java.text.Normalizer.normalize(longCluster, java.text.Normalizer.Form.NFC),
+          event(live).path("text").asText());
+      String body =
+          json.writeValueAsString(
+                  java.util.Map.of(
+                      "schemaVersion",
+                      1,
+                      "messageId",
+                      UUID.randomUUID().toString(),
+                      "text",
+                      "hello"))
+              + " ".repeat(5000);
+      var largeBody =
+          client.send(
+              request("/api/v1/chat/messages")
+                  .header("X-Local-Subject", subject)
+                  .POST(HttpRequest.BodyPublishers.ofString(body))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(202, largeBody.statusCode());
+      assertEquals("hello", event(live).path("text").asText());
       var missing =
           client.send(
               request("/no-such-route").GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -221,6 +216,79 @@ class ChatServerTest {
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(400, invalid.statusCode());
+    }
+  }
+
+  @Test
+  void stalledStreamsAreEvictedAndReleaseWorkers() throws Exception {
+    java.util.List<java.net.Socket> stalled = new java.util.ArrayList<>();
+    java.util.List<BufferedReader> replacements = new java.util.ArrayList<>();
+    try {
+      for (int i = 0; i < 16; i++) {
+        var socket = new java.net.Socket();
+        socket.setReceiveBufferSize(1024);
+        socket.connect(new java.net.InetSocketAddress("127.0.0.1", server.port()));
+        socket.setSoTimeout(3000);
+        socket
+            .getOutputStream()
+            .write(
+                ("GET /api/v1/chat/stream HTTP/1.1\r\n"
+                        + "Host: 127.0.0.1\r\nX-Local-Subject: "
+                        + subject
+                        + "\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        var in =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        assertTrue(in.readLine().contains("200"));
+        while (!in.readLine().isEmpty()) {}
+        stalled.add(socket);
+      }
+      String large = "a" + "\u0301".repeat(100000);
+      int status = 202;
+      for (int i = 0; i < 80 && status == 202; i++) {
+        status = send(UUID.randomUUID().toString(), large).statusCode();
+      }
+      assertEquals(503, status);
+      for (int i = 0; i < 16; i++) replacements.add(subscribe(subject));
+      assertEquals(202, send(UUID.randomUUID().toString(), "available").statusCode());
+      assertEquals("available", event(replacements.get(0)).path("text").asText());
+    } finally {
+      for (var socket : stalled) socket.close();
+      for (var reader : replacements) reader.close();
+    }
+  }
+
+  @Test
+  void streamClosesWhenIdentityExpires() throws Exception {
+    long expires = java.time.Instant.now().getEpochSecond() + 2;
+    try (ChatServer shortLived =
+        new ChatServer(
+            0,
+            exchange -> new IdentityAdapter.Identity(subject, "Player", expires),
+            new ChatSettings(40, "15.1"))) {
+      shortLived.start();
+      var response =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + shortLived.port() + "/api/v1/chat/stream"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofInputStream());
+      try (var reader =
+          new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+        assertEquals(200, response.statusCode());
+        assertEquals(": connected", reader.readLine());
+        assertEquals("", reader.readLine());
+        assertTimeoutPreemptively(
+            Duration.ofSeconds(5),
+            () -> {
+              try {
+                assertNull(reader.readLine());
+              } catch (java.io.IOException closedConnection) {
+              }
+            });
+      }
     }
   }
 
