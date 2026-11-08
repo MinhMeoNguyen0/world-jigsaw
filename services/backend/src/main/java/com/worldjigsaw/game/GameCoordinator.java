@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 /** Single-process, internal coordinator. Network publication is not wired yet. */
 @Service
 class GameCoordinator {
+  private static final int MAX_JOIN_STATES = 256;
   private final ObjectMapper mapper = new ObjectMapper();
   private final GameBoards boards;
   private final DraftRules rules;
@@ -223,6 +224,8 @@ class GameCoordinator {
         || selected.stream()
             .noneMatch(g -> g.group().path("groupId").asText().equalsIgnoreCase(moving)))
       throw error("INVALID_ACTION", "Invalid membership");
+    if (!connectedSelection(selected, turn.definition))
+      throw error("INVALID_ACTION", "Cannot join disconnected groups");
     Map<UUID, Long> expectedRevisions = new HashMap<>();
     for (DraftRules.GroupView group : selected)
       for (String source : group.sources()) {
@@ -260,7 +263,9 @@ class GameCoordinator {
               .sorted(String.CASE_INSENSITIVE_ORDER)
               .toList());
       List<String> order =
-          targets.isEmpty() ? List.of() : attachmentOrder(candidate, moving, targets, turn, current);
+          targets.isEmpty()
+              ? List.of()
+              : attachmentOrder(candidate, moving, targets, turn, current, new HashSet<>());
       if (order == null) throw error("INVALID_ACTION", "Cannot join selected groups");
       String currentGroup = moving;
       for (String target : order) {
@@ -297,7 +302,12 @@ class GameCoordinator {
   }
 
   private List<String> attachmentOrder(
-      DraftRules.Draft draft, String moving, List<String> remaining, Turn turn, JsonNode current) {
+      DraftRules.Draft draft, String moving, List<String> remaining, Turn turn, JsonNode current,
+      Set<DraftRules.JoinState> visited) {
+    DraftRules.JoinState state = rules.joinState(draft, moving);
+    if (!visited.add(state)) return null;
+    if (visited.size() > MAX_JOIN_STATES)
+      throw error("INVALID_ACTION", "Join selection is too complex");
     if (remaining.isEmpty()) {
       try {
         rules.confirm(draft, current.path("snapshot"), current.path("allowance").path("remaining").intValue());
@@ -319,7 +329,7 @@ class GameCoordinator {
       }
       List<String> rest = new ArrayList<>(remaining);
       rest.remove(target);
-      List<String> order = attachmentOrder(next, merged, rest, turn, current);
+      List<String> order = attachmentOrder(next, merged, rest, turn, current, visited);
       if (order != null) {
         order.addFirst(target);
         return order;
@@ -328,9 +338,36 @@ class GameCoordinator {
     return null;
   }
 
+  private boolean connectedSelection(List<DraftRules.GroupView> selected, JsonNode definition) {
+    if (selected.size() <= 1) return true;
+    Map<UUID, Integer> owners = new HashMap<>();
+    for (int i = 0; i < selected.size(); i++)
+      for (UUID piece : memberIds(selected.get(i).group())) owners.put(piece, i);
+    List<Set<Integer>> neighbors = new ArrayList<>();
+    for (int i = 0; i < selected.size(); i++) neighbors.add(new HashSet<>());
+    for (JsonNode piece : definition.path("pieces")) {
+      Integer owner = owners.get(BoardValidator.id(piece, "pieceId"));
+      if (owner == null) continue;
+      for (JsonNode edge : piece.path("edges")) {
+        if (!edge.path("neighborPieceId").isTextual()) continue;
+        Integer neighbor = owners.get(UUID.fromString(edge.path("neighborPieceId").textValue()));
+        if (neighbor != null && !owner.equals(neighbor)) {
+          neighbors.get(owner).add(neighbor);
+          neighbors.get(neighbor).add(owner);
+        }
+      }
+    }
+    Set<Integer> reached = new HashSet<>();
+    List<Integer> pending = new ArrayList<>(List.of(0));
+    reached.add(0);
+    for (int i = 0; i < pending.size(); i++)
+      for (Integer neighbor : neighbors.get(pending.get(i)))
+        if (reached.add(neighbor)) pending.add(neighbor);
+    return reached.size() == selected.size();
+  }
+
   synchronized void subscribe(UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink) {
     drainLeaseClears();
-    subscribers.remove(streamId);
     JsonNode current = current(subject, puzzle);
     JsonNode snapshot = current.path("snapshot");
     String reason = null;
@@ -345,6 +382,7 @@ class GameCoordinator {
               .put("type", "resyncRequired")
               .put("puzzleId", puzzle.toString())
               .put("reason", reason);
+      subscribers.remove(streamId);
       if (!sink.offer(message)) sink.slow();
       if (seenSubjects.size() < 10000) seenSubjects.add(subject);
       return;
@@ -355,6 +393,7 @@ class GameCoordinator {
     ArrayNode previews = reply.putArray("previews");
     for (var preview : leases.previews(puzzle)) previews.add(previewJson(preview));
     if (!sink.offer(reply)) {
+      subscribers.remove(streamId);
       sink.slow();
       return;
     }
@@ -560,8 +599,7 @@ class GameCoordinator {
           finishConfirmedTurn(turn, command, resolved, changedVersion[0]);
           return resolved;
         }
-        leases.finishConfirm(subject, turnId, generation, command, false);
-        drainLeaseClears();
+        unpinConfirm(turn, command);
       }
       throw failure;
     }
@@ -591,14 +629,19 @@ class GameCoordinator {
       }
       if (!command.equals(processing)) continue;
       if (result == null) {
-        leases.finishConfirm(subject, turn.id, turn.generation, command, false);
-        drainLeaseClears();
+        unpinConfirm(turn, command);
       } else {
         if ("confirmed".equals(result.path("outcome").asText())) forceResyncAll("gap");
         finishConfirmedTurn(turn, command, result, -1);
       }
     }
     return result;
+  }
+
+  private void unpinConfirm(Turn turn, UUID command) {
+    for (var preview : leases.unpinConfirm(turn.subject, turn.id, turn.generation, command))
+      emit(previewJson(preview));
+    drainLeaseClears();
   }
 
   private void finishConfirmedTurn(Turn turn, UUID command, JsonNode result, long changedVersion) {

@@ -121,6 +121,10 @@ class GameStreamIntegrationTest {
     assertThat(initialA.path("snapshot")).isEqualTo(initialB.path("snapshot"));
     assertThat(initialA.path("watermark").longValue())
         .isEqualTo(snapshot.path("boardVersion").longValue());
+    ObjectNode unavailableSubscription = subscribe.deepCopy();
+    unavailableSubscription.put("puzzleId", UUID.randomUUID().toString());
+    send(sa, unavailableSubscription);
+    assertThat(la.next().path("error").path("code").asText()).isEqualTo("PUZZLE_UNAVAILABLE");
     JsonNode turnA = post(a, origin + "/api/v1/game/turns", origin, cookieA, begin(puzzle));
     JsonNode turnB = post(b, origin + "/api/v1/game/turns", origin, cookieB, begin(puzzle));
     assertSchema("Turn", turnA);

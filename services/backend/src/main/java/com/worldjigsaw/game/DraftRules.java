@@ -204,6 +204,19 @@ class DraftRules {
     return canAttach(draft, group(draft, uuid(movingId)), group(draft, uuid(targetId)));
   }
 
+  record JoinCharge(String id, Boolean charged) {}
+
+  record JoinState(Set<String> sources, String firstAction, JsonNode transform, List<JoinCharge> charges) {}
+
+  JoinState joinState(Draft draft, String movingId) {
+    DraftGroup moving = group(draft, uuid(movingId));
+    return new JoinState(
+        Set.copyOf(moving.sources),
+        moving.actions.getFirst(),
+        moving.group.path("transform"),
+        draft.actions.stream().map(a -> new JoinCharge(a.id, a.joinedCharge)).toList());
+  }
+
   private boolean canAttach(Draft d, DraftGroup moving, DraftGroup target) {
     for (JsonNode m : moving.group.path("pieceIds"))
       for (JsonNode t : target.group.path("pieceIds")) {

@@ -271,7 +271,7 @@ class TurnLeaseRegistry {
         || !admittedAt.isBefore(turn.closesAt))
       throw error("TURN_CLOSED", "Turn was not live at admission");
     List<PreviewGeneration.Preview> active = turn.previews.snapshot();
-    if (turn.lastSequence > MAX_SAFE - active.size())
+    if (turn.lastSequence > MAX_SAFE - 2L * active.size())
       throw error("INVALID_ACTION", "Preview sequence exhausted");
     Instant pinExpiry = admittedAt.plus(Duration.ofMinutes(2));
     for (PreviewGeneration.Preview preview : active) {
@@ -300,6 +300,24 @@ class TurnLeaseRegistry {
         || turn.generation != generation
         || !commandId.equals(turn.confirming)) throw error("TURN_CLOSED", "Unknown confirmation");
     retire(turn, confirmed ? "confirmed" : "rejected");
+  }
+
+  synchronized List<PreviewGeneration.Preview> unpinConfirm(
+      UUID subject, UUID turnId, long generation, UUID commandId) {
+    Turn turn = turns.get(turnId);
+    if (turn == null
+        || !turn.subject.equals(subject)
+        || turn.generation != generation
+        || !commandId.equals(turn.confirming)) throw error("TURN_CLOSED", "Unknown confirmation");
+    turn.confirming = null;
+    turn.confirmationPreviewExpiry = null;
+    sweep();
+    if (!turns.containsKey(turnId)) return List.of();
+    for (PreviewGeneration.Preview preview : turn.previews.snapshot()) {
+      if (!turn.previews.publish(++turn.lastSequence, preview.action(), turn.expiresAt))
+        throw new IllegalStateException("Preview sequence invariant");
+    }
+    return turn.previews.snapshot();
   }
 
   synchronized boolean clear(UUID subject, UUID turnId, long generation, String reason) {

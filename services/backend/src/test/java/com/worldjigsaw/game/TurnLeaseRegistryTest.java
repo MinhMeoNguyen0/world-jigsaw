@@ -129,6 +129,26 @@ class TurnLeaseRegistryTest {
   }
 
   @Test
+  void unpinRestoresLiveExpiryAndRetiresExpiredTurns() {
+    var turn = registry.open(puzzle, a, close);
+    UUID group = UUID.randomUUID(), command = UUID.randomUUID();
+    registry.acquire(a, turn.turn(), 0, Set.of(group));
+    registry.publish(a, turn.turn(), 0, 1, action(UUID.randomUUID(), group, 1));
+    registry.pinConfirm(a, turn.turn(), 0, command, now.get());
+    var pinned = registry.previews(puzzle).getFirst();
+    var restored = registry.unpinConfirm(a, turn.turn(), 0, command).getFirst();
+    assertThat(restored.sequence()).isGreaterThan(pinned.sequence());
+    assertThat(restored.expiresAt()).isEqualTo(turn.expiresAt());
+    assertThat(registry.info(a, turn.turn(), 0).groups()).containsExactly(group);
+    registry.pinConfirm(a, turn.turn(), 0, command, now.get());
+    now.set(turn.expiresAt());
+    assertThat(registry.unpinConfirm(a, turn.turn(), 0, command)).isEmpty();
+    assertThat(registry.activeTurns()).doesNotContain(turn.turn());
+    assertThat(registry.drainClears().events())
+        .extracting(TurnLeaseRegistry.Cleared::reason).containsExactly("expired");
+  }
+
+  @Test
   void undeliveredClearOverflowRequiresResynchronization() {
     for (int i = 0; i < 1025; i++) {
       var turn = registry.open(puzzle, a, close);
