@@ -154,6 +154,7 @@ export class LiveGame {
     if (this.inFlight) this.uncertainDraft = true
     this.inFlight = null
     this.publish({ connection: 'connecting', previews: {}, previewPending: false })
+    if (epoch !== this.epoch) return
     try {
       await this.request('/api/v1/session', 'Session', {})
       if (epoch !== this.epoch) return
@@ -238,6 +239,7 @@ export class LiveGame {
   }
 
   private receive(raw: unknown) {
+    const epoch = this.epoch
     try {
       if (typeof raw !== 'string') throw new Error('Invalid stream frame')
       const message: unknown = JSON.parse(raw)
@@ -301,9 +303,8 @@ export class LiveGame {
           sameId(this.inFlight.actionId, rejection.actionId)
         ) {
           this.inFlight = null
-          this.publish({ previewPending: false })
-        }
-        this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
+          this.publish({ previewPending: false, issue: `${rejection.error.code}: ${rejection.error.message}` })
+        } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
       } else if (type === 'boardChanged') {
         const result = applyBoardChanged(
           game.definition,
@@ -319,7 +320,7 @@ export class LiveGame {
           this.history = result.seenEvents
           // An event does not carry this session's allowance or turn; refresh both.
           this.publish({ game: { ...game, snapshot: result.snapshot, allowance: null } })
-          this.resync('Board changed; refreshing allowance and turn.')
+          if (epoch === this.epoch) this.resync('Board changed; refreshing allowance and turn.')
         }
       } else if (type === 'leaseRenewed') {
         checked('LeaseRenewed', message)
@@ -331,7 +332,7 @@ export class LiveGame {
         this.publish({ issue: `${error.error.code}: ${error.error.message}` })
       } else throw new Error('Unsupported stream event')
     } catch (error) {
-      this.resync(String(error))
+      if (epoch === this.epoch) this.resync(String(error))
     }
   }
 
@@ -509,11 +510,10 @@ export class LiveGame {
       this.resync('Canceled; synchronizing the latest board.')
     } else {
       this.uncertainDraft = true
-      if (result.commandId)
-        this.publish({
-          unresolvedCommand: { puzzleId: result.puzzleId, commandId: result.commandId },
-        })
       this.publish({
+        ...(result.commandId
+          ? { unresolvedCommand: { puzzleId: result.puzzleId, commandId: result.commandId } }
+          : {}),
         issue: `Cancel returned ${result.outcome}; resolve command ${result.commandId ?? '(missing)'}.`,
       })
     }

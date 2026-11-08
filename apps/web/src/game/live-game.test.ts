@@ -111,6 +111,58 @@ describe('live game adapter', () => {
     expect(socket.sent).toHaveLength(1)
   })
 
+  it('does not start a session when a listener disconnects while connecting', async () => {
+    const h = harness()
+    h.client.subscribe((state) => {
+      if (state.connection === 'connecting') h.client.disconnect()
+    })
+    await h.client.connect()
+    expect(h.client.getState().connection).toBe('disconnected')
+    expect(h.calls).toEqual([])
+    expect(h.sockets).toHaveLength(0)
+  })
+
+  it('does not reconnect after a listener disconnects on a committed board event', async () => {
+    const h = harness()
+    const socket = await h.start()
+    h.subscribe(socket)
+    h.client.subscribe((state) => {
+      if (state.game?.snapshot.boardVersion === fixture.confirmedSnapshot.boardVersion && state.connection !== 'disconnected')
+        h.client.disconnect()
+    })
+    const calls = [...h.calls]
+    socket.emit(fixture.boardChanged)
+    expect(h.client.getState().connection).toBe('disconnected')
+    expect(h.client.getState().game?.snapshot).toEqual(fixture.confirmedSnapshot)
+    expect(h.calls).toEqual(calls)
+    expect(h.sockets).toHaveLength(1)
+  })
+
+  it('does not replace a connection started by a listener on a board event', async () => {
+    const h = harness()
+    const socket = await h.start()
+    h.subscribe(socket)
+    let replaced = false
+    h.client.subscribe((state) => {
+      if (!replaced && state.game?.snapshot.boardVersion === fixture.confirmedSnapshot.boardVersion) {
+        replaced = true
+        void h.client.connect()
+      }
+    })
+    socket.emit(fixture.boardChanged)
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    expect(h.calls.filter((path) => path === '/api/v1/session')).toHaveLength(2)
+  })
+
+  it('refreshes the board normally when no listener changes the connection', async () => {
+    const h = harness()
+    const socket = await h.start()
+    h.subscribe(socket)
+    socket.emit(fixture.boardChanged)
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    expect(h.calls.filter((path) => path === '/api/v1/session')).toHaveLength(2)
+  })
+
   it('does not publish ready with an advanced board and stale allowance', async () => {
     const h = harness()
     const socket = await h.start()
