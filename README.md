@@ -95,6 +95,9 @@ Run the service from `services/backend`; Flyway applies migrations on startup:
 Check it with `curl http://localhost:8080/actuator/health`; a healthy service reports
 `"status":"UP"`. No frontend, gateway, dashboard, Kubernetes, or self-host platform is needed.
 
+For the private preview transport demo and its limitations, see the
+[backend integration note](services/backend/PREVIEW-INTEGRATION.md).
+
 Run formatting checks and tests from `services/backend`:
 
 ```sh
