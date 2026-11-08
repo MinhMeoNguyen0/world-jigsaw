@@ -16,9 +16,7 @@ Run `./gradlew build` for formatting and tests. `GET /actuator/health` reports p
 and `GET /api/v1/chat/config` reports the loaded validation version and limit. The service disables
 the JDK HTTP server's automatic request-body draining so an unfinished request cannot hold a worker
 after its response; connections with unread bodies are closed. This is a JVM-wide JDK setting and
-must be initialized before any other JDK HTTP server in the process. The JDK request deadline is
-5 seconds with a one-second timer; incomplete uploads are disconnected, and these settings also
-apply JVM-wide.
+must be initialized before any other JDK HTTP server in the process.
 
 ## Identity and private use
 

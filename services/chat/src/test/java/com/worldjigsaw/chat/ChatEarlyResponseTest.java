@@ -90,16 +90,27 @@ class ChatEarlyResponseTest {
   }
 
   @Test
-  void stalledChunkedUploadIsDisconnected() throws Exception {
+  void slowValidUploadsRemainConnected() throws Exception {
     try (var server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"))) {
       server.start();
-      try (var socket =
-          open(
-              server,
-              new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "{", 0),
-              true)) {
-        socket.setSoTimeout(12000);
-        assertClosed(socket);
+      try (var fixed = connect(server); var chunked = connect(server)) {
+        String body =
+            "{\"schemaVersion\":1,\"messageId\":\"00000000-0000-4000-8000-000000000700\",\"text\":\"hi\"}";
+        var request = new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "", 0);
+        write(fixed, request, "Content-Length: " + body.length() + "\r\n", "{");
+        write(chunked, request, "Transfer-Encoding: chunked\r\n", "1\r\n{\r\n");
+        Thread.sleep(7000);
+        fixed.getOutputStream().write(body.substring(1).getBytes(StandardCharsets.UTF_8));
+        fixed.getOutputStream().flush();
+        String remainder = body.substring(1);
+        chunked
+            .getOutputStream()
+            .write(
+                (Integer.toHexString(remainder.length()) + "\r\n" + remainder + "\r\n0\r\n\r\n")
+                    .getBytes(StandardCharsets.UTF_8));
+        chunked.getOutputStream().flush();
+        assertStatus(fixed, 503);
+        assertStatus(chunked, 503);
       }
     }
   }
