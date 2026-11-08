@@ -22,6 +22,66 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class GamePreviewGeometryTest {
   @Test
+  void exhaustedJoinSearchIsRetryableAndLeavesTheDraftUnchanged() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode board = mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());
+    JsonNode squares = mapper.readTree(Path.of("../../packages/contracts/v1/fixtures/local-geometry-v1.json").toFile());
+    ObjectNode definition = board.path("definition").deepCopy();
+    ObjectNode snapshot = board.path("snapshot").deepCopy();
+    ArrayNode pieces = definition.putArray("pieces"), groups = snapshot.putArray("groups");
+    UUID[] pieceIds = new UUID[12], groupIds = new UUID[12];
+    for (int i = 0; i < 13; i++) {
+      UUID pieceId = UUID.randomUUID(), groupId = UUID.randomUUID();
+      if (i < 12) { pieceIds[i] = pieceId; groupIds[i] = groupId; }
+      ObjectNode piece = squares.path("pieces").get(0).deepCopy();
+      piece.put("pieceId", pieceId.toString());
+      ((ObjectNode) piece.path("solvedPosition"))
+          .put("x", i == 12 ? -90000 : (i % 4) * 100000)
+          .put("y", i == 12 ? 0 : (i / 4) * 100000);
+      for (JsonNode edge : piece.path("edges"))
+        ((ObjectNode) edge).putNull("neighborPieceId").putNull("neighborEdgeId");
+      pieces.add(piece);
+      ObjectNode group = groups.addObject().put("groupId", groupId.toString()).put("revision", 0);
+      group.putArray("pieceIds").add(pieceId.toString());
+      ObjectNode transform = group.putObject("transform");
+      transform.putObject("translation").put("x", i == 0 || i == 12 ? 0 : -5000).put("y", 0);
+      transform.put("rotation", 0);
+      group.put("finalPosition", false);
+    }
+    for (int i = 0; i < 12; i++) {
+      if (i % 4 != 3) link(pieces, i, 1, i + 1, 3);
+      if (i < 8) link(pieces, i, 2, i + 4, 0);
+    }
+    GameBoards boards = mock(GameBoards.class);
+    when(boards.currentFor(org.mockito.ArgumentMatchers.nullable(UUID.class))).thenReturn(Map.of(
+        "definition", mapper.convertValue(definition, Map.class),
+        "snapshot", mapper.convertValue(snapshot, Map.class),
+        "allowance", Map.of("remaining", 5), "endsAt", "2026-11-08T00:00:00Z"));
+    GameIdentityLedger identities = mock(GameIdentityLedger.class);
+    when(identities.reserveTurn(any(), any())).thenAnswer(call -> UUID.randomUUID());
+    Clock clock = Clock.fixed(Instant.parse("2026-11-07T12:00:00Z"), ZoneOffset.UTC);
+    GameCoordinator game = new GameCoordinator(boards, new DraftRules(mock(BoardValidator.class)),
+        new TurnLeaseRegistry(clock), identities, mock(ConfirmationJournal.class),
+        mock(JdbcTemplate.class), clock, mock(GameWriterGuard.class));
+    UUID subject = UUID.randomUUID(), puzzle = UUID.fromString(snapshot.path("puzzleId").asText());
+    var turn = game.begin(subject, puzzle);
+    var action = new PreviewGeneration.Action(UUID.randomUUID(), "piece", pieceIds[0],
+        List.of(pieceIds), java.util.Arrays.stream(groupIds)
+            .map(id -> new PreviewGeneration.BaseRevision(id, 0)).toList(),
+        new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), 0));
+    assertThatThrownBy(() -> game.preview(subject, turn.turnId(), 0, 1, action))
+        .isInstanceOfSatisfying(DraftRules.RuleError.class, error -> {
+          assertThat(error.code).isEqualTo("INTERNAL_ERROR");
+          assertThat(error.getMessage()).contains("retry with fewer groups");
+        });
+    assertThat(game.subscribe(puzzle).previews()).isEmpty();
+    var ordinary = new PreviewGeneration.Action(UUID.randomUUID(), "piece", pieceIds[0],
+        List.of(pieceIds[0]), List.of(new PreviewGeneration.BaseRevision(groupIds[0], 0)),
+        new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), 0));
+    assertThat(game.preview(subject, turn.turnId(), 0, 1, ordinary).previews()).hasSize(1);
+  }
+
+  @Test
   void joinsGridWhenEarlyChoiceWouldStrandAnOffsetGroup() throws Exception {
     ObjectMapper mapper = new ObjectMapper();
     JsonNode board = mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());

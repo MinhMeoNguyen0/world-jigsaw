@@ -309,7 +309,7 @@ class GameCoordinator {
     DraftRules.JoinState state = rules.joinState(draft, moving);
     if (!visited.add(state)) return null;
     if (visited.size() > MAX_JOIN_STATES)
-      throw error("INVALID_ACTION", "Join selection is too complex");
+      throw error("INTERNAL_ERROR", "Join search limit reached; retry with fewer groups");
     if (remaining.isEmpty()) {
       try {
         rules.confirm(draft, current.path("snapshot"), current.path("allowance").path("remaining").intValue());

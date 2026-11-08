@@ -14,6 +14,8 @@ reciprocal neighboring edge within the server's snap tolerance, and validate the
 board against the collision policy. It authors any merged group ID and returns its own previews.
 Omitting the union is a movement frame; it never silently joins while dragging. Busy, stale, invalid,
 or collision outcomes reject the frame without mutating the preceding draft or consuming a move.
+If the bounded join search cannot decide, it reports a retryable `INTERNAL_ERROR`; the player can
+retry the join in smaller steps without losing the draft.
 
 A server preview for an action reflects its current draft component, even after joining: `targetId`
 is the server-authored draft group ID for a multi-piece group, or the piece ID for a singleton;
