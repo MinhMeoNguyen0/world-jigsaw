@@ -5,7 +5,7 @@
 
 **Core concept:** One world, one daily destination, one shared jigsaw puzzle, five accepted moves per anonymous contributor, and a global countdown.
 
-For the current integration baseline, see the [shared v1 contract](../packages/contracts/README.md). This earlier plan contains superseded proposals, including immediate move commits, chat history, and example API and WebSocket messages; it is not the wire contract.
+For the current integration baseline, see the [shared v1 contract](../packages/contracts/README.md). This earlier plan contains superseded proposals, including immediate move commits and example API and WebSocket messages; it is not the wire contract.
 
 ---
 
@@ -257,7 +257,7 @@ Use short-lived HMAC/pseudonymized risk keys for coarse network aggregation, wit
 - Use a managed challenge such as Cloudflare Turnstile when a *new identity* appears abusive, or optionally before its first contribution if launch traffic is heavily bot-driven.
 - Validate the challenge **server-side** using the provider API; client widgets alone are not proof of success. Token validation is single-use and time-limited.
 - Normal visitors should not see repeated puzzles or challenges for every one of five moves.
-- Rate-limit session creation, reconnect storms, chat spam, invalid/malformed group commands and excessive group grabs by identity and, secondarily, coarse network origin.
+- Rate-limit session creation, reconnect storms, invalid/malformed group commands and excessive group grabs by identity and, secondarily, coarse network origin.
 - Maintain risk tiers: low → allow; medium → challenge at new identity/first move; high → limit new contributions and permit spectating/chat according to moderation policy. Provide explanation and dispute/recovery path.
 
 ### 5.6 Optional stronger continuity without email
@@ -298,7 +298,7 @@ Offer **Save my name with a passkey**. Using WebAuthn, an opted-in visitor can b
 | Move a previously confirmed loose piece/group | 1 | On Confirm | Not individually |
 | Adjust or join a selection already moved in this batch | 0 additional | On Confirm | Possibly aggregated |
 | Anchor a selection already moved in this batch | 0 additional | On Confirm | Yes |
-| Chat | 0 | Message history only | No, chat separate |
+| Chat | 0 | No | No, chat separate |
 | Confirm a batch | 0 additional | Yes | Possibly aggregated |
 
 **Drop validity:** movement above small world-coordinate epsilon, or a real join/anchor, no conflicts with ownership/state revision, within permitted workspace, correct geometry. Group size does not multiply move cost.
@@ -511,8 +511,8 @@ Metrics are updated asynchronously for dashboard only. **Game integrity never de
 
 - One global room chat accompanying the one daily puzzle. Lobby and board can display the same global channel, with separate UI presentation rather than duplicate logical rooms.
 - One anonymous name per participant; fruit avatar and cursor color.
-- Prevent spam: message length cap, per-identity token bucket, repeat-message suppression, report/mute functions, moderation queue, automatic cooldown for abusive chat.
-- Durable recent chat messages in PostgreSQL with an explicit retention period; optional ephemeral typing indicator in Redis.
+- The independent live relay, its limits, and its integration and security gaps are documented in [the chat service reference](../services/chat/README.md). It does not retain chat history.
+- Future private deployment needs reviewed abuse prevention and moderation, including report/mute functions and a moderation queue; an ephemeral typing indicator is optional.
 - Counting online means approximate distinct active recognized identities, not socket count (same user with two tabs counts once). Heartbeats/TTL, debounce count updates.
 - UI allows hide chat and hide remote cursor overlays without leaving shared puzzle.
 
@@ -529,7 +529,7 @@ Metrics are updated asynchronously for dashboard only. **Game integrity never de
 | Semi-live projections | activity ticker, stats, presence | cache/read model | Batches, periodic repair | ~1 Hz or slower |
 | Batch preview state | final drop positions, replacement, clear | Temporary coordinator state | Ordered, acknowledged, resyncable for all puzzle subscribers | On state change |
 | Ephemeral interaction | cursors, sampled drag motion, clicks | None | Best effort, droppable | Capped/sampled |
-| Chat | messages | PostgreSQL recent history | Ack, moderated, replay recent | Low user rate |
+| Chat | messages | None | See [chat service reference](../services/chat/README.md) | Live only |
 
 ### 10.2 The N-squared cursor problem
 
@@ -595,14 +595,14 @@ Redis Pub/Sub is **at-most-once**: excellent for cursors and disposable presence
                       minute stats    ticker batches
 ```
 
-Components (start modular in one Spring Boot binary, split when ready):
+Components (game modules may start in one Spring Boot binary; chat is separate):
 
 1. **Identity module:** anonymous sessions, naming, browser key registration and risk signals.
 2. **Catalog module:** licensed image assets and scheduled daily puzzles.
 3. **Game coordinator:** group leases, geometry validation, merges, authoritative placement, quota mutations.
 4. **Gateway:** WebSocket lifecycle, subscription, routing, rate limiting, fanout and backpressure.
 5. **Activity projector:** aggregated activity and per-minute statistics.
-6. **Chat module:** moderated global messages.
+6. **Chat service:** see [chat service reference](../services/chat/README.md).
 7. **Rollover scheduler:** idempotent UTC activation/archival/completion reconciliation.
 8. **Media worker:** puzzle generation and optimized textures.
 9. **Operations console:** content queue, health, bans, moderation, repair.
@@ -701,11 +701,6 @@ activity_minute_rollups(
   PRIMARY KEY(puzzle_id,minute_bucket)
 )
 
-chat_messages(
-  id UUID PK, puzzle_id UUID, identity_id UUID, public_name TEXT,
-  message TEXT, created_at, moderated_at nullable
-)
-
 image_assets(
   id UUID PK, city_name, country_code, storage_key, thumbnail_key,
   author_name, source_url, license_name, license_url,
@@ -715,7 +710,7 @@ image_assets(
 
 An admitted command persists its batch and protected ownership until a definitive committed or failed result is recorded; the result remains available for idempotent retries. A confirmed batch is represented by one command and one versioned event carrying its constituent changes and move count.
 
-Indexes: `puzzle_events(puzzle_id,event_version)`, `daily_contributions(identity_id,puzzle_id)` unique, `puzzle_groups(puzzle_id)`, `chat_messages(puzzle_id,created_at DESC)`, `activity_events(puzzle_id,created_at DESC)`, `identity_sessions(identity_id,expires_at)`, outbox by `published_at`. Prefer retention/partitioning for high-volume event, chat and risk tables.
+Indexes: `puzzle_events(puzzle_id,event_version)`, `daily_contributions(identity_id,puzzle_id)` unique, `puzzle_groups(puzzle_id)`, `activity_events(puzzle_id,created_at DESC)`, `identity_sessions(identity_id,expires_at)`, outbox by `published_at`. Prefer retention/partitioning for high-volume event and risk tables.
 
 ### Consistency invariants
 
@@ -746,7 +741,6 @@ GET  /api/v1/daily/snapshot        authoritative board snapshot, version
 GET  /api/v1/daily/events?after=  durable move event catch-up
 GET  /api/v1/daily/activity        recent aggregated public activity
 GET  /api/v1/daily/stats           dashboard totals and chart buckets
-GET  /api/v1/daily/chat           recent moderated global chat
 GET  /api/v1/archive             paginated past puzzles
 GET  /api/v1/archive/{date}      read-only solved/uncompleted state + credits
 ```
@@ -773,7 +767,6 @@ contribution.heartbeat  renew the active batch lease; requires batchId and lease
 contribution.confirm    admit batch with commandId and current lease, or retry admitted commandId
 contribution.cancel     discard an unadmitted batch; reject cancellation after admission
 preview.ack            acknowledge preview stream epoch/sequence
-chat.send              moderated and rate limited
 presence.heartbeat     renew presence
 ```
 
@@ -793,7 +786,6 @@ preview.clear          batchId + stream epoch/sequence; committed version on suc
 contribution.confirmed commandId + remaining moves + committed version
 move.rejected          reason + rollback transform
 cursor.batch           nearby cursor samples
-chat.message           accepted chat message
 activity.batch         aggregated recent actions
 stats.updated          chart/counter projection
 presence.updated       online count estimate
@@ -889,12 +881,11 @@ services/backend/src/main/java/com/worldjigsaw/
   persistence/     MoveTransactionService, EventStore, SnapshotStore
   outbox/          OutboxPublisher
   activity/        ActivityProjector, ActivityQueryService
-  chat/            ChatService, ModerationService
   realtime/        WebSocketHandler, SubscriptionManager, FanoutService
   metrics/         PuzzleMetrics
 ```
 
-Service boundaries are logical first. In deployment stage one they can share a single JVM so end-to-end tests are straightforward. Later split WS gateway, coordinator and projector using stable protocols.
+Game service boundaries are logical first. In deployment stage one those modules can share a single JVM so end-to-end tests are straightforward. Later split WS gateway, coordinator and projector using stable protocols. Chat runs separately.
 
 **Hot-path transaction:**
 
@@ -944,7 +935,7 @@ Visual game state separates authoritative `committedGroups` from local and remot
 - Healthy-region preview drop acknowledgement p95 target < 250 ms, measured from client release to ack.
 - Relative real-time group update target p95 < 300 ms in same region at tested load, with degradations visible in telemetry.
 - Cursor updates emitted <= 10 Hz; delivered only to selected nearby viewers; cap displayed remote cursors ~20–30.
-- Activity ticker <= 1 broadcast/s to each gateway subscription; chat independently rate limited.
+- Activity ticker <= 1 broadcast/s to each gateway subscription.
 - Reliable replay from snapshot + durable events, no double charges, no lost confirmed moves.
 - Load test 100, 1,000, 10,000 viewers and separately 10, 50, 200 simultaneous *active dragging* visitors, since viewer and editor loads differ.
 
