@@ -29,6 +29,7 @@ class ConfirmationJournal {
   private final JdbcTemplate jdbc;
   private final BoardValidator validator;
   private final Clock clock;
+  private final GameWriterGuard writer;
   private final ObjectMapper mapper = new ObjectMapper();
 
   interface Planner {
@@ -46,10 +47,11 @@ class ConfirmationJournal {
     }
   }
 
-  ConfirmationJournal(JdbcTemplate jdbc, BoardValidator validator, Clock clock) {
+  ConfirmationJournal(JdbcTemplate jdbc, BoardValidator validator, Clock clock, GameWriterGuard writer) {
     this.jdbc = jdbc;
     this.validator = validator;
     this.clock = clock;
+    this.writer = writer;
   }
 
   /** Subject comes only from a trusted session. The board lock is held until transaction end. */
@@ -68,6 +70,7 @@ class ConfirmationJournal {
       JsonNode payload,
       Planner planner,
       java.util.function.Consumer<Instant> admitted) {
+    writer.transactionBarrier(jdbc);
     if (!puzzle.equals(BoardValidator.id(payload, "puzzleId"))
         || !command.equals(BoardValidator.id(payload, "commandId"))) {
       throw new IllegalArgumentException("command identity mismatch");

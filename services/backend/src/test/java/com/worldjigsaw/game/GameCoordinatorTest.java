@@ -298,7 +298,7 @@ class GameCoordinatorTest {
     UUID subject = UUID.randomUUID(), command = UUID.randomUUID();
     jdbc.update("INSERT INTO game_subjects(subject_id) VALUES (?)", subject);
     var unavailable = new java.util.concurrent.atomic.AtomicBoolean();
-    ConfirmationJournal interrupted = new ConfirmationJournal(jdbc, validator, clock) {
+    ConfirmationJournal interrupted = new ConfirmationJournal(jdbc, validator, clock, writer) {
       @Override
       public JsonNode lookup(UUID s, UUID p, UUID c, JsonNode payload) {
         if (unavailable.get()) throw new IllegalStateException("temporary outage");

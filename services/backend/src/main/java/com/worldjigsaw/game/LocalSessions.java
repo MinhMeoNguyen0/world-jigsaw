@@ -33,12 +33,14 @@ class LocalSessions {
   private final SecureRandom random = new SecureRandom();
   private final JdbcTemplate jdbc;
   private final Clock clock;
+  private final GameWriterGuard writer;
 
   record Session(UUID subject, String displayName, Instant expiresAt, String newToken) {}
 
-  LocalSessions(JdbcTemplate jdbc, Clock clock) {
+  LocalSessions(JdbcTemplate jdbc, Clock clock, GameWriterGuard writer) {
     this.jdbc = jdbc;
     this.clock = clock;
+    this.writer = writer;
   }
 
   Session lookup(String token) {
@@ -59,6 +61,7 @@ class LocalSessions {
 
   @Transactional
   public Session getOrCreate(String token) {
+    writer.transactionBarrier(jdbc);
     Session existing = lookup(token);
     if (existing != null) return existing;
     byte[] bytes = new byte[32];

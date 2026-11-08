@@ -49,6 +49,7 @@ tasks.register<JavaExec>("previewDemo") {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    systemProperty("worldjigsaw.test.classpath", sourceSets.test.get().runtimeClasspath.asPath)
 }
 
 spotless {

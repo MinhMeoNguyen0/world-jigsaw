@@ -47,6 +47,7 @@ class ConfirmationJournalTest {
   @Autowired JdbcTemplate jdbc;
   @Autowired PlatformTransactionManager transactions;
   @Autowired Clock clock;
+  @Autowired GameWriterGuard writer;
 
   @TestConfiguration
   static class ClockConfig {
@@ -146,7 +147,7 @@ class ConfirmationJournalTest {
     assertThat(
             identities.record(subject, puzzle, requestId, "cancel", request, cancelResult).result())
         .isEqualTo(cancelResult);
-    GameIdentityLedger reloadedIdentities = new GameIdentityLedger(jdbc);
+    GameIdentityLedger reloadedIdentities = new GameIdentityLedger(jdbc, writer);
     var identityTx = new TransactionTemplate(transactions);
     assertThat(
             identityTx
@@ -167,7 +168,7 @@ class ConfirmationJournalTest {
         .isTrue();
 
     // Recreate the service object and transaction to model a process that reloads persisted state.
-    ConfirmationJournal restarted = new ConfirmationJournal(jdbc, validator, clock);
+    ConfirmationJournal restarted = new ConfirmationJournal(jdbc, validator, clock, writer);
     var tx = new TransactionTemplate(transactions);
     JsonNode retry =
         tx.execute(status ->

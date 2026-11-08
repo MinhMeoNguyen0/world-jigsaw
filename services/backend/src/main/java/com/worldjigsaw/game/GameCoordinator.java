@@ -104,6 +104,7 @@ class GameCoordinator {
     this.jdbc = jdbc;
     this.clock = clock;
     this.writer = writer;
+    writer.attach(this);
     this.currentDay = clock.instant().atZone(java.time.ZoneOffset.UTC).toLocalDate();
   }
 

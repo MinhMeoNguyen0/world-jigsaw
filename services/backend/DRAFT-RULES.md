@@ -13,8 +13,8 @@ Java tests use repeated quarter turns on all four seeded orientations. These are
 not evidence of actual mouse or touch controls, browser integration, or multiplayer.
 
 The private-local coordinator integrates this engine with authenticated turns, process-local leases,
-preview generation fences, cancellation and the confirmation journal. A PostgreSQL advisory lock
-rejects a second local writer; this is not distributed leader election or a cross-process fencing
-epoch. The service reserves turn and merged-group IDs and retains cancel and undo receipts in the
+preview generation fences, cancellation and the confirmation journal. A process-lifetime local
+file lock and PostgreSQL transaction barrier protect the single-host writer under the deployment
+preconditions in the root README. The service reserves turn and merged-group IDs and retains cancel and undo receipts in the
 game database. The frontend owner still needs to integrate the shared turn and geometry contract,
 including real mouse and touch coverage. Chat and public hosting remain separate.

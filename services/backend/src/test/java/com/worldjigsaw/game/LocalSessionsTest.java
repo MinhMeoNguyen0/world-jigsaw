@@ -27,6 +27,7 @@ class LocalSessionsTest {
   @LocalServerPort int port;
   @Autowired JdbcTemplate jdbc;
   @Autowired Clock clock;
+  @Autowired GameWriterGuard writer;
   private final ObjectMapper mapper = new ObjectMapper();
 
   @DynamicPropertySource
@@ -75,7 +76,7 @@ class LocalSessionsTest {
             jdbc.queryForObject(
                 "SELECT count(*) FROM game_sessions WHERE token_hash = ?", Integer.class, token))
         .isZero();
-    LocalSessions afterRestart = new LocalSessions(jdbc, clock);
+    LocalSessions afterRestart = new LocalSessions(jdbc, clock, writer);
     assertThat(afterRestart.lookup(token)).isNotNull();
     HttpResponse<String> again =
         first.send(

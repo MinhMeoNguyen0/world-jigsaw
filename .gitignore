@@ -14,6 +14,8 @@ playwright/.cache/
 
 # Logs
 *.log
+services/backend/.world-jigsaw-writer.lock
+services/backend/.writer-probe-*/
 npm-debug.log*
 pnpm-debug.log*
 

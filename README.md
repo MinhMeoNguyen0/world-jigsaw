@@ -109,13 +109,16 @@ The private local game service provides `POST /api/v1/session` and an authentica
 service's literal `localhost` or `127.0.0.1` origin, including port. A session uses a host-only,
 HttpOnly, SameSite=Strict cookie; its random secret is stored only as a hash. Sessions last 30 days.
 This is local prototype identity, not public authentication. No proxy, cross-origin frontend, public
-address or TLS termination has been reviewed. The service takes a PostgreSQL advisory lock to
-reject a second local writer; it is not a distributed or high-availability deployment.
-Once loss of that lock connection is detected, new game operations fail closed and connected clients
-are closed.
-Stop the backend process completely before starting a replacement: the advisory lock alone does not
-fence a request already running on another database connection. After restart, clients must
-resubscribe; unsaved drafts are lost, while committed Confirm results remain available by command ID.
+address or TLS termination has been reviewed. The service uses a process-lifetime local file lock
+and PostgreSQL advisory locks to fence a single writer. Run every backend using the same database on
+one host, from the same absolute `services/backend` directory on a local filesystem supporting
+cross-process locks; do not remove or replace `.world-jigsaw-writer.lock` while any backend runs.
+All instances for that database must use the same JDBC URL. Multiple hosts, isolated filesystem
+namespaces, network filesystems and high-availability deployment are not supported.
+Once loss of the database lock connection is detected, new game operations fail closed and connected
+clients are closed. Stop the backend process before starting a replacement. The replacement waits for
+earlier durable transactions to settle. After restart, clients must resubscribe; unsaved drafts are
+lost, while committed Confirm results remain available by command ID.
 
 The socket accepts v1 `subscribe`, `preview.submit`, and `heartbeat` messages and fans out temporary
 previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a

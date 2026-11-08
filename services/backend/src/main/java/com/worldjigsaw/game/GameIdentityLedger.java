@@ -15,16 +15,19 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 class GameIdentityLedger {
   private final JdbcTemplate jdbc;
+  private final GameWriterGuard writer;
   private final ObjectMapper mapper = new ObjectMapper();
 
   record Receipt(boolean conflict, JsonNode result) {}
 
-  GameIdentityLedger(JdbcTemplate jdbc) {
+  GameIdentityLedger(JdbcTemplate jdbc, GameWriterGuard writer) {
     this.jdbc = jdbc;
+    this.writer = writer;
   }
 
   @Transactional
   public UUID reserveTurn(UUID subject, UUID puzzle) {
+    writer.transactionBarrier(jdbc);
     for (int i = 0; i < 10; i++) {
       UUID id = UUID.randomUUID();
       if (jdbc.update(
@@ -39,6 +42,7 @@ class GameIdentityLedger {
 
   @Transactional
   public UUID reserveGroup(UUID puzzle) {
+    writer.transactionBarrier(jdbc);
     for (int i = 0; i < 10; i++) {
       UUID id = UUID.randomUUID();
       if (jdbc.update(
@@ -54,6 +58,7 @@ class GameIdentityLedger {
   @Transactional
   public Receipt record(
       UUID subject, UUID puzzle, UUID requestId, String kind, JsonNode payload, JsonNode result) {
+    writer.transactionBarrier(jdbc);
     if ((!"begin".equals(kind) && !"cancel".equals(kind) && !"undo".equals(kind))
         || !puzzle.equals(BoardValidator.id(payload, "puzzleId"))
         || !requestId.equals(BoardValidator.id(payload, "requestId")))

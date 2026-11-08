@@ -34,6 +34,7 @@ class GameWriterGuardIntegrationTest {
   @Container static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
   @Autowired GameBoards boards;
   @Autowired GameWriterGuard writer;
+  @Autowired LocalSessions sessions;
   @Autowired JdbcTemplate jdbc;
   @Autowired DataSource dataSource;
   @LocalServerPort int port;
@@ -93,6 +94,11 @@ class GameWriterGuardIntegrationTest {
     assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, pid)).isTrue();
     assertThat(listener.closed.get(10, TimeUnit.SECONDS)).isTrue();
     assertThat(writer.healthy()).isFalse();
+    Integer sessionCount = jdbc.queryForObject("SELECT count(*) FROM game_sessions", Integer.class);
+    assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> sessions.getOrCreate(null)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(jdbc.queryForObject("SELECT count(*) FROM game_sessions", Integer.class))
+        .isEqualTo(sessionCount);
     var current =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/v1/game/current"))
@@ -103,6 +109,9 @@ class GameWriterGuardIntegrationTest {
     assertThat(current.statusCode()).isEqualTo(500);
     assertThat(mapper.readTree(current.body()).path("error").path("code").asText())
         .isEqualTo("INTERNAL_ERROR");
+    assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> new GameWriterGuard(dataSource)))
+        .isInstanceOf(IllegalStateException.class);
+    writer.close();
     GameWriterGuard successor = new GameWriterGuard(dataSource);
     try {
       assertThat(successor.healthy()).isTrue();

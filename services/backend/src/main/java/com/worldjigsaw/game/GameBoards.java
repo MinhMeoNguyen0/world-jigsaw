@@ -31,17 +31,20 @@ public class GameBoards {
   private final JdbcTemplate jdbc;
   private final BoardValidator validator;
   private final Clock clock;
+  private final GameWriterGuard writer;
   private final ObjectMapper mapper = new ObjectMapper();
 
-  GameBoards(JdbcTemplate jdbc, BoardValidator validator, Clock clock) {
+  GameBoards(JdbcTemplate jdbc, BoardValidator validator, Clock clock, GameWriterGuard writer) {
     this.jdbc = jdbc;
     this.validator = validator;
     this.clock = clock;
+    this.writer = writer;
   }
 
   /** Trusted administrative import. Day is assigned by the caller, never inferred from a client. */
   @Transactional
   public void importBoard(LocalDate day, JsonNode definition, JsonNode snapshot) {
+    writer.transactionBarrier(jdbc);
     validator.validate(definition, snapshot);
     UUID puzzle = BoardValidator.id(definition, "puzzleId");
     jdbc.update(
