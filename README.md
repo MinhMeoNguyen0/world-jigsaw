@@ -9,6 +9,7 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 | -------------------- | -------------------------------------------------- |
 | `apps/web`           | Web client: Vite, React, TypeScript, React Router  |
 | `services/backend`   | Java Spring Boot backend                           |
+| `services/chat`      | Independent local ephemeral chat relay              |
 | `packages/contracts` | Versioned shared schemas, fixtures and types       |
 | `packages/generator` | Deterministic puzzle generator and review fixtures |
 | `packages/rules`     | Local puzzle rules                                 |
@@ -144,3 +145,8 @@ that lock through commit or rollback and perform board, membership, quota, event
 updates in the same transaction. Do not restore an old snapshot on cancel. This slice records the
 immutable close time but does not implement admission, lifecycle fencing or Confirm. Future writers
 must use the same board lock when changing canonical state, and must validate geometry and game rules.
+
+## Chat local setup
+
+See [`services/chat/README.md`](services/chat/README.md) for the independent development-only
+relay, its API, and its delivery and security limitations.
