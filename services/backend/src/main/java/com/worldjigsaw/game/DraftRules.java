@@ -176,14 +176,8 @@ class DraftRules {
         || moving.actions.isEmpty()
         || d.groups.stream().anyMatch(g -> id(g.group, "groupId").equals(merged))
         || findSource(d, merged) != null) throw fail("INVALID_ACTION", "Invalid attachment");
-    boolean eligible = false;
-    for (JsonNode m : moving.group.path("pieceIds"))
-      for (JsonNode t : target.group.path("pieceIds")) {
-        JsonNode p = piece(d, m.textValue()), q = piece(d, t.textValue());
-        if (LocalGeometry.canSnap(
-            p, moving.group.path("transform"), q, target.group.path("transform"))) eligible = true;
-      }
-    if (!eligible) throw fail("INVALID_ACTION", "Not adjacent or outside snap tolerance");
+    if (!canAttach(d, moving, target))
+      throw fail("INVALID_ACTION", "Not adjacent or outside snap tolerance");
     ObjectNode mergedGroup = MAPPER.createObjectNode().put("groupId", merged).put("revision", 0);
     ArrayNode members = mergedGroup.putArray("pieceIds");
     moving.group.path("pieceIds").forEach(members::add);
@@ -204,6 +198,20 @@ class DraftRules {
     d.groups.add(new DraftGroup(mergedGroup, sources, actions));
     checkQuota(d);
     return d;
+  }
+
+  boolean canAttach(Draft draft, String movingId, String targetId) {
+    return canAttach(draft, group(draft, uuid(movingId)), group(draft, uuid(targetId)));
+  }
+
+  private boolean canAttach(Draft d, DraftGroup moving, DraftGroup target) {
+    for (JsonNode m : moving.group.path("pieceIds"))
+      for (JsonNode t : target.group.path("pieceIds")) {
+        JsonNode p = piece(d, m.textValue()), q = piece(d, t.textValue());
+        if (LocalGeometry.canSnap(
+            p, moving.group.path("transform"), q, target.group.path("transform"))) return true;
+      }
+    return false;
   }
 
   Draft undo(Draft original, String actionId) {

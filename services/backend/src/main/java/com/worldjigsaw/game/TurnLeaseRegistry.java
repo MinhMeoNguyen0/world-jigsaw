@@ -262,7 +262,9 @@ class TurnLeaseRegistry {
     if (turn == null
         || !turn.subject.equals(subject)
         || turn.generation != generation
-        || turn.confirming != null) throw error("TURN_CLOSED", "Turn is closed or fenced");
+        || (turn.confirming != null && !turn.confirming.equals(commandId)))
+      throw error("TURN_CLOSED", "Turn is closed or fenced");
+    if (turn.confirming != null) return info(turn);
     if (commandId == null
         || admittedAt == null
         || !admittedAt.isBefore(turn.expiresAt)

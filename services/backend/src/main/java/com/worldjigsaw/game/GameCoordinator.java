@@ -243,19 +243,30 @@ class GameCoordinator {
       transform.put("rotation", request.intendedTransform().rotation());
       DraftRules.Draft candidate =
           rules.move(turn.draft, moving, request.actionId().toString(), transform);
-      List<String> targets =
+      JsonNode current = current(subject, turn.puzzle);
+      if (LocalGeometry.hasForbiddenOverlap(
+          turn.definition, combined(current.path("snapshot"), turn, candidate)))
+        throw error("INVALID_ACTION", "Forbidden piece overlap");
+      List<String> targets = new ArrayList<>(
           selected.stream()
               .map(g -> g.group().path("groupId").textValue())
               .filter(id -> !id.equalsIgnoreCase(moving))
               .sorted(String.CASE_INSENSITIVE_ORDER)
-              .toList();
+              .toList());
       String currentGroup = moving;
-      for (String target : targets) {
+      while (!targets.isEmpty()) {
+        String target = null;
+        for (String possible : targets)
+          if (rules.canAttach(candidate, currentGroup, possible)) {
+            target = possible;
+            break;
+          }
+        if (target == null) throw error("INVALID_ACTION", "Not adjacent or outside snap tolerance");
         String merged = identities.reserveGroup(turn.puzzle).toString();
         candidate = rules.attach(candidate, currentGroup, target, merged);
         currentGroup = merged;
+        targets.remove(target);
       }
-      JsonNode current = current(subject, turn.puzzle);
       rules.confirm(
           candidate,
           current.path("snapshot"),
@@ -466,7 +477,10 @@ class GameCoordinator {
           || !equivalent(expected.get(submitted.actionId()), submitted))
         throw error("INVALID_ACTION", "Confirm does not match the draft");
     }
-    boolean[] pinned = {false};
+    UUID processing = leases.confirming(subject, turnId, generation);
+    if (processing != null && !command.equals(processing))
+      throw error("TURN_CLOSED", "Confirm is processing");
+    boolean[] pinned = {processing != null};
     long[] changedVersion = {-1};
     JsonNode result;
     try {
@@ -590,6 +604,27 @@ class GameCoordinator {
     if (existing != null) {
       if (existing.conflict())
         throw error("COMMAND_CONFLICT", "Request ID was already used with different content");
+      Turn pending = turns.get(turnId);
+      if (pending != null
+          && pending.subject.equals(subject)
+          && pending.puzzle.equals(puzzle)
+          && pending.generation == payload.path("generation").longValue()
+          && pending.revision == payload.path("turnRevision").longValue()) {
+        try {
+          String outcome = existing.result().path("outcome").asText();
+          if ("canceled".equals(outcome)) {
+            leases.clear(subject, turnId, pending.generation, "canceled");
+          } else if ("confirmed".equals(outcome)) {
+            forceResyncAll("gap");
+            UUID processing = leases.confirming(subject, turnId, pending.generation);
+            if (processing != null) finishConfirmedTurn(pending, processing, existing.result(), -1);
+            else leases.clear(subject, turnId, pending.generation, "confirmed");
+          }
+        } catch (TurnLeaseRegistry.LeaseError ignored) {
+          drainLeaseClears();
+        }
+        drainLeaseClears();
+      }
       return existing.result();
     }
     drainLeaseClears();
@@ -654,6 +689,18 @@ class GameCoordinator {
     if (existing != null) {
       if (existing.conflict())
         throw error("COMMAND_CONFLICT", "Request ID was already used with different content");
+      Turn pending = turns.get(turnId);
+      if (pending != null
+          && pending.subject.equals(subject)
+          && pending.puzzle.equals(puzzle)
+          && pending.generation == payload.path("generation").longValue()
+          && pending.revision == payload.path("turnRevision").longValue()) {
+        try {
+          applyUndo(pending, actionId, clock.instant());
+        } catch (TurnLeaseRegistry.LeaseError ignored) {
+          drainLeaseClears();
+        }
+      }
       return existing.result();
     }
     drainLeaseClears();
@@ -682,8 +729,19 @@ class GameCoordinator {
         identities.record(subject, puzzle, requestId, "undo", payload, result);
     if (saved.conflict())
       throw error("COMMAND_CONFLICT", "Request ID was already used with different content");
+    applyUndo(turn, updated, survivors, acceptedAt);
+    return saved.result();
+  }
+
+  private void applyUndo(Turn turn, UUID actionId, Instant acceptedAt) {
+    DraftRules.Draft updated = rules.undo(turn.draft, actionId.toString());
+    applyUndo(turn, updated, serverActions(updated), acceptedAt);
+  }
+
+  private void applyUndo(
+      Turn turn, DraftRules.Draft updated, List<PreviewGeneration.Action> survivors, Instant acceptedAt) {
     TurnLeaseRegistry.Info info =
-        leases.fenceUndoAt(subject, turnId, generation, survivors, acceptedAt);
+        leases.fenceUndoAt(turn.subject, turn.id, turn.generation, survivors, acceptedAt);
     turn.draft = updated;
     turn.generation = info.generation();
     turn.revision++;
@@ -692,7 +750,6 @@ class GameCoordinator {
     for (var preview : leases.previews(turn.puzzle))
       if (preview.turnId().equals(turn.id)) emit(previewJson(preview));
     drainLeaseClears();
-    return saved.result();
   }
 
   private JsonNode boardState(UUID subject, UUID puzzle) {
