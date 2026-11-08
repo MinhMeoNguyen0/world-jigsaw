@@ -34,6 +34,7 @@ class GameRecoveryTest {
   private final java.util.concurrent.atomic.AtomicReference<Instant> now =
       new java.util.concurrent.atomic.AtomicReference<>(Instant.parse("2026-11-07T12:00:00Z"));
   private GameCoordinator game;
+  private GameBoards boards;
   private GameIdentityLedger identities;
   private ConfirmationJournal journal;
   private TurnLeaseRegistry leases;
@@ -46,7 +47,7 @@ class GameRecoveryTest {
     JsonNode board = mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());
     snapshot = board.path("snapshot");
     puzzle = UUID.fromString(snapshot.path("puzzleId").asText());
-    GameBoards boards = mock(GameBoards.class);
+    boards = mock(GameBoards.class);
     when(boards.currentFor(org.mockito.ArgumentMatchers.nullable(UUID.class))).thenReturn(Map.of(
         "definition", mapper.convertValue(board.path("definition"), Map.class),
         "snapshot", mapper.convertValue(snapshot, Map.class),
@@ -291,6 +292,27 @@ class GameRecoveryTest {
     assertThat(game.subscribe(puzzle).previews()).isEmpty();
     assertThat(game.drainEvents().values()).filteredOn(e -> "previewCleared".equals(e.path("type").asText()))
         .extracting(e -> e.path("reason").asText()).contains("expired");
+  }
+
+  @Test
+  void rolloverRetriesAfterTransientBoardQueryFailure() {
+    java.util.List<JsonNode> messages = new java.util.ArrayList<>();
+    game.subscribe(UUID.randomUUID(), subject, puzzle, null, new GameCoordinator.Sink() {
+      @Override public boolean offer(JsonNode message) { messages.add(message.deepCopy()); return true; }
+      @Override public void slow() { throw new AssertionError("unexpected slow consumer"); }
+    });
+    now.set(Instant.parse("2026-11-08T00:00:00Z"));
+    when(boards.current()).thenThrow(new IllegalStateException("database unavailable"))
+        .thenReturn(Map.of("snapshot", Map.of("puzzleId", puzzle.toString())));
+    assertThatThrownBy(() -> game.tick()).hasMessageContaining("database unavailable");
+    assertThat(messages).extracting(m -> m.path("type").asText()).containsExactly("subscribed");
+    game.tick();
+    assertThat(messages).extracting(m -> m.path("type").asText())
+        .containsExactly("subscribed", "puzzleChanged");
+    assertThat(messages.getLast().path("available").asBoolean()).isTrue();
+    assertThat(messages.getLast().path("puzzleId").asText()).isEqualTo(puzzle.toString());
+    game.tick();
+    assertThat(messages).hasSize(2);
   }
 
   private ObjectNode payload(UUID turn, UUID request) {

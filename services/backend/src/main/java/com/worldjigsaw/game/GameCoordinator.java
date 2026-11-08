@@ -484,7 +484,6 @@ class GameCoordinator {
     recoverConfirmation();
     java.time.LocalDate day = clock.instant().atZone(java.time.ZoneOffset.UTC).toLocalDate();
     if (day.equals(currentDay)) return;
-    currentDay = day;
     ObjectNode changed =
         mapper
             .createObjectNode()
@@ -502,6 +501,7 @@ class GameCoordinator {
     }
     emit(changed);
     subscribers.clear();
+    currentDay = day;
   }
 
   private void recoverConfirmation() {

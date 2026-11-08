@@ -106,6 +106,16 @@ class GameWriterGuardIntegrationTest {
     GameWriterGuard successor = new GameWriterGuard(dataSource);
     try {
       assertThat(successor.healthy()).isTrue();
+      var oldWriterRead =
+          client.send(
+              HttpRequest.newBuilder(URI.create(origin + "/api/v1/game/current"))
+                  .header("Cookie", cookie)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertThat(oldWriterRead.statusCode()).isEqualTo(500);
+      assertThat(mapper.readTree(oldWriterRead.body()).path("error").path("code").asText())
+          .isEqualTo("INTERNAL_ERROR");
     } finally {
       successor.close();
     }
