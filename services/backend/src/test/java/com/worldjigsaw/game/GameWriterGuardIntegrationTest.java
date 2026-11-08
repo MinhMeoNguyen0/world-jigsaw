@@ -11,8 +11,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
-import java.nio.file.Path;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -90,7 +90,8 @@ class GameWriterGuardIntegrationTest {
     socket.sendText(subscribe, true).get();
     assertThat(listener.subscribed.get(10, TimeUnit.SECONDS)).isTrue();
     String begin =
-        mapper.createObjectNode()
+        mapper
+            .createObjectNode()
             .put("schemaVersion", 1)
             .put("puzzleId", board.path("snapshot").path("puzzleId").asText())
             .put("requestId", UUID.randomUUID().toString())
@@ -122,15 +123,17 @@ class GameWriterGuardIntegrationTest {
         barrier.execute();
       }
       synchronized (writer) {
-        assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, pid)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, pid))
+            .isTrue();
         assertThat(writer.healthy()).isFalse();
       }
       long waitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
       int waiting;
       do {
-        waiting = jdbc.queryForObject(
-            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT pg_advisory_xact_lock(%'",
-            Integer.class);
+        waiting =
+            jdbc.queryForObject(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT pg_advisory_xact_lock(%'",
+                Integer.class);
         if (waiting == 0) Thread.sleep(50);
       } while (waiting == 0 && System.nanoTime() < waitDeadline);
       assertThat(waiting).isPositive();
@@ -167,25 +170,43 @@ class GameWriterGuardIntegrationTest {
     var reader = Executors.newSingleThreadExecutor();
     try {
       synchronized (writer) {
-        Integer recoveredPid = jdbc.queryForObject(
-            "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = ? AND objid::bigint = ? AND granted",
-            Integer.class, high, low);
-        assertThat(jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, recoveredPid))
+        Integer recoveredPid =
+            jdbc.queryForObject(
+                "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = ? AND objid::bigint = ? AND granted",
+                Integer.class,
+                high,
+                low);
+        assertThat(
+                jdbc.queryForObject("SELECT pg_terminate_backend(?)", Boolean.class, recoveredPid))
             .isTrue();
         assertThat(writer.healthy()).isFalse();
-        competing = new ProcessBuilder(
-            Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-            "-cp", System.getProperty("worldjigsaw.test.classpath"),
-            GameWriterProcess.class.getName(), postgres.getJdbcUrl(),
-            postgres.getUsername(), postgres.getPassword())
-            .directory(directory.toFile()).redirectErrorStream(true).start();
-        BufferedReader output = new BufferedReader(new InputStreamReader(competing.getInputStream()));
-        assertThat(reader.submit(() -> {
-          String line;
-          while ((line = output.readLine()) != null) if (line.equals("READY")) return line;
-          return null;
-        }).get(15, TimeUnit.SECONDS)).isEqualTo("READY");
-        competing.getOutputStream().write("EXIT\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        competing =
+            new ProcessBuilder(
+                    Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-cp",
+                    System.getProperty("worldjigsaw.test.classpath"),
+                    GameWriterProcess.class.getName(),
+                    postgres.getJdbcUrl(),
+                    postgres.getUsername(),
+                    postgres.getPassword())
+                .directory(directory.toFile())
+                .redirectErrorStream(true)
+                .start();
+        BufferedReader output =
+            new BufferedReader(new InputStreamReader(competing.getInputStream()));
+        assertThat(
+                reader
+                    .submit(() -> {
+                      String line;
+                      while ((line = output.readLine()) != null)
+                        if (line.equals("READY")) return line;
+                      return null;
+                    })
+                    .get(15, TimeUnit.SECONDS))
+            .isEqualTo("READY");
+        competing
+            .getOutputStream()
+            .write("EXIT\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         competing.getOutputStream().flush();
         assertThat(competing.waitFor(10, TimeUnit.SECONDS)).isTrue();
         assertThat(competing.exitValue()).isZero();
@@ -193,7 +214,8 @@ class GameWriterGuardIntegrationTest {
         assertThat(writer.healthy()).isFalse();
       }
     } finally {
-      if (competing != null && competing.isAlive()) competing.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
+      if (competing != null && competing.isAlive())
+        competing.destroyForcibly().waitFor(10, TimeUnit.SECONDS);
       reader.shutdownNow();
       Files.deleteIfExists(directory.resolve(".world-jigsaw-writer.lock"));
       Files.deleteIfExists(directory);
