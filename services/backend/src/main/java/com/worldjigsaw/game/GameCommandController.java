@@ -68,7 +68,7 @@ class GameCommandController {
   ResponseEntity<Map<?, ?>> undo(@PathVariable UUID turnId, HttpServletRequest request)
       throws IOException {
     UUID subject = subject(request, true);
-    JsonNode payload = wire.parse("Undo", body(request));
+    JsonNode payload = wire.parse("UndoV2", body(request));
     verifyTurn(turnId, payload);
     return response(game.undo(subject, payload));
   }

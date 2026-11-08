@@ -43,6 +43,7 @@ export interface ContractTypes {
   Cancel: Cancel
   CommandResult: CommandResult
   Undo: Undo
+  UndoV2: UndoV2
   UndoResult: UndoResult
   CancelResult: CancelResult
   CurrentGame: CurrentGame
@@ -375,6 +376,16 @@ export interface Undo {
   requestId: string
   turnRevision: number
   generation: number
+  actionId: string
+}
+export interface UndoV2 {
+  schemaVersion: 1
+  puzzleId: string
+  turnId: string
+  requestId: string
+  turnRevision: number
+  generation: number
+  draftRevision: number
   actionId: string
 }
 export interface UndoResult {

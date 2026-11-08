@@ -63,11 +63,14 @@ function harness() {
   let undoReply: Promise<Response> | null = null
   let currentUnavailable = false
   const calls: string[] = []
-  const fetcher = vi.fn((input: RequestInfo | URL) => {
+  const undoBodies: unknown[] = []
+  const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     calls.push(path)
     if (path.endsWith('/undo')) {
       if (!undoReply) throw new Error('Missing undo response')
+      if (typeof init?.body !== 'string') throw new Error('Missing undo payload')
+      undoBodies.push(JSON.parse(init.body) as unknown)
       return undoReply
     }
     if (path.includes('/commands/') || path.endsWith('/confirm')) {
@@ -129,6 +132,7 @@ function harness() {
     client,
     sockets,
     calls,
+    undoBodies,
     start,
     subscribe,
     setGame: (value: CurrentGame) => {
@@ -420,6 +424,7 @@ describe('live game adapter', () => {
     ['confirm', 'confirmed'],
     ['confirm', 'unknown'],
     ['confirm', 'failure'],
+    ['confirm', 'definitive failure'],
   ] as const)(
     'preserves a newer retained command after a stale %s %s response',
     async (operation, outcome) => {
@@ -437,6 +442,22 @@ describe('live game adapter', () => {
       if (outcome === 'failure') {
         delayed.reject(new TypeError('lost response'))
         await expect(stale).rejects.toThrow('lost response')
+      } else if (outcome === 'definitive failure') {
+        delayed.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              error: {
+                code: 'STALE_REVISION',
+                message: 'Draft changed',
+                requestId: commandA.commandId,
+                retryable: false,
+              },
+            }),
+            { status: 409 },
+          ),
+        )
+        await expect(stale).rejects.toThrow('STALE_REVISION')
       } else {
         delayed.resolve(
           outcome === 'confirmed'
@@ -690,6 +711,116 @@ describe('versioned subscription and preview receipts', () => {
     expect(next.sent).toHaveLength(2)
   })
 
+  it.each(['before handoff', 'after handoff'] as const)(
+    'reconciles a definitive confirmation rejection %s after resynchronization',
+    async (order) => {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      const response = deferred<Response>()
+      h.setCommandReply(response.promise)
+      const pending = h.client.confirm()
+      const changedGroup = fixture.boardChanged.groups[0]
+      const unchangedGroup = current.snapshot.groups[1]
+      if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
+      const snapshot = {
+        ...current.snapshot,
+        boardVersion: fixture.boardChanged.boardVersion,
+        groups: [changedGroup, unchangedGroup],
+      }
+      const recovered = { ...handoff([action], 1), snapshot, watermark: snapshot.boardVersion }
+      h.setGame({ ...current, snapshot, ownTurn: turn })
+      socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+      await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      if (order === 'after handoff') next.emit(recovered)
+      response.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'STALE_REVISION',
+              message: 'Draft changed',
+              requestId: action.actionId,
+              retryable: false,
+            },
+          }),
+          { status: 409 },
+        ),
+      )
+      await expect(pending).rejects.toThrow('STALE_REVISION')
+      expect(h.client.getState().pendingConfirm).toBeNull()
+      if (order === 'before handoff') next.emit(recovered)
+      else {
+        await vi.waitFor(() => expect(h.sockets).toHaveLength(3))
+        const refreshed = socketAt(h.sockets, 2)
+        refreshed.open()
+        refreshed.emit(recovered)
+      }
+      expect(h.client.getState().connection).toBe('ready')
+      h.client.preview(action)
+      expect(h.client.getState().previewPending).toBe(true)
+    },
+  )
+
+  it('retains an unknown confirmation outcome after resynchronization', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    const response = deferred<Response>()
+    h.setCommandReply(response.promise)
+    const pending = h.client.confirm()
+    socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 1))
+    response.reject(new TypeError('connection lost'))
+    await expect(pending).rejects.toThrow('connection lost')
+    expect(h.client.getState().pendingConfirm).not.toBeNull()
+    expect(() => h.client.preview(action)).toThrow('not ready')
+  })
+
+  it('resynchronizes after a stale undo without trusting the newer draft', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.setUndoReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'STALE_REVISION',
+              message: 'Draft changed',
+              requestId: action.actionId,
+              retryable: false,
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    )
+    await expect(h.client.undo(action.actionId)).rejects.toThrow('STALE_REVISION')
+    expect(h.undoBodies).toEqual([
+      expect.objectContaining({ draftRevision: 1, actionId: action.actionId }),
+    ])
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 2))
+    expect(h.client.getState().connection).toBe('ready')
+    await expect(h.client.undo(action.actionId)).rejects.toThrow('not ready')
+    expect(() => h.client.preview(action)).toThrow('not ready')
+  })
+
   it.each(['handoff first', 'response first'] as const)(
     'keeps surviving actions after undo when %s',
     async (order) => {
@@ -704,6 +835,9 @@ describe('versioned subscription and preview receipts', () => {
       const response = deferred<Response>()
       h.setUndoReply(response.promise)
       const pending = h.client.undo(action.actionId)
+      expect(h.undoBodies).toEqual([
+        expect.objectContaining({ draftRevision: 2, actionId: action.actionId }),
+      ])
       const newTurn = {
         ...turn,
         generation: turn.generation + 1,

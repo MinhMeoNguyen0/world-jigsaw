@@ -955,6 +955,12 @@ class GameCoordinator {
 
   synchronized JsonNode undo(UUID subject, JsonNode payload) {
     drainLeaseClears();
+    JsonNode draftRevision = payload.path("draftRevision");
+    if (!draftRevision.isIntegralNumber()
+        || !draftRevision.canConvertToLong()
+        || draftRevision.longValue() < 0
+        || draftRevision.longValue() > 9_007_199_254_740_991L)
+      throw new IllegalArgumentException("Invalid draft revision");
     UUID puzzle = BoardValidator.id(payload, "puzzleId"),
         turnId = BoardValidator.id(payload, "turnId"),
         requestId = BoardValidator.id(payload, "requestId"),
@@ -968,7 +974,8 @@ class GameCoordinator {
           && pending.subject.equals(subject)
           && pending.puzzle.equals(puzzle)
           && pending.generation == payload.path("generation").longValue()
-          && pending.revision == payload.path("turnRevision").longValue()) {
+          && pending.revision == payload.path("turnRevision").longValue()
+          && pending.draftRevision == draftRevision.longValue()) {
         try {
           applyUndo(pending, actionId, clock.instant());
         } catch (TurnLeaseRegistry.LeaseError ignored) {
@@ -982,6 +989,8 @@ class GameCoordinator {
     Turn turn = turn(subject, turnId, generation);
     if (!turn.puzzle.equals(puzzle) || turn.revision != payload.path("turnRevision").longValue())
       throw error("TURN_CLOSED", "Turn revision changed");
+    if (turn.draftRevision != draftRevision.longValue())
+      throw error("STALE_REVISION", "Draft revision changed");
     Instant acceptedAt = clock.instant();
     leases.info(subject, turnId, generation);
     DraftRules.Draft updated = rules.undo(turn.draft, actionId.toString());

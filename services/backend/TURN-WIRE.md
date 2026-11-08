@@ -52,3 +52,7 @@ complete accepted action set; both checks occur under the coordinator lock befor
 An intervening same-session tab therefore fences a stale command even if the action set returns
 to the same values. Existing v1 confirmation retains its original semantics. Clients must not
 infer acceptance from a broadcast and must reconcile an unknown result before another save.
+
+Undo uses the closed `UndoV2` payload with the observed draft revision. The service rejects the
+original `Undo` shape because it cannot fence a concurrent preview; a retry uses the same request
+ID and payload. Both initial execution and receipt recovery check the revision before mutation.

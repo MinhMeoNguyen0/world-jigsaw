@@ -19,7 +19,7 @@ import type {
   PuzzleChanged,
   Subscribed,
   Turn,
-  Undo,
+  UndoV2,
   UndoResult,
 } from '@world-jigsaw/contracts'
 
@@ -115,7 +115,7 @@ export class LiveGame {
   private draftProof: DraftProof | null = null
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
   private cancelRequest: Cancel | null = null
-  private undoRequest: Undo | null = null
+  private undoRequest: UndoV2 | null = null
   private confirmBusy: { payload: Confirm; epoch: number } | null = null
   private readonly deps: LiveGameDependencies
 
@@ -266,7 +266,7 @@ export class LiveGame {
     })
   }
 
-  private undoProof(payload: Undo): DraftProof | null {
+  private undoProof(payload: UndoV2): DraftProof | null {
     const proof = this.draftProof
     if (
       !proof ||
@@ -274,6 +274,7 @@ export class LiveGame {
       !sameId(proof.turn.turnId, payload.turnId) ||
       proof.turn.generation !== payload.generation ||
       proof.turn.turnRevision !== payload.turnRevision ||
+      proof.revision !== payload.draftRevision ||
       !proof.actions.some((action) => sameId(action.actionId, payload.actionId))
     )
       return null
@@ -635,6 +636,7 @@ export class LiveGame {
       throw new Error('Draft is not ready for undo')
     if (!this.undoRequest) {
       const turn = this.turn()
+      if (this.draftRevision === null) throw new Error('Missing draft revision')
       this.undoRequest = {
         schemaVersion: 1,
         puzzleId: turn.puzzleId,
@@ -642,6 +644,7 @@ export class LiveGame {
         requestId: this.deps.id(),
         turnRevision: turn.turnRevision,
         generation: turn.generation,
+        draftRevision: this.draftRevision,
         actionId,
       }
     }
@@ -657,8 +660,13 @@ export class LiveGame {
       )
     } catch (error) {
       if (this.undoRequest === payload) {
-        if (error instanceof GameRequestError && error.definitive) this.undoRequest = null
-        if (epoch === this.epoch) this.publish({ issue: String(error) })
+        if (error instanceof GameRequestError && error.definitive) {
+          this.undoRequest = null
+          if (this.state.connection === 'ready') {
+            this.uncertainDraft = true
+            this.resync('Undo rejected; refreshing the draft.')
+          }
+        } else if (epoch === this.epoch) this.publish({ issue: String(error) })
       }
       throw error
     }
@@ -802,15 +810,21 @@ export class LiveGame {
       return this.acceptResult(result, payload, epoch, unresolvedCommand)
     } catch (error) {
       if (
-        epoch === this.epoch &&
         this.state.pendingConfirm === payload &&
         this.state.unresolvedCommand === unresolvedCommand
       )
         if (error instanceof GameRequestError && error.definitive) {
-          this.publish({ pendingConfirm: null })
           this.uncertainDraft = true
-          if (epoch === this.epoch) this.resync('Confirmation rejected; refreshing the draft.')
-        } else this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
+          this.publish({ pendingConfirm: null, issue: String(error) })
+          if (
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            this.state.pendingConfirm === null &&
+            this.state.unresolvedCommand === unresolvedCommand &&
+            this.state.connection === 'ready'
+          )
+            this.resync('Confirmation rejected; refreshing the draft.')
+        } else if (epoch === this.epoch)
+          this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
       throw error
     } finally {
       if (this.confirmBusy === busy) this.confirmBusy = null

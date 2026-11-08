@@ -136,6 +136,7 @@ class GameRecoveryTest {
     game.preview(subject, turn.turnId(), 0, 1, action);
     ObjectNode undo = payload(turn.turnId(), UUID.randomUUID());
     undo.put("actionId", actionId.toString());
+    undo.put("draftRevision", 1);
     loseReply.set(true);
     assertThatThrownBy(() -> game.undo(subject, undo)).hasMessageContaining("lost reply");
     assertThatThrownBy(() -> game.preview(subject, turn.turnId(), 0, 2, action))
@@ -144,6 +145,27 @@ class GameRecoveryTest {
     assertThat(game.undo(subject, undo).path("generation").asLong()).isEqualTo(1);
     game.preview(
         subject, turn.turnId(), 1, 1, action(UUID.randomUUID(), snapshot.path("groups").get(0)));
+  }
+
+  @Test
+  void staleUndoAndReceiptRecoveryCannotRemoveNewerPreview() {
+    var turn = game.begin(subject, puzzle);
+    UUID actionId = UUID.randomUUID();
+    var action = action(actionId, snapshot.path("groups").get(0));
+    game.preview(subject, turn.turnId(), 0, 1, action);
+    UUID undoId = UUID.randomUUID();
+    ObjectNode undo = payload(turn.turnId(), undoId);
+    undo.put("actionId", actionId.toString());
+    undo.put("draftRevision", 1);
+    game.preview(subject, turn.turnId(), 0, 2, action);
+    assertThatThrownBy(() -> game.undo(subject, undo))
+        .isInstanceOf(DraftRules.RuleError.class)
+        .hasMessageContaining("Draft revision changed");
+    assertThat(game.subscribe(puzzle).previews()).hasSize(1);
+    JsonNode result = mapper.createObjectNode().put("generation", 1).put("turnRevision", 1);
+    receipts.put(undoId, new GameIdentityLedger.Receipt(false, result));
+    assertThat(game.undo(subject, undo)).isEqualTo(result);
+    assertThat(game.subscribe(puzzle).previews()).hasSize(1);
   }
 
   @Test

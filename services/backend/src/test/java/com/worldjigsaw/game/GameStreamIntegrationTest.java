@@ -156,7 +156,7 @@ class GameStreamIntegrationTest {
         .isEqualTo(canceled);
     assertClear(la.next(), idA, "canceled");
     assertClear(lb.next(), idA, "canceled");
-    ObjectNode undo = request(puzzle, idB, 0, 0).put("actionId", actionB);
+    ObjectNode undo = request(puzzle, idB, 0, 0).put("actionId", actionB).put("draftRevision", 1);
     JsonNode undone =
         post(b, origin + "/api/v1/game/turns/" + idB + "/undo", origin, cookieB, undo);
     assertSchema("UndoResult", undone);
@@ -473,6 +473,33 @@ class GameStreamIntegrationTest {
     JsonNode ack2 = second.next();
     assertThat(ack2.path("actions")).isEqualTo(ack.path("actions"));
     assertThat(ack2.path("draftRevision").intValue()).isEqualTo(2);
+    ObjectNode staleUndo =
+        request(puzzle, turnId, 0, 0).put("actionId", actionId).put("draftRevision", 1);
+    var rejectedUndo =
+        client.send(
+            postRequest(
+                origin + "/api/v1/game/turns/" + turnId + "/undo", origin, cookie, staleUndo),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(rejectedUndo.statusCode()).isEqualTo(409);
+    assertThat(mapper.readTree(rejectedUndo.body()).path("error").path("code").asText())
+        .isEqualTo("STALE_REVISION");
+    ObjectNode legacyUndo = staleUndo.deepCopy();
+    legacyUndo.remove("draftRevision");
+    assertThat(
+            client
+                .send(
+                    postRequest(
+                        origin + "/api/v1/game/turns/" + turnId + "/undo",
+                        origin,
+                        cookie,
+                        legacyUndo),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode())
+        .isEqualTo(400);
+    send(a, subscribe);
+    JsonNode afterRejectedUndo = first.next();
+    assertThat(afterRejectedUndo.path("draftRevision").intValue()).isEqualTo(2);
+    assertThat(afterRejectedUndo.path("actions")).isEqualTo(ack2.path("actions"));
     ObjectNode stale =
         mapper
             .createObjectNode()
