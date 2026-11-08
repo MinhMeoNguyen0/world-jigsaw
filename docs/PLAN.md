@@ -368,7 +368,7 @@ A preview acknowledgement is not a commit. Confirm has its own idempotent comman
 - Piece ID, row/col, correct solved transform, edge shape definitions, generated mesh/path and texture crop.
 - Deterministically derive tabs/sockets from puzzle seed; shared edges are geometric opposites.
 - A photo is fitted/cropped to a defined aspect ratio without distortion; make author and license available in preview credits.
-- Launch default no-rotation mode; rotation can be a later expert feature.
+- See the [local rules](../packages/rules/README.md) for current rotation behavior.
 - Use PixiJS for canvas/WebGL rendering. Use reusable textures and spatial indexes for hit testing.
 
 ### 7.2 Mutable group model

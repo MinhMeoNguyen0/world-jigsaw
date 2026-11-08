@@ -53,8 +53,8 @@ test('fixtures are byte-reproducible and conform to the board contract', () => {
   assert.equal(review.definition.pieces.length, 60)
   assert.equal(sample.definition.pieces.length, 80)
   for (const [board, expectedChecksum] of [
-    [review, 'sha256:5db41b8d2065183955c8b2d6dc66a651bdba59935ed60bfe46fa134cbd9c61bd'],
-    [sample, 'sha256:12d1de1822a2d3d8789c190af7e86bb4c47e40cfc18dc5ba399db3fc849c301d'],
+    [review, 'sha256:5a40345ae9f39c4c92d5e095966798e3f0eead90b2a546f722609e93f6cf70be'],
+    [sample, 'sha256:4983eb0f748fe074f570fa2aeff523dc635b354bee1a797ebc5cd3edb33f2af7'],
   ] as const) {
     assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
     assert.equal(board.definition.checksum, expectedChecksum)
@@ -111,7 +111,10 @@ test('review placements and rotated tray references lie in their intended zones'
     if (i >= 3) centers.push(center)
   })
   assert.equal(new Set(centers.map((p) => `${p.x},${p.y}`)).size, centers.length)
-  assert.ok(snapshot.groups.some((g) => g.transform.rotation % 90000 !== 0))
+  assert.deepEqual(
+    new Set(snapshot.groups.slice(3).map((g) => g.transform.rotation)),
+    new Set([0, 90000, 180000, 270000]),
+  )
 })
 test('canonical JSON and SHA-256 match a worked example', () => {
   const canonical = canonicalJson({ z: [1, true, null], a: 'a\n"' })
@@ -185,4 +188,21 @@ test('extreme valid aspect ratios and sizes remain within contract bounds', () =
       assert.equal(isInsideSurface(center, board.definition.playSurface), false)
     }
   }
+})
+
+test('seeded orientations use four repeatable quarter turns', () => {
+  for (const seed of ['review-60', 'sample-80', 'another-seed']) {
+    const first = generate({ ...options, seed, placedPieces: 0 })
+    const second = generate({ ...options, seed, placedPieces: 0 })
+    const angles = first.snapshot.groups.map((g) => g.transform.rotation)
+    assert.deepEqual(
+      angles,
+      second.snapshot.groups.map((g) => g.transform.rotation),
+    )
+    assert.deepEqual(new Set(angles), new Set([0, 90000, 180000, 270000]))
+    assert.ok(angles.every((angle) => [0, 90000, 180000, 270000].includes(angle)))
+  }
+  const angles = (seed: string) =>
+    generate({ ...options, seed, placedPieces: 0 }).snapshot.groups.map((g) => g.transform.rotation)
+  assert.notDeepEqual(angles('review-60'), angles('another-seed'))
 })
