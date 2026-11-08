@@ -64,17 +64,13 @@ test('unique identity, definition version, adjacency and angle bounds are enforc
   assert.equal(validateBoard(definition, rotation).valid, false)
 })
 
-test('duplicate actions and cyclic or missing dependencies are rejected', () => {
+test('duplicate actions and duplicate base revisions are rejected', () => {
   const duplicate = copy(confirm)
   duplicate.actions[1].actionId = duplicate.actions[0].actionId
   assert.equal(validate('Confirm', duplicate).valid, false)
-  const cyclic = copy(confirm)
-  cyclic.actions[0].dependsOn = [cyclic.actions[1].actionId]
-  cyclic.actions[1].dependsOn = [cyclic.actions[0].actionId]
-  assert.equal(validate('Confirm', cyclic).valid, false)
-  const missing = copy(confirm)
-  missing.actions[0].dependsOn = [id(999)]
-  assert.equal(validate('Confirm', missing).valid, false)
+  const repeatedBase = copy(confirm)
+  repeatedBase.actions[0].baseRevisions.push(repeatedBase.actions[0].baseRevisions[0])
+  assert.equal(validate('Confirm', repeatedBase).valid, false)
 })
 
 test('confirmed event applies atomically; duplicates, gaps and invalid membership do not', () => {
@@ -234,23 +230,77 @@ test('half-open play-surface vectors distinguish free table sorting and entry', 
     assert.equal(isInsideSurface(sample.point, geometry.surface.bounds), sample.inside)
 })
 
-test('batch can contain free sorts alongside at most five counted actions', () => {
+test('shape validation leaves quota and no-op decisions to authoritative state', () => {
   const example = confirm.actions[0]
-  const sorts = Array.from({ length: 8 }, (_, i) => ({
+  const actions = Array.from({ length: 81 }, (_, i) => ({
     ...example,
     actionId: id(1000 + i),
-    kind: 'sort',
+    kind: i < 75 ? 'sort' : 'piece',
   }))
-  assert.equal(validate('Confirm', { ...confirm, actions: sorts }).valid, true)
-  const counted = Array.from({ length: 5 }, (_, i) => ({ ...example, actionId: id(1100 + i) }))
-  assert.equal(validate('Confirm', { ...confirm, actions: [...sorts, ...counted] }).valid, true)
+  assert.equal(validate('Confirm', { ...confirm, actions: actions.slice(75) }).valid, true)
+  assert.equal(validate('Confirm', { ...confirm, actions }).valid, true)
   assert.equal(
-    validate('Confirm', {
-      ...confirm,
-      actions: [...sorts, ...counted, { ...example, actionId: id(1200) }],
+    validate('Subscribed', {
+      schemaVersion: 1,
+      type: 'subscribed',
+      snapshot,
+      watermark: snapshot.boardVersion,
+      previews: actions.map((action, sequence) => ({ ...preview, sequence, action })),
     }).valid,
-    false,
+    true,
   )
+})
+
+test('all allowance representations enforce committed quota arithmetic', () => {
+  const good = { limit: 5, used: 5, remaining: 0 }
+  const bad = { limit: 5, used: 5, remaining: 5 }
+  const current = {
+    schemaVersion: 1,
+    day: '2026-11-08',
+    serverTime: '2026-11-08T00:00:00Z',
+    endsAt: '2026-11-09T00:00:00Z',
+    definition,
+    snapshot,
+    allowance: good,
+    ownTurn: null,
+  }
+  const canceled = {
+    schemaVersion: 1,
+    puzzleId: confirm.puzzleId,
+    turnId: confirm.turnId,
+    requestId: id(1400),
+    outcome: 'canceled',
+    boardVersion: snapshot.boardVersion,
+    allowance: good,
+    commandId: null,
+  }
+  const result = { ...fixture.commandResult, allowance: good }
+  assert.equal(validate('Allowance', good).valid, true)
+  assert.equal(validate('Allowance', bad).valid, false)
+  for (const [type, value] of [
+    ['CurrentGame', current],
+    ['CancelResult', canceled],
+    ['CommandResult', result],
+  ]) {
+    assert.equal(validate(type, value).valid, true, type)
+    assert.equal(validate(type, { ...value, allowance: bad }).valid, false, type)
+  }
+  assert.equal(validate('CurrentGame', { ...current, allowance: null }).valid, true)
+})
+
+test('undo returns the one selected action identity', () => {
+  const undo = {
+    schemaVersion: 1,
+    puzzleId: confirm.puzzleId,
+    turnId: confirm.turnId,
+    requestId: id(1401),
+    turnRevision: 1,
+    generation: 2,
+    actionId: confirm.actions[0].actionId,
+  }
+  assert.equal(validate('Undo', undo).valid, true)
+  assert.equal(validate('UndoResult', undo).valid, true)
+  assert.equal(validate('UndoResult', { ...undo, actionId: null }).valid, false)
 })
 
 test('connected progress counts groups regardless of final position', () => {
@@ -290,20 +340,15 @@ test('rotation and cubic vectors fit the wire contract', () => {
   assert.deepEqual(geometry.reversedCubic.start, geometry.reversedCubic.reverse.to)
 })
 
-test('chat POST, SSE and byte fixtures express independent bounds and errors', () => {
+test('chat wire accepts long graphemes and exposes HTTP errors', () => {
   assert.equal(validate('ChatSend', wire.post).valid, true)
   assert.equal(validate('ChatAccepted', wire.accepted).valid, true)
   assert.equal(validate('ChatMessage', wire.sse).valid, true)
   assert.equal(validate('ChatMessage', { ...wire.sse, type: 'message' }).valid, false)
-  for (const sample of wire.textByteCases) {
-    assert.equal(Buffer.byteLength(sample.input, 'utf8'), sample.utf8Bytes)
-    assert.equal(sample.utf8Bytes <= 1024, sample.withinByteLimit)
-  }
-  for (const sample of wire.bodyByteCases) {
-    assert.deepEqual(JSON.parse(sample.body), wire.post)
-    assert.equal(Buffer.byteLength(sample.body, 'utf8'), sample.utf8Bytes)
-    assert.equal(sample.utf8Bytes <= 4096, sample.withinByteLimit)
-  }
+  const text = 'a' + '\u0301'.repeat(5000)
+  assert.equal([...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(text)].length, 1)
+  assert.equal(validate('ChatSend', { ...wire.post, text }).valid, true)
+  assert.equal(validate('ChatMessage', { ...wire.sse, text }).valid, true)
   for (const sample of wire.httpErrors) {
     assert.equal(validate('ErrorResponse', sample.envelope).valid, true)
     assert.equal(sample.envelope.error.retryable, false)

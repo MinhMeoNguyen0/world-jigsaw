@@ -356,7 +356,6 @@
             "revision": 3
           }
         ],
-        "dependsOn": [],
         "intendedTransform": {
           "translation": {
             "x": 0,
@@ -379,7 +378,6 @@
             "revision": 2
           }
         ],
-        "dependsOn": [],
         "intendedTransform": {
           "translation": {
             "x": 0,
@@ -408,7 +406,6 @@
           "revision": 3
         }
       ],
-      "dependsOn": [],
       "intendedTransform": {
         "translation": {
           "x": 0,
@@ -448,7 +445,6 @@
             "revision": 3
           }
         ],
-        "dependsOn": [],
         "intendedTransform": {
           "translation": {
             "x": 0,
@@ -480,7 +476,6 @@
             "revision": 2
           }
         ],
-        "dependsOn": [],
         "intendedTransform": {
           "translation": {
             "x": 0,

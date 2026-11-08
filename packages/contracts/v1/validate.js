@@ -13,34 +13,22 @@ export function validate(type, value) {
   const errors = []
   if (type === 'Allowance' && value.used + value.remaining !== value.limit)
     errors.push('allowance must add up to limit')
+  if (
+    ['CurrentGame', 'CancelResult', 'CommandResult'].includes(type) &&
+    value.allowance !== null &&
+    !validate('Allowance', value.allowance).valid
+  )
+    errors.push('invalid allowance')
   if (type === 'Confirm') {
-    if (value.actions.filter((action) => action.kind !== 'sort').length > 5)
-      errors.push('more than five counted actions')
     const ids = new Set(value.actions.map((action) => action.actionId))
     if (ids.size !== value.actions.length) errors.push('duplicate action ID')
     for (const action of value.actions) {
-      if (action.dependsOn.includes(action.actionId) || action.dependsOn.some((id) => !ids.has(id)))
-        errors.push('invalid action dependency')
       if (
         new Set(action.baseRevisions.map((base) => base.groupId)).size !==
         action.baseRevisions.length
       )
         errors.push('duplicate base revision')
     }
-    const visiting = new Set(),
-      visited = new Set()
-    const actions = new Map(value.actions.map((action) => [action.actionId, action]))
-    function visit(id) {
-      if (visiting.has(id)) return false
-      if (visited.has(id)) return true
-      visiting.add(id)
-      for (const dependency of actions.get(id)?.dependsOn ?? [])
-        if (actions.has(dependency) && !visit(dependency)) return false
-      visiting.delete(id)
-      visited.add(id)
-      return true
-    }
-    if ([...ids].some((id) => !visit(id))) errors.push('cyclic action dependencies')
   }
   if (
     type === 'Subscribed' &&
@@ -64,8 +52,6 @@ export function validate(type, value) {
   if (['Session', 'ChatMessage'].includes(type) && value.displayName.length > 128)
     errors.push('display name exceeds UTF-16 limit')
   if (type === 'CommandResult') {
-    if (value.allowance !== null && !validate('Allowance', value.allowance).valid)
-      errors.push('invalid allowance')
     if (
       value.outcome === 'confirmed' &&
       (value.boardVersion === null || value.allowance === null || value.error !== null)

@@ -188,11 +188,6 @@ export interface Action {
    * @maxItems 80
    */
   baseRevisions: [BaseRevision, ...BaseRevision[]]
-  /**
-   * @minItems 0
-   * @maxItems 80
-   */
-  dependsOn: string[]
   intendedTransform: Transform
 }
 export interface Error {
@@ -209,9 +204,7 @@ export interface Error {
     | 'TURN_CLOSED'
     | 'COMMAND_CONFLICT'
     | 'RESULT_EXPIRED'
-    | 'RATE_LIMITED'
     | 'INTERNAL_ERROR'
-    | 'MESSAGE_CONFLICT'
     | 'CHAT_UNAVAILABLE'
     | 'MESSAGE_TOO_LARGE'
     | 'NOT_FOUND'
@@ -233,7 +226,6 @@ export interface Subscribed {
   watermark: number
   /**
    * @minItems 0
-   * @maxItems 80
    */
   previews: Preview[]
 }
@@ -352,7 +344,6 @@ export interface Confirm {
   generation: number
   /**
    * @minItems 1
-   * @maxItems 80
    */
   actions: [Action, ...Action[]]
 }
@@ -389,11 +380,7 @@ export interface UndoResult {
   requestId: string
   turnRevision: number
   generation: number
-  /**
-   * @minItems 1
-   * @maxItems 80
-   */
-  removedActionIds: [string, ...string[]]
+  actionId: string
 }
 export interface CancelResult {
   schemaVersion: 1

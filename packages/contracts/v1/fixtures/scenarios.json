@@ -81,6 +81,14 @@
       ]
     },
     {
+      "name": "undo-independent-action",
+      "expected": "Removing one independent pending action clears only its overlay and provisional slot; the other actions remain pending."
+    },
+    {
+      "name": "undo-joined-action",
+      "expected": "Reject removal if it would invalidate a joined or dependent action; preserve the entire batch and allow cancel."
+    },
+    {
       "name": "cancel-after-other-commit",
       "startingRemaining": 5,
       "expected": "Clear only own overlay and display latest canonical board; no charge and no stale restore."
