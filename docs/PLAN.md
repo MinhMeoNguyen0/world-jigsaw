@@ -618,7 +618,7 @@ Components (start modular in one Spring Boot binary, split when ready):
 
 ## 12. Data model (PostgreSQL)
 
-Core tables:
+Planned core tables (the migrations are authoritative for the implemented schema):
 
 ```text
 anonymous_identities(
@@ -641,7 +641,7 @@ identity_risk_events(
   created_at, expires_at, decision
 )
 
-daily_puzzles(
+puzzles(
   id UUID PK, puzzle_day DATE UNIQUE, image_id UUID FK,
   status, starts_at, ends_at, completed_at, seed, piece_count,
   owner_epoch, state_version, anchored_count, accepted_moves
@@ -855,7 +855,7 @@ Both requests carry distinct IDs. Pending reservations are shared across tabs, a
 
 ### Scenario C: Player's group connects to a third party's moving group
 
-Reject/defer the join because target group is leased. Allow a legal staging drop as a reposition (1 move) only if accepted position is valid and player chooses that placement; otherwise rollback without consuming a move. Do not move another player's group as a side effect.
+Reject/defer the join because target group is leased. Allow a legal staging drop only if the position is valid and the player chooses it; its move cost follows section 6.1. Otherwise restore the preceding preview without consuming a move. Do not move another player's group as a side effect.
 
 ### Scenario D: Reconnect after a lost acknowledgement
 
@@ -978,7 +978,7 @@ SLO-focused alerts should watch move success/latency, stuck active puzzle or rol
 
 - Shared Bézier edges match exactly; non-neighbors never connect.
 - Group transforms preserve relative offsets after merges and drags.
-- Large group invalid drop restores entire last committed position.
+- Large group invalid drop restores the preceding preview; canceling the batch restores the last committed position.
 - Deterministic seed generates identical geometry across clients and Java validation.
 - Multiple adjoining groups can merge atomically with a single move charge.
 - Anchored groups cannot be moved.
