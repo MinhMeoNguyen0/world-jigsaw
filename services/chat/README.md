@@ -72,6 +72,4 @@ issuer must still be integrated before an interoperability claim.
 
 The parser and JVM require memory proportional to the message size, but not to JSON whitespace;
 they have finite implementation limits even though this service does not impose a separate byte
-quota. Under worker saturation the server closes excess connections. The draft
-S3 byte limits, retry deduplication, and rate policy are not implemented and require coordination
-with the shared contract owner.
+quota. Under worker saturation the server closes excess connections.
