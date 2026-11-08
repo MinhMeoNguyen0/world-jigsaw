@@ -5,17 +5,21 @@ export interface ValidationResult {
 }
 export function validate(type: string, value: unknown): ValidationResult
 export function validateBoard(definition: unknown, snapshot: unknown): ValidationResult
+export interface BoardEventHistory {
+  byVersion: Map<number, string>
+  eventIds: Set<string>
+}
 export function applyBoardChanged(
   definition: unknown,
   snapshot: import('./types.js').Snapshot,
   event: unknown,
-  seenEvents?: Record<number, string>,
+  seenEvents?: BoardEventHistory,
 ):
   | { status: 'resync' | 'duplicate' }
   | {
       status: 'applied'
       snapshot: import('./types.js').Snapshot
-      seenEvents: Record<number, string>
+      seenEvents: BoardEventHistory
     }
 export interface PreviewState {
   puzzleId: string

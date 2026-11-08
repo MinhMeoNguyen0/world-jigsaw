@@ -5,12 +5,26 @@ const ajv = new Ajv({ allErrors: true, strict: false })
 addFormats(ajv)
 ajv.addSchema(schema)
 
+const uuid = (id) => id.toLowerCase()
+const uniqueIds = (ids) => new Set(ids.map(uuid)).size === ids.length
+const uuidArrays = new Set(['pieceIds', 'affectedPieceIds', 'removedGroupIds'])
+function uniqueUuidArrays(value) {
+  if (Array.isArray(value)) return value.every(uniqueUuidArrays)
+  if (value === null || typeof value !== 'object') return true
+  return Object.entries(value).every(([key, item]) => {
+    if (uuidArrays.has(key)) return uniqueIds(item)
+    if (key === 'baseRevisions') return uniqueIds(item.map((base) => base.groupId))
+    return uniqueUuidArrays(item)
+  })
+}
+
 /** Shape validation only. Cross-record and game authority checks are separate. */
 export function validate(type, value) {
   if (!Object.hasOwn(schema.$defs, type)) throw new Error(`Unknown contract type: ${type}`)
   const check = ajv.getSchema(`${schema.$id}#/$defs/${type}`)
   if (!check(value)) return { valid: false, errors: structuredClone(check.errors) }
   const errors = []
+  if (!uniqueUuidArrays(value)) errors.push('duplicate UUID in array')
   if (type === 'Allowance' && value.used + value.remaining !== value.limit)
     errors.push('allowance must add up to limit')
   if (
@@ -20,30 +34,25 @@ export function validate(type, value) {
   )
     errors.push('invalid allowance')
   if (type === 'Confirm') {
-    const ids = new Set(value.actions.map((action) => action.actionId))
+    const ids = new Set(value.actions.map((action) => uuid(action.actionId)))
     if (ids.size !== value.actions.length) errors.push('duplicate action ID')
-    for (const action of value.actions) {
-      if (
-        new Set(action.baseRevisions.map((base) => base.groupId)).size !==
-        action.baseRevisions.length
-      )
-        errors.push('duplicate base revision')
-    }
   }
   if (
     type === 'Subscribed' &&
     (value.snapshot.boardVersion !== value.watermark ||
-      value.previews.some((preview) => preview.puzzleId !== value.snapshot.puzzleId))
+      value.previews.some((preview) => uuid(preview.puzzleId) !== uuid(value.snapshot.puzzleId)))
   )
     errors.push('inconsistent subscription handoff')
   if (type === 'PuzzleChanged' && value.available !== (value.puzzleId !== null))
     errors.push('inconsistent puzzle availability')
   if (
     type === 'CurrentGame' &&
-    (value.definition.puzzleId !== value.snapshot.puzzleId ||
+    (uuid(value.definition.puzzleId) !== uuid(value.snapshot.puzzleId) ||
       value.definition.definitionVersion !== value.snapshot.definitionVersion)
   )
     errors.push('inconsistent current game')
+  if (type === 'BoardChanged' && !uniqueIds(value.groups.map((group) => group.groupId)))
+    errors.push('duplicate event group ID')
   if (type === 'ChatAssertionClaims') {
     if (value.exp <= value.iat || value.exp - value.iat > 300)
       errors.push('invalid assertion lifetime')
@@ -81,7 +90,7 @@ export function validateBoard(definition, snapshot) {
   if (errors.length) return { valid: false, errors }
   const fail = (message) => errors.push(message)
   if (
-    definition.puzzleId !== snapshot.puzzleId ||
+    uuid(definition.puzzleId) !== uuid(snapshot.puzzleId) ||
     definition.definitionVersion !== snapshot.definitionVersion
   )
     fail('snapshot definition identity mismatch')
@@ -99,8 +108,8 @@ export function validateBoard(definition, snapshot) {
   }
   const pieces = new Map()
   for (const piece of definition.pieces) {
-    if (pieces.has(piece.pieceId)) fail('duplicate piece ID')
-    pieces.set(piece.pieceId, piece)
+    if (pieces.has(uuid(piece.pieceId))) fail('duplicate piece ID')
+    pieces.set(uuid(piece.pieceId), piece)
     const edges = new Set()
     for (const edge of piece.edges) {
       if (edges.has(edge.edgeId)) fail('duplicate edge ID on piece')
@@ -112,12 +121,13 @@ export function validateBoard(definition, snapshot) {
   for (const piece of definition.pieces) {
     for (const edge of piece.edges) {
       if (edge.neighborPieceId === null) continue
-      const other = pieces.get(edge.neighborPieceId)
+      const other = pieces.get(uuid(edge.neighborPieceId))
       const back = other?.edges.find((e) => e.edgeId === edge.neighborEdgeId)
       if (
         other === piece ||
         !back ||
-        back.neighborPieceId !== piece.pieceId ||
+        back.neighborPieceId === null ||
+        uuid(back.neighborPieceId) !== uuid(piece.pieceId) ||
         back.neighborEdgeId !== edge.edgeId
       )
         fail('non-reciprocal adjacency')
@@ -126,67 +136,76 @@ export function validateBoard(definition, snapshot) {
   const groups = new Set()
   const seen = new Set()
   for (const group of snapshot.groups) {
-    if (groups.has(group.groupId)) fail('duplicate group ID')
-    groups.add(group.groupId)
+    if (groups.has(uuid(group.groupId))) fail('duplicate group ID')
+    groups.add(uuid(group.groupId))
     for (const id of group.pieceIds) {
-      if (!pieces.has(id)) fail('unknown piece in board')
-      if (seen.has(id)) fail('piece appears in multiple groups')
-      seen.add(id)
+      if (!pieces.has(uuid(id))) fail('unknown piece in board')
+      if (seen.has(uuid(id))) fail('piece appears in multiple groups')
+      seen.add(uuid(id))
     }
   }
   if (seen.size !== pieces.size) fail('board must contain each definition piece exactly once')
   return { valid: errors.length === 0, errors }
 }
 
-/** Apply a durable event only if it is the next version or a known duplicate. */
-function canonical(value) {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+const eventIdFields = new Set([
+  'puzzleId',
+  'eventId',
+  'commandId',
+  'groupId',
+  'pieceIds',
+  'removedGroupIds',
+])
+function canonical(value, key = '') {
+  if (Array.isArray(value)) return `[${value.map((item) => canonical(item, key)).join(',')}]`
   if (value !== null && typeof value === 'object')
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key], key)}`)
       .join(',')}}`
-  return JSON.stringify(value)
+  return JSON.stringify(typeof value === 'string' && eventIdFields.has(key) ? uuid(value) : value)
 }
 
-export function applyBoardChanged(definition, snapshot, event, seenEvents = {}) {
+/** Apply a durable event only if it is the next version or a known duplicate. */
+export function applyBoardChanged(
+  definition,
+  snapshot,
+  event,
+  seenEvents = { byVersion: new Map(), eventIds: new Set() },
+) {
   if (
     !validateBoard(definition, snapshot).valid ||
     !validate('BoardChanged', event).valid ||
-    event.puzzleId !== snapshot.puzzleId
+    uuid(event.puzzleId) !== uuid(snapshot.puzzleId)
   )
     return { status: 'resync' }
   if (event.boardVersion <= snapshot.boardVersion) {
-    return { status: seenEvents[event.boardVersion] === canonical(event) ? 'duplicate' : 'resync' }
+    return {
+      status:
+        seenEvents.byVersion.get(event.boardVersion) === canonical(event) ? 'duplicate' : 'resync',
+    }
   }
   if (event.boardVersion !== snapshot.boardVersion + 1) return { status: 'resync' }
-  try {
-    if (
-      Object.values(seenEvents).some(
-        (seen) => JSON.parse(seen).eventId.toLowerCase() === event.eventId.toLowerCase(),
-      )
-    )
-      return { status: 'resync' }
-  } catch {
-    return { status: 'resync' }
-  }
-  const groups = new Map(snapshot.groups.map((group) => [group.groupId, group]))
-  for (const id of event.removedGroupIds) groups.delete(id)
-  for (const group of event.groups) groups.set(group.groupId, group)
+  if (seenEvents.eventIds.has(uuid(event.eventId))) return { status: 'resync' }
+  const groups = new Map(snapshot.groups.map((group) => [uuid(group.groupId), group]))
+  for (const id of event.removedGroupIds) groups.delete(uuid(id))
+  for (const group of event.groups) groups.set(uuid(group.groupId), group)
   const next = { ...snapshot, boardVersion: event.boardVersion, groups: [...groups.values()] }
   if (!validateBoard(definition, next).valid) return { status: 'resync' }
-  return {
-    status: 'applied',
-    snapshot: next,
-    seenEvents: { ...seenEvents, [event.boardVersion]: canonical(event) },
-  }
+  seenEvents.byVersion.set(event.boardVersion, canonical(event))
+  seenEvents.eventIds.add(uuid(event.eventId))
+  return { status: 'applied', snapshot: next, seenEvents }
 }
 
 /** Reducer for one turn's transient overlay and generation fence. */
 export function applyPreview(state, event) {
   if (!['preview', 'previewCleared'].includes(event?.type)) return state
   if (!validate(event.type === 'preview' ? 'Preview' : 'PreviewCleared', event).valid) return state
-  if (state && (event.puzzleId !== state.puzzleId || event.turnId !== state.turnId)) return state
+  if (
+    state &&
+    (uuid(event.puzzleId) !== uuid(state.puzzleId) || uuid(event.turnId) !== uuid(state.turnId))
+  )
+    return state
   const current = state ?? {
     puzzleId: event.puzzleId,
     turnId: event.turnId,
@@ -209,7 +228,7 @@ export function applyPreview(state, event) {
   return {
     ...next,
     sequence: event.sequence,
-    actions: { ...next.actions, [event.action.actionId]: event.action },
+    actions: { ...next.actions, [uuid(event.action.actionId)]: event.action },
   }
 }
 

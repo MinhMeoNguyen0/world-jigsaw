@@ -73,6 +73,133 @@ test('duplicate actions and duplicate base revisions are rejected', () => {
   assert.equal(validate('Confirm', repeatedBase).valid, false)
 })
 
+test('UUID identity ignores case throughout validation and previews', () => {
+  const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  const c = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+  const batch = copy(confirm)
+  batch.actions[0].actionId = a
+  batch.actions[1].actionId = a.toUpperCase()
+  assert.equal(validate('Confirm', batch).valid, false)
+  batch.actions[1].actionId = b
+  batch.actions[0].baseRevisions = [
+    { groupId: a, revision: 1 },
+    { groupId: a.toUpperCase(), revision: 1 },
+  ]
+  assert.equal(validate('Confirm', batch).valid, false)
+  assert.equal(validate('Action', batch.actions[0]).valid, false)
+  assert.equal(validate('Preview', { ...preview, action: batch.actions[0] }).valid, false)
+  batch.actions[0].baseRevisions.pop()
+  batch.actions[0].affectedPieceIds = [a, a.toUpperCase()]
+  assert.equal(validate('Confirm', batch).valid, false)
+  assert.equal(validate('Action', batch.actions[0]).valid, false)
+  assert.equal(
+    validate('Group', { ...snapshot.groups[0], pieceIds: [a, a.toUpperCase()] }).valid,
+    false,
+  )
+  assert.equal(
+    validate('BoardChanged', { ...fixture.boardChanged, removedGroupIds: [a, a.toUpperCase()] })
+      .valid,
+    false,
+  )
+
+  const renamed = JSON.parse(
+    JSON.stringify({ definition, snapshot }).replaceAll(id(1), a).replaceAll(id(100), b),
+  )
+  renamed.snapshot.puzzleId = b.toUpperCase()
+  renamed.snapshot.groups[0].pieceIds[0] = a.toUpperCase()
+  assert.equal(validateBoard(renamed.definition, renamed.snapshot).valid, true)
+  const repeated = copy(renamed.snapshot)
+  repeated.groups[1].pieceIds.push(a)
+  assert.equal(validateBoard(renamed.definition, repeated).valid, false)
+  const invalidAdjacency = copy(renamed.definition)
+  invalidAdjacency.pieces[0].edges[1].neighborPieceId = null
+  assert.equal(validateBoard(invalidAdjacency, renamed.snapshot).valid, false)
+  assert.equal(
+    validate('CurrentGame', {
+      schemaVersion: 1,
+      day: '2026-11-08',
+      serverTime: '2026-11-08T00:00:00Z',
+      endsAt: '2026-11-09T00:00:00Z',
+      definition: renamed.definition,
+      snapshot: renamed.snapshot,
+      allowance: null,
+      ownTurn: null,
+    }).valid,
+    true,
+  )
+  const mixedPreview = {
+    ...preview,
+    puzzleId: b,
+    turnId: c,
+    action: { ...preview.action, actionId: a },
+  }
+  assert.equal(
+    validate('Subscribed', {
+      schemaVersion: 1,
+      type: 'subscribed',
+      snapshot: renamed.snapshot,
+      watermark: renamed.snapshot.boardVersion,
+      previews: [mixedPreview],
+    }).valid,
+    true,
+  )
+  let state = applyPreview(null, mixedPreview)
+  state = applyPreview(state, {
+    ...mixedPreview,
+    puzzleId: b.toUpperCase(),
+    turnId: c.toUpperCase(),
+    sequence: mixedPreview.sequence + 1,
+    action: { ...mixedPreview.action, actionId: a.toUpperCase() },
+  })
+  assert.deepEqual(Object.keys(state.actions), [a])
+})
+
+test('board events reject duplicate replacements and use indexed history', () => {
+  const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const group = { ...snapshot.groups[0], groupId: a }
+  const base = { ...snapshot, groups: [group, snapshot.groups[1]] }
+  const event = {
+    ...fixture.boardChanged,
+    groups: [
+      group,
+      { ...group, groupId: a.toUpperCase(), transform: { ...group.transform, rotation: 1000 } },
+    ],
+  }
+  assert.equal(validate('BoardChanged', event).valid, false)
+  assert.equal(applyBoardChanged(definition, base, event).status, 'resync')
+  const first = applyBoardChanged(definition, base, {
+    ...event,
+    groups: [{ ...group, groupId: a.toUpperCase() }],
+  })
+  assert.equal(first.status, 'applied')
+  assert.equal(first.snapshot.groups.length, 2)
+  const history = first.seenEvents
+  assert.equal(
+    applyBoardChanged(definition, first.snapshot, { ...event, groups: [group] }, history).status,
+    'duplicate',
+  )
+  const second = applyBoardChanged(
+    definition,
+    first.snapshot,
+    { ...event, boardVersion: 9, eventId: id(999), groups: [group] },
+    history,
+  )
+  assert.equal(second.status, 'applied')
+  assert.equal(second.seenEvents, history)
+  assert.equal(history.byVersion.size, 2)
+  assert.equal(history.eventIds.size, 2)
+  assert.equal(
+    applyBoardChanged(
+      definition,
+      second.snapshot,
+      { ...event, boardVersion: 10, groups: [group] },
+      history,
+    ).status,
+    'resync',
+  )
+})
+
 test('confirmed event applies atomically; duplicates, gaps and invalid membership do not', () => {
   const event = {
     schemaVersion: 1,
