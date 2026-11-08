@@ -11,10 +11,13 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 | `services/backend`   | Java Spring Boot backend                           |
 | `packages/contracts` | Versioned shared schemas, fixtures and types       |
 | `packages/generator` | Deterministic puzzle generator and review fixtures |
+| `packages/rules`     | Local puzzle rules                                 |
 | `docs`               | Product and engineering plan                       |
 | `.github`            | CI workflows and Dependabot configuration          |
 
 The [puzzle generator](packages/generator/README.md) produces standalone definitions and starting snapshots.
+
+The [local rules package](packages/rules/README.md) computes draft puzzle interactions without saving or transmitting them.
 
 The [shared v1 contract](packages/contracts/README.md) describes the integration baseline; the schemas do not implement a running multiplayer service.
 
@@ -49,7 +52,7 @@ pull request and on pushes to `main`.
 | `pnpm typecheck`    | TypeScript type check (strict mode)                     |
 | `pnpm lint`         | ESLint                                                  |
 | `pnpm format:check` | Prettier check (`pnpm format` rewrites files)           |
-| `pnpm test`         | Shared contract, generator and web unit tests           |
+| `pnpm test`         | Shared contract, generator, rules and web unit tests    |
 | `pnpm build`        | Production build of the web app                         |
 | `pnpm test:e2e`     | Builds the web app, then runs the Playwright smoke test |
 | `pnpm check`        | All of the above, in CI order                           |

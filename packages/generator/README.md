@@ -1,4 +1,4 @@
-# Puzzle generator v2
+# Puzzle generator
 
 This standalone Node 26 TypeScript generator produces a contract-v1 `{ definition, snapshot }` JSON document. The definition is immutable and its checksum is SHA-256 over RFC 8785 canonical JSON excluding `checksum`. Given the same inputs and generator version it produces identical bytes, IDs, contours and initial groups. Seed, grid, dimensions, image and definition version determine the puzzle ID; do not reuse an ID for a different definition. Publishing/importing, selecting a UTC day, and persisting a snapshot belong to the game service.
 
