@@ -1,6 +1,7 @@
 package com.worldjigsaw.game;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -11,18 +12,43 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 class GameReadController {
-  private final GameBoards boards;
   private final LocalSessions sessions;
+  private final GameCoordinator coordinator;
 
-  GameReadController(GameBoards boards, LocalSessions sessions) {
-    this.boards = boards;
+  GameReadController(LocalSessions sessions, GameCoordinator coordinator) {
     this.sessions = sessions;
+    this.coordinator = coordinator;
   }
 
   @GetMapping("/api/v1/game/current")
-  Map<String, Object> current(HttpServletRequest request) {
+  Map<String, Object> current(HttpServletRequest request, HttpServletResponse response) {
     LocalSessions.Session session = sessions.lookup(LocalSessions.cookie(request));
-    return boards.currentFor(session == null ? null : session.subject());
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("Vary", "Cookie");
+    return coordinator.current(session == null ? null : session.subject());
+  }
+
+  @ExceptionHandler({
+    IllegalStateException.class,
+    org.springframework.dao.DataAccessException.class
+  })
+  ResponseEntity<Map<String, Object>> unavailableWriter() {
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .header("Cache-Control", "no-store")
+        .body(
+            Map.of(
+                "schemaVersion",
+                1,
+                "error",
+                Map.of(
+                    "code",
+                    "INTERNAL_ERROR",
+                    "message",
+                    "Game state is temporarily unavailable",
+                    "requestId",
+                    UUID.randomUUID().toString(),
+                    "retryable",
+                    true)));
   }
 
   @ExceptionHandler(PuzzleUnavailable.class)

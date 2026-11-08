@@ -104,19 +104,28 @@ Run the service from `services/backend`; Flyway applies migrations on startup:
 Check it with `curl http://localhost:8080/actuator/health`; a healthy service reports
 `"status":"UP"`. No frontend, gateway, dashboard, Kubernetes, or self-host platform is needed.
 
-The private local service provides `POST /api/v1/session` and an authenticated,
-same-origin snapshot-only WebSocket at `/api/v1/game/stream`. Session creation and the socket
-require an `Origin` matching the service's literal `localhost` or `127.0.0.1` origin, including
-port. A session uses a host-only, HttpOnly, SameSite=Strict cookie; its random secret is stored
-only as a hash. Sessions last 30 days. This is local prototype identity, not public authentication.
-No proxy, cross-origin frontend, public address or TLS termination has been reviewed. The socket
-accepts v1 `subscribe` messages, sends a canonical snapshot and watermark, then closes with code 1013 because live fanout is not
-available. It requests a fresh subscription for unsupported cursors and rejects previews. It does
-not fan out changes or implement
-live multiplayer yet. The current frontend is not integrated with this endpoint.
+The private local game service provides `POST /api/v1/session` and an authenticated WebSocket at
+`/api/v1/game/stream`. Session creation, mutations and the socket require an `Origin` matching the
+service's literal `localhost` or `127.0.0.1` origin, including port. A session uses a host-only,
+HttpOnly, SameSite=Strict cookie; its random secret is stored only as a hash. Sessions last 30 days.
+This is local prototype identity, not public authentication. No proxy, cross-origin frontend, public
+address or TLS termination has been reviewed. The service takes a PostgreSQL advisory lock to
+reject a second local writer; it is not a distributed or high-availability deployment.
 
-For the separate private preview transport demo and its limitations, see the
-[backend integration note](services/backend/PREVIEW-INTEGRATION.md).
+The socket accepts v1 `subscribe`, `preview.submit`, and `heartbeat` messages and fans out temporary
+previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a
+turn; its `/confirm`, `/cancel`, and `/undo` routes settle or discard that turn. A confirmed batch,
+its quota charge, board version, event and command result commit together. Cancel reveals the latest
+saved board. Lost Confirm replies can be retried with the same command ID and payload or queried at
+`GET /api/v1/game/commands/{commandId}`; an unknown old-puzzle command can supply `?puzzleId=`.
+Receipts and identifier tombstones are retained indefinitely in this local prototype.
+
+The [turn wire note](services/backend/TURN-WIRE.md) explains the local v1 join request and outgoing
+sequence semantics. The [geometry note](services/backend/LOCAL-GEOMETRY.md) documents provisional
+collision and snap rules. The current frontend is not integrated with these endpoints; its actual
+mouse and touch controls still need the owning frontend worker's end-to-end validation. Chat is not
+integrated. The separate [preview demo](services/backend/PREVIEW-INTEGRATION.md) is not the game
+service.
 
 Run formatting checks and tests from `services/backend`:
 
@@ -135,7 +144,7 @@ backend does not connect to it. A trusted operator can import a JSON document wi
 and `snapshot` fields, assigning its UTC day explicitly. For example, from `services/backend`:
 
 ```sh
-./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/contracts/v1/fixtures/board-and-batch.json'
+./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/review-60.json'
 ```
 
 Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing
@@ -146,18 +155,16 @@ membership. It commits the definition and canonical board together. It does not 
 collision or game rules; generated content needs further validation before production use.
 
 `GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
-UTC close time. If today's puzzle has not been imported, it returns a structured `PUZZLE_UNAVAILABLE` (503),
-not a previous day's board. Reads use a repeatable-read transaction. A valid local session receives its committed allowance from the same database snapshot; without a
-session the allowance is null. The own turn is null because turns are not implemented. This endpoint
-does not implement preview, confirmation, or multiplayer commands.
+UTC close time. If today's puzzle has not been imported, it returns `PUZZLE_UNAVAILABLE` (503),
+not a previous day's board. A valid local session receives its committed allowance and active turn;
+without a session both are null. Reads use a repeatable-read database transaction.
 
-The writer integration must lock the `game_boards` row for the puzzle before admitting a Confirm,
-then sample the authoritative UTC clock and compare it with `closes_at`. Admission strictly before
-close permits that transaction to finish after midnight; admission at or after close must fail. Keep
-that lock through commit or rollback and perform board, membership, quota, event and command outcome
-updates in the same transaction. Do not restore an old snapshot on cancel. This slice records the
-immutable close time but does not implement admission, lifecycle fencing or Confirm. Future writers
-must use the same board lock when changing canonical state, and must validate geometry and game rules.
+Confirm locks the board before sampling the authoritative UTC clock. Admission strictly before
+close permits the transaction to finish afterward; admission at or after close is rejected. An
+unconfirmed preview is cleared at rollover without a charge. On restart, committed command results
+remain queryable and unconfirmed drafts are discarded. Imported legacy arbitrary-angle boards remain
+readable but interaction returns `UNSUPPORTED_LEGACY_ORIENTATION` in an `INVALID_ACTION` error;
+their data is not rewritten.
 
 ## Chat local setup
 

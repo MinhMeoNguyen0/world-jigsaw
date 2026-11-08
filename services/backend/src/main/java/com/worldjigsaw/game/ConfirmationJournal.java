@@ -8,8 +8,10 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.erdtman.jcs.JsonCanonicalizer;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -51,9 +53,21 @@ class ConfirmationJournal {
   }
 
   /** Subject comes only from a trusted session. The board lock is held until transaction end. */
-  @Transactional
+  @Transactional(timeout = 30)
   public JsonNode confirm(
       UUID subject, UUID puzzle, UUID command, JsonNode payload, Planner planner) {
+    return confirm(subject, puzzle, command, payload, planner, ignored -> {});
+  }
+
+  /** Admission callback is internal and runs after locking and sampling the close time. */
+  @Transactional(timeout = 30)
+  public JsonNode confirm(
+      UUID subject,
+      UUID puzzle,
+      UUID command,
+      JsonNode payload,
+      Planner planner,
+      java.util.function.Consumer<Instant> admitted) {
     if (!puzzle.equals(BoardValidator.id(payload, "puzzleId"))
         || !command.equals(BoardValidator.id(payload, "commandId"))) {
       throw new IllegalArgumentException("command identity mismatch");
@@ -99,6 +113,7 @@ class ConfirmationJournal {
       saveResult(subject, puzzle, command, canonical, result);
       return result;
     }
+    admitted.accept(admittedAt);
     JsonNode definition = json((String) row.get("definition"));
     long version = ((Number) row.get("board_version")).longValue();
     long definitionVersion = ((Number) row.get("definition_version")).longValue();
@@ -139,7 +154,7 @@ class ConfirmationJournal {
       throw new IllegalStateException("plan changed board identity");
     }
     long nextVersion = next.path("boardVersion").longValue();
-    boolean changed = !next.path("groups").equals(current.path("groups"));
+    boolean changed = !sameGroups(current, next);
     if ((changed && (version == MAX_SAFE || nextVersion != version + 1))
         || (!changed && (nextVersion != version || plan.charged != 0))) {
       throw new IllegalStateException("invalid board version or no-op charge");
@@ -150,7 +165,7 @@ class ConfirmationJournal {
       return result;
     }
     if (changed) {
-      saveSnapshot(puzzle, next);
+      saveSnapshot(puzzle, current, next);
       jdbc.update(
           "UPDATE game_boards SET board_version = ? WHERE puzzle_id = ?", nextVersion, puzzle);
       ObjectNode event = mapper.createObjectNode();
@@ -192,6 +207,52 @@ class ConfirmationJournal {
     return json(result.toString());
   }
 
+  /** Returns a retained result or null; a different canonical payload yields a conflict result. */
+  @Transactional(readOnly = true)
+  public JsonNode lookup(UUID subject, UUID puzzle, UUID command, JsonNode payload) {
+    List<Map<String, Object>> rows =
+        jdbc.queryForList(
+            "SELECT canonical_payload, result::text AS result FROM game_commands WHERE subject_id = ? AND command_id = ?",
+            subject,
+            command);
+    if (rows.isEmpty()) return null;
+    String canonical;
+    try {
+      canonical = new JsonCanonicalizer(payload.toString()).getEncodedString();
+    } catch (IOException ex) {
+      throw new IllegalArgumentException("invalid payload", ex);
+    }
+    if (!canonical.equals(rows.getFirst().get("canonical_payload")))
+      return rejection(
+          puzzle,
+          command,
+          "COMMAND_CONFLICT",
+          "Command ID was already used with different content");
+    return json((String) rows.getFirst().get("result"));
+  }
+
+  @Transactional(readOnly = true)
+  public JsonNode find(UUID subject, UUID command) {
+    List<String> rows =
+        jdbc.query(
+            "SELECT result::text FROM game_commands WHERE subject_id = ? AND command_id = ?",
+            (rs, row) -> rs.getString(1),
+            subject,
+            command);
+    return rows.isEmpty() ? null : json(rows.getFirst());
+  }
+
+  @Transactional(readOnly = true)
+  public JsonNode confirmedForTurn(UUID subject, UUID turn) {
+    List<String> rows =
+        jdbc.query(
+            "SELECT result::text FROM game_commands WHERE subject_id = ? AND lower(canonical_payload::jsonb->>'turnId') = ? AND result->>'outcome' = 'confirmed' LIMIT 1",
+            (rs, row) -> rs.getString(1),
+            subject,
+            turn.toString());
+    return rows.isEmpty() ? null : json(rows.getFirst());
+  }
+
   private ObjectNode snapshot(UUID puzzle, long definitionVersion, long version) {
     ObjectNode snapshot = mapper.createObjectNode();
     snapshot
@@ -225,27 +286,88 @@ class ConfirmationJournal {
     return snapshot;
   }
 
-  private void saveSnapshot(UUID puzzle, JsonNode snapshot) {
-    jdbc.update("DELETE FROM game_group_pieces WHERE puzzle_id = ?", puzzle);
-    jdbc.update("DELETE FROM game_groups WHERE puzzle_id = ?", puzzle);
-    for (JsonNode group : snapshot.path("groups")) {
-      UUID id = BoardValidator.id(group, "groupId");
-      JsonNode transform = group.path("transform");
-      jdbc.update(
-          "INSERT INTO game_groups(puzzle_id, group_id, revision, translation_x, translation_y, rotation, final_position) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          puzzle,
-          id,
-          group.path("revision").longValue(),
-          transform.path("translation").path("x").intValue(),
-          transform.path("translation").path("y").intValue(),
-          transform.path("rotation").intValue(),
-          group.path("finalPosition").booleanValue());
-      for (JsonNode piece : group.path("pieceIds"))
+  private boolean sameGroups(JsonNode left, JsonNode right) {
+    Map<UUID, JsonNode> a = groupsById(left), b = groupsById(right);
+    if (!a.keySet().equals(b.keySet())) return false;
+    for (UUID id : a.keySet()) if (!sameGroup(a.get(id), b.get(id))) return false;
+    return true;
+  }
+
+  private Map<UUID, JsonNode> groupsById(JsonNode snapshot) {
+    Map<UUID, JsonNode> groups = new HashMap<>();
+    for (JsonNode group : snapshot.path("groups"))
+      groups.put(BoardValidator.id(group, "groupId"), group);
+    return groups;
+  }
+
+  private Set<UUID> members(JsonNode group) {
+    Set<UUID> ids = new HashSet<>();
+    for (JsonNode piece : group.path("pieceIds")) ids.add(UUID.fromString(piece.textValue()));
+    return ids;
+  }
+
+  private boolean sameGroup(JsonNode a, JsonNode b) {
+    JsonNode x = a.path("transform"), y = b.path("transform");
+    return a.path("revision").longValue() == b.path("revision").longValue()
+        && a.path("finalPosition").booleanValue() == b.path("finalPosition").booleanValue()
+        && x.path("rotation").longValue() == y.path("rotation").longValue()
+        && x.path("translation").path("x").longValue()
+            == y.path("translation").path("x").longValue()
+        && x.path("translation").path("y").longValue()
+            == y.path("translation").path("y").longValue()
+        && members(a).equals(members(b));
+  }
+
+  private void saveSnapshot(UUID puzzle, JsonNode before, JsonNode after) {
+    Map<UUID, JsonNode> oldGroups = groupsById(before), newGroups = groupsById(after);
+    for (var entry : oldGroups.entrySet()) {
+      if (!newGroups.containsKey(entry.getKey())) {
         jdbc.update(
-            "INSERT INTO game_group_pieces(puzzle_id, group_id, piece_id) VALUES (?, ?, ?::uuid)",
+            "DELETE FROM game_group_pieces WHERE puzzle_id = ? AND group_id = ?",
+            puzzle,
+            entry.getKey());
+        jdbc.update(
+            "DELETE FROM game_groups WHERE puzzle_id = ? AND group_id = ?", puzzle, entry.getKey());
+      }
+    }
+    for (var entry : newGroups.entrySet()) {
+      UUID id = entry.getKey();
+      JsonNode group = entry.getValue(), previous = oldGroups.get(id);
+      JsonNode transform = group.path("transform");
+      if (previous != null) {
+        if (sameGroup(previous, group)) continue;
+        if (!members(previous).equals(members(group))
+            || previous.path("revision").longValue() >= 9_007_199_254_740_991L
+            || group.path("revision").longValue() != previous.path("revision").longValue() + 1)
+          throw new IllegalStateException("Invalid retained group revision or membership");
+        jdbc.update(
+            "UPDATE game_groups SET revision = ?, translation_x = ?, translation_y = ?, rotation = ?, final_position = ? WHERE puzzle_id = ? AND group_id = ?",
+            group.path("revision").longValue(),
+            transform.path("translation").path("x").intValue(),
+            transform.path("translation").path("y").intValue(),
+            transform.path("rotation").intValue(),
+            group.path("finalPosition").booleanValue(),
+            puzzle,
+            id);
+      } else {
+        if (group.path("revision").longValue() != 0)
+          throw new IllegalStateException("New group revision must be zero");
+        jdbc.update(
+            "INSERT INTO game_groups(puzzle_id, group_id, revision, translation_x, translation_y, rotation, final_position) VALUES (?, ?, ?, ?, ?, ?, ?)",
             puzzle,
             id,
-            piece.textValue());
+            0,
+            transform.path("translation").path("x").intValue(),
+            transform.path("translation").path("y").intValue(),
+            transform.path("rotation").intValue(),
+            group.path("finalPosition").booleanValue());
+        for (JsonNode piece : group.path("pieceIds"))
+          jdbc.update(
+              "INSERT INTO game_group_pieces(puzzle_id, group_id, piece_id) VALUES (?, ?, ?::uuid)",
+              puzzle,
+              id,
+              piece.textValue());
+      }
     }
   }
 

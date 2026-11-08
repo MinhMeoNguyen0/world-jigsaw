@@ -53,7 +53,9 @@ class TurnLeaseRegistry {
     final Instant closesAt;
     final Set<UUID> groups = new HashSet<>();
     long generation;
+    long lastSequence = -1;
     UUID confirming;
+    Instant confirmationPreviewExpiry;
     Instant expiresAt;
     PreviewGeneration previews;
     final Map<UUID, PreviewGeneration.Action> actions = new LinkedHashMap<>();
@@ -141,8 +143,49 @@ class TurnLeaseRegistry {
     if (!turn.actions.containsKey(action.actionId()) && turn.actions.size() >= MAX_ACTIONS)
       throw error("INVALID_ACTION", "Action capacity reached");
     boolean accepted = turn.previews.publish(sequence, action, turn.expiresAt);
-    if (accepted) turn.actions.put(action.actionId(), action);
+    if (accepted) {
+      turn.actions.put(action.actionId(), action);
+      turn.lastSequence = sequence;
+    }
     return accepted;
+  }
+
+  /** Installs a complete server-authored preview update under one registry lock. */
+  synchronized List<PreviewGeneration.Preview> publishBatch(
+      UUID subject, UUID turnId, long generation, List<PreviewGeneration.Action> actions) {
+    Turn turn = active(subject, turnId, generation);
+    if (actions.isEmpty()
+        || actions.size() > MAX_ACTIONS
+        || turn.lastSequence > MAX_SAFE - actions.size())
+      throw error("INVALID_ACTION", "Invalid preview batch");
+    Set<UUID> all = new HashSet<>(turn.actions.keySet()), supplied = new HashSet<>();
+    for (PreviewGeneration.Action action : actions) {
+      if (!supplied.add(action.actionId())
+          || action.baseRevisions().isEmpty()
+          || action.baseRevisions().stream().anyMatch(r -> !turn.groups.contains(r.groupId())))
+        throw error("INVALID_ACTION", "Invalid preview reservation");
+      all.add(action.actionId());
+    }
+    if (all.size() > MAX_ACTIONS) throw error("INVALID_ACTION", "Action capacity reached");
+    for (PreviewGeneration.Action action : actions) {
+      if (!turn.previews.publish(++turn.lastSequence, action, turn.expiresAt))
+        throw new IllegalStateException("Preview sequence invariant");
+      turn.actions.put(action.actionId(), action);
+    }
+    return turn.previews.snapshot().stream()
+        .filter(p -> supplied.contains(p.action().actionId()))
+        .toList();
+  }
+
+  synchronized Info info(UUID subject, UUID turnId, long generation) {
+    return info(active(subject, turnId, generation));
+  }
+
+  synchronized Info lookupInfo(UUID subject, UUID turnId) {
+    sweep();
+    Turn turn = turns.get(turnId);
+    if (turn == null || !turn.subject.equals(subject)) throw error("TURN_CLOSED", "Turn is closed");
+    return info(turn);
   }
 
   synchronized Info heartbeat(UUID subject, UUID turnId, long generation) {
@@ -154,21 +197,17 @@ class TurnLeaseRegistry {
   /** Caller has already verified undo dependencies and supplied exactly its surviving actions. */
   synchronized Info fenceUndo(
       UUID subject, UUID turnId, long generation, List<PreviewGeneration.Action> survivors) {
-    Turn turn = active(subject, turnId, generation);
-    if (generation == MAX_SAFE || survivors.size() > MAX_ACTIONS)
-      throw error("INVALID_ACTION", "Generation exhausted");
-    Set<UUID> ids = new HashSet<>(), keptGroups = new HashSet<>();
-    for (PreviewGeneration.Action action : survivors) {
-      if (!ids.add(action.actionId())
-          || !action.equals(turn.actions.get(action.actionId()))
-          || action.baseRevisions().isEmpty())
-        throw error("INVALID_ACTION", "Invalid surviving actions");
-      for (var revision : action.baseRevisions()) {
-        if (!turn.groups.contains(revision.groupId()))
-          throw error("INVALID_ACTION", "Unreserved group");
-        keptGroups.add(revision.groupId());
-      }
-    }
+    return fenceUndoAt(subject, turnId, generation, survivors, clock.instant());
+  }
+
+  synchronized Info fenceUndoAt(
+      UUID subject,
+      UUID turnId,
+      long generation,
+      List<PreviewGeneration.Action> survivors,
+      Instant acceptedAt) {
+    Turn turn = activeAt(subject, turnId, generation, acceptedAt);
+    Set<UUID> keptGroups = validateSurvivors(turn, generation, survivors);
     turn.previews.clear();
     recordClear(new Cleared(turn.puzzle, turn.id, turn.generation, "undone"));
     for (UUID id : new HashSet<>(turn.groups))
@@ -184,15 +223,60 @@ class TurnLeaseRegistry {
       turn.previews.publish(sequence++, action, turn.expiresAt);
       turn.actions.put(action.actionId(), action);
     }
+    turn.lastSequence = sequence - 1;
     return info(turn);
   }
 
-  /**
-   * Call only after admission under the database board lock, then retain until a definitive result.
-   */
-  synchronized Info pinConfirm(UUID subject, UUID turnId, long generation, UUID commandId) {
-    Turn turn = active(subject, turnId, generation);
-    if (commandId == null) throw error("INVALID_ACTION", "Missing command ID");
+  synchronized void validateUndoAt(
+      UUID subject,
+      UUID turnId,
+      long generation,
+      List<PreviewGeneration.Action> survivors,
+      Instant acceptedAt) {
+    validateSurvivors(activeAt(subject, turnId, generation, acceptedAt), generation, survivors);
+  }
+
+  private Set<UUID> validateSurvivors(
+      Turn turn, long generation, List<PreviewGeneration.Action> survivors) {
+    if (generation == MAX_SAFE || survivors.size() > MAX_ACTIONS)
+      throw error("INVALID_ACTION", "Generation exhausted");
+    Set<UUID> ids = new HashSet<>(), keptGroups = new HashSet<>();
+    for (PreviewGeneration.Action action : survivors) {
+      if (!ids.add(action.actionId())
+          || !action.equals(turn.actions.get(action.actionId()))
+          || action.baseRevisions().isEmpty())
+        throw error("INVALID_ACTION", "Invalid surviving actions");
+      for (var revision : action.baseRevisions()) {
+        if (!turn.groups.contains(revision.groupId()))
+          throw error("INVALID_ACTION", "Unreserved group");
+        keptGroups.add(revision.groupId());
+      }
+    }
+    return keptGroups;
+  }
+
+  /** Call only after admission under the database board lock, using that exact sampled time. */
+  synchronized Info pinConfirm(
+      UUID subject, UUID turnId, long generation, UUID commandId, Instant admittedAt) {
+    Turn turn = turns.get(turnId);
+    if (turn == null
+        || !turn.subject.equals(subject)
+        || turn.generation != generation
+        || turn.confirming != null) throw error("TURN_CLOSED", "Turn is closed or fenced");
+    if (commandId == null
+        || admittedAt == null
+        || !admittedAt.isBefore(turn.expiresAt)
+        || !admittedAt.isBefore(turn.closesAt))
+      throw error("TURN_CLOSED", "Turn was not live at admission");
+    List<PreviewGeneration.Preview> active = turn.previews.snapshot();
+    if (turn.lastSequence > MAX_SAFE - active.size())
+      throw error("INVALID_ACTION", "Preview sequence exhausted");
+    Instant pinExpiry = admittedAt.plus(Duration.ofMinutes(2));
+    for (PreviewGeneration.Preview preview : active) {
+      if (!turn.previews.publish(++turn.lastSequence, preview.action(), pinExpiry))
+        throw new IllegalStateException("Preview sequence invariant");
+    }
+    turn.confirmationPreviewExpiry = pinExpiry;
     turn.confirming = commandId;
     return info(turn);
   }
@@ -217,7 +301,12 @@ class TurnLeaseRegistry {
   }
 
   synchronized boolean clear(UUID subject, UUID turnId, long generation, String reason) {
-    Turn turn = active(subject, turnId, generation);
+    return clearAt(subject, turnId, generation, reason, clock.instant());
+  }
+
+  synchronized boolean clearAt(
+      UUID subject, UUID turnId, long generation, String reason, Instant acceptedAt) {
+    Turn turn = activeAt(subject, turnId, generation, acceptedAt);
     if (!Set.of("canceled", "confirmed", "rejected").contains(reason))
       throw error("INVALID_ACTION", "Invalid clear reason");
     retire(turn, reason);
@@ -232,7 +321,7 @@ class TurnLeaseRegistry {
       if (turn.puzzle.equals(puzzle))
         for (var preview : turn.previews.snapshot()) {
           Instant displayedExpiry =
-              turn.confirming == null ? turn.expiresAt : clock.instant().plus(LEASE);
+              turn.confirming == null ? turn.expiresAt : turn.confirmationPreviewExpiry;
           result.add(
               new PreviewGeneration.Preview(
                   preview.puzzleId(),
@@ -248,6 +337,11 @@ class TurnLeaseRegistry {
     return List.copyOf(result);
   }
 
+  synchronized Set<UUID> activeTurns() {
+    sweep();
+    return Set.copyOf(turns.keySet());
+  }
+
   synchronized ClearBatch drainClears() {
     sweep();
     ClearBatch result = new ClearBatch(List.copyOf(clears), clearOverflow);
@@ -259,6 +353,19 @@ class TurnLeaseRegistry {
   private void recordClear(Cleared clear) {
     if (clears.size() < 1024) clears.add(clear);
     else clearOverflow = true;
+  }
+
+  private Turn activeAt(UUID subject, UUID id, long generation, Instant acceptedAt) {
+    Turn turn = turns.get(id);
+    if (turn == null
+        || !turn.subject.equals(subject)
+        || turn.generation != generation
+        || turn.confirming != null
+        || acceptedAt == null
+        || !acceptedAt.isBefore(turn.expiresAt)
+        || !acceptedAt.isBefore(turn.closesAt))
+      throw error("TURN_CLOSED", "Turn is closed or fenced");
+    return turn;
   }
 
   private Turn active(UUID subject, UUID id, long generation) {

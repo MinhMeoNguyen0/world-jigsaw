@@ -115,7 +115,7 @@ class TurnLeaseRegistryTest {
     now.set(Instant.parse("2026-11-07T23:59:20Z"));
     assertThat(registry.heartbeat(a, turn.turn(), 0).expiresAt())
         .isEqualTo(Instant.parse("2026-11-07T23:59:50Z"));
-    registry.pinConfirm(a, turn.turn(), 0, command);
+    registry.pinConfirm(a, turn.turn(), 0, command, now.get());
     now.set(Instant.parse("2026-11-08T00:01:00Z"));
     assertThat(registry.previews(puzzle)).hasSize(1);
     assertThat(registry.confirming(a, turn.turn(), 0)).isEqualTo(command);
@@ -153,5 +153,20 @@ class TurnLeaseRegistryTest {
     assertThat(registry.acquire(b, second.turn(), 0, Set.of(provisional)).groups())
         .containsExactly(provisional);
     assertThat(registry.previews(puzzle)).hasSize(1);
+  }
+
+  @Test
+  void sampledPreCloseAdmissionCanPinEvenIfClockAdvancesBeforeCallback() {
+    now.set(Instant.parse("2026-11-07T23:59:35Z"));
+    var turn = registry.open(puzzle, a, close);
+    Instant admitted = Instant.parse("2026-11-07T23:59:59Z");
+    now.set(Instant.parse("2026-11-08T00:00:00Z"));
+    UUID command = UUID.randomUUID();
+    registry.pinConfirm(a, turn.turn(), 0, command, admitted);
+    assertThat(registry.confirming(a, turn.turn(), 0)).isEqualTo(command);
+    registry.finishConfirm(a, turn.turn(), 0, command, true);
+    assertThat(registry.drainClears().events())
+        .extracting(TurnLeaseRegistry.Cleared::reason)
+        .containsExactly("confirmed");
   }
 }

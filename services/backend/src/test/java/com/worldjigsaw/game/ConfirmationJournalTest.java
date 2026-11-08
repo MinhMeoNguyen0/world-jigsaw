@@ -237,6 +237,7 @@ class ConfirmationJournalTest {
         .isEqualTo(1);
 
     UUID admitted = UUID.randomUUID();
+    AtomicReference<Instant> admissionSample = new AtomicReference<>();
     JsonNode admittedResult =
         journal.confirm(
             subject,
@@ -247,7 +248,9 @@ class ConfirmationJournalTest {
               var plan = move(4, 100).apply(definition, latest, remaining);
               NOW.set(Instant.parse("2026-11-08T00:00:00Z"));
               return plan;
-            });
+            },
+            admissionSample::set);
+    assertThat(admissionSample.get()).isEqualTo(Instant.parse("2026-11-07T23:59:59Z"));
     assertThat(admittedResult.path("outcome").asText()).isEqualTo("confirmed");
     assertThat(admittedResult.path("boardVersion").intValue()).isEqualTo(10);
     UUID closed = UUID.randomUUID();

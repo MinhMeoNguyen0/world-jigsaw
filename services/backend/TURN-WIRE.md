@@ -1,8 +1,7 @@
-# Proposed local turn wire interpretation
+# Local turn wire interpretation
 
-This is an engineering proposal for coordinating the existing closed v1 schema, not a claim that
-turns are implemented or that the frontend has agreed to it. Coordinate it through Firstmate before
-frontend integration. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
+This is the private-local service's interpretation of the existing closed v1 schema. The frontend
+has not yet agreed to or integrated it; coordinate the handoff through Firstmate. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
 A position frame should not irreversibly join a group merely because a pointer passed a neighbor.
 
 For a normal move or adjustment, `targetId` identifies a draft group or one of its pieces and

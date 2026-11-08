@@ -222,6 +222,10 @@ class DraftRules {
     return d;
   }
 
+  void requireSupported(Draft draft) {
+    checkOrientation(draft.base);
+  }
+
   int pendingCount(Draft d) {
     return (int) d.actions.stream().filter(a -> counted(d, a)).count();
   }
@@ -234,6 +238,58 @@ class DraftRules {
     ArrayNode out = MAPPER.createArrayNode();
     for (DraftGroup g : d.groups) if (!g.actions.isEmpty()) out.add(g.group.deepCopy());
     return out;
+  }
+
+  record GroupView(JsonNode group, List<String> sources, List<String> actions) {}
+
+  record ActionView(
+      String actionId, String sourceId, boolean charged, String kind, GroupView component) {}
+
+  List<GroupView> groups(Draft d) {
+    return d.groups.stream()
+        .map(g -> new GroupView(g.group.deepCopy(), List.copyOf(g.sources), List.copyOf(g.actions)))
+        .toList();
+  }
+
+  List<ActionView> actions(Draft d) {
+    List<ActionView> result = new ArrayList<>();
+    for (Action a : d.actions) {
+      DraftGroup g =
+          d.groups.stream().filter(item -> item.actions.contains(a.id)).findFirst().orElseThrow();
+      result.add(
+          new ActionView(
+              a.id,
+              a.source,
+              counted(d, a),
+              kind(d, a, g),
+              new GroupView(g.group.deepCopy(), List.copyOf(g.sources), List.copyOf(g.actions))));
+    }
+    return List.copyOf(result);
+  }
+
+  private String kind(Draft d, Action action, DraftGroup component) {
+    JsonNode original = source(d, action.source);
+    if (original.path("pieceIds").size() > 1) return "group";
+    String piece = original.path("pieceIds").get(0).textValue();
+    JsonNode surface = d.definition.path("playSurface");
+    return counted(d, action)
+            || inside(reference(d, piece, original.path("transform")), surface)
+            || inside(reference(d, piece, component.group.path("transform")), surface)
+        ? "piece"
+        : "sort";
+  }
+
+  JsonNode baseGroup(Draft d, String groupId) {
+    return source(d, uuid(groupId)).deepCopy();
+  }
+
+  String resolveGroup(Draft d, String targetId) {
+    String target = uuid(targetId);
+    for (DraftGroup g : d.groups) if (id(g.group, "groupId").equals(target)) return target;
+    for (DraftGroup g : d.groups)
+      for (JsonNode piece : g.group.path("pieceIds"))
+        if (uuid(piece.textValue()).equals(target)) return id(g.group, "groupId");
+    throw fail("INVALID_ACTION", "Unknown target");
   }
 
   Confirmation confirm(Draft d, JsonNode latest, int remaining) {

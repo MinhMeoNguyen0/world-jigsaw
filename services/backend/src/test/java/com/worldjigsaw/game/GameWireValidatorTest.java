@@ -44,4 +44,35 @@ class GameWireValidatorTest {
     assertThatThrownBy(() -> wire.parse("BeginTurn", " ".repeat(65537)))
         .isInstanceOf(IllegalArgumentException.class);
   }
+
+  @Test
+  void generatedPiecePreviewMatchesWireSchema() throws Exception {
+    JsonNode board =
+        mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());
+    JsonNode group = board.path("snapshot").path("groups").get(0);
+    ObjectNode p =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", "preview.submit")
+            .put("puzzleId", board.path("snapshot").path("puzzleId").textValue())
+            .put("turnId", java.util.UUID.randomUUID().toString())
+            .put("generation", 0)
+            .put("sequence", 1);
+    ObjectNode action =
+        p.putObject("action")
+            .put("actionId", java.util.UUID.randomUUID().toString())
+            .put("kind", "piece")
+            .put("targetId", group.path("pieceIds").get(0).textValue());
+    action.putArray("affectedPieceIds").add(group.path("pieceIds").get(0).textValue());
+    action
+        .putArray("baseRevisions")
+        .addObject()
+        .put("groupId", group.path("groupId").textValue())
+        .put("revision", group.path("revision").longValue());
+    ObjectNode transform = action.putObject("intendedTransform");
+    transform.putObject("translation").put("x", 0).put("y", 0);
+    transform.put("rotation", 0);
+    assertThat(wire.parse("PreviewSubmit", p.toString())).isNotNull();
+  }
 }

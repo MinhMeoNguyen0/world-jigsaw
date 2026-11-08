@@ -24,7 +24,7 @@ CREATE TABLE game_requests (
     subject_id UUID NOT NULL REFERENCES game_subjects(subject_id),
     request_id UUID NOT NULL,
     puzzle_id UUID NOT NULL REFERENCES game_boards(puzzle_id),
-    request_kind TEXT NOT NULL CHECK (request_kind IN ('cancel', 'undo')),
+    request_kind TEXT NOT NULL CHECK (request_kind IN ('begin', 'cancel', 'undo')),
     canonical_payload TEXT NOT NULL,
     result JSONB NOT NULL,
     PRIMARY KEY (subject_id, request_id)

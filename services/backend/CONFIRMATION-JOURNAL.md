@@ -1,13 +1,10 @@
 # Internal confirmation journal
 
-This is an internal persistence foundation, not a multiplayer endpoint. No client can submit a
-planner or invoke it over HTTP. A future coordinator must authenticate its subject, validate the
-complete v1 command and all IDs, provide a trusted rules planner, and serialize lease, preview,
-cancel and stream operations with this transaction. The planner must check action history,
-movement, attachment, workspace, group membership and revisions, and calculate the quota charge
-from the locked current snapshot. The journal's structural and collision checks are additional
-defenses, not a replacement for these rules. The provisional geometry policy has not yet passed the
-cross-client acceptance gate described in [LOCAL-GEOMETRY.md](LOCAL-GEOMETRY.md).
+The journal is internal; clients cannot submit a planner. The private-local coordinator authenticates
+the session, validates the v1 command, and serializes lease, preview, cancel and stream operations
+with this transaction. The trusted rules planner checks action history, movement, attachment,
+workspace, membership, revisions and quota. Structural and collision checks are additional defenses.
+The provisional geometry policy and its remaining limits are in [LOCAL-GEOMETRY.md](LOCAL-GEOMETRY.md).
 
 The journal serializes each subject across puzzles, so a command ID is never reused for another
 payload or puzzle. It permanently retains canonical JSON payloads and outcomes in the game database;
@@ -24,9 +21,7 @@ orientations return `INVALID_ACTION` with message `UNSUPPORTED_LEGACY_ORIENTATIO
 board. That message uses an existing v1 error code because the closed v1 schema has no dedicated
 legacy code.
 
-Tests use a real isolated PostgreSQL container, a trusted Java draft, and stub planners to exercise the journal. They cover
-lost replies with a newly constructed journal, conflicting retries, two concurrent subjects, a forced
-post-write database failure, pre-close admission finishing after close, waiting for the board lock
-across close, and legacy data preservation. The internal draft integration and stub planners do not establish a process restart, WebSocket
-fanout, or two independent browser clients. No public
-security or resource-exhaustion review has been performed.
+Journal tests use real isolated PostgreSQL, a trusted Java draft, and stub planners. They cover lost
+replies, conflicting retries, concurrent subjects, forced rollback, UTC admission, and legacy data
+preservation. Separate service integration tests exercise server restart and WebSocket fanout with
+independent HTTP clients. No public security or resource-exhaustion review has been performed.

@@ -54,7 +54,7 @@ class GameIdentityLedger {
   @Transactional
   public Receipt record(
       UUID subject, UUID puzzle, UUID requestId, String kind, JsonNode payload, JsonNode result) {
-    if ((!"cancel".equals(kind) && !"undo".equals(kind))
+    if ((!"begin".equals(kind) && !"cancel".equals(kind) && !"undo".equals(kind))
         || !puzzle.equals(BoardValidator.id(payload, "puzzleId"))
         || !requestId.equals(BoardValidator.id(payload, "requestId")))
       throw new IllegalArgumentException("Invalid request identity");
@@ -88,6 +88,38 @@ class GameIdentityLedger {
         canonical,
         result.toString());
     return new Receipt(false, json(result.toString()));
+  }
+
+  @Transactional(readOnly = true)
+  public Receipt lookup(UUID subject, UUID requestId, String kind, JsonNode payload) {
+    List<Map<String, Object>> rows =
+        jdbc.queryForList(
+            "SELECT request_kind, canonical_payload, result::text AS result FROM game_requests WHERE subject_id = ? AND request_id = ?",
+            subject,
+            requestId);
+    if (rows.isEmpty()) return null;
+    String canonical;
+    try {
+      canonical = new JsonCanonicalizer(payload.toString()).getEncodedString();
+    } catch (IOException ex) {
+      throw new IllegalArgumentException("Invalid request", ex);
+    }
+    Map<String, Object> row = rows.getFirst();
+    if (!kind.equals(row.get("request_kind")) || !canonical.equals(row.get("canonical_payload")))
+      return new Receipt(true, null);
+    return new Receipt(false, json((String) row.get("result")));
+  }
+
+  @Transactional(readOnly = true)
+  public boolean ownsTurn(UUID subject, UUID puzzle, UUID turn) {
+    Integer count =
+        jdbc.queryForObject(
+            "SELECT count(*) FROM game_turn_ids WHERE subject_id = ? AND puzzle_id = ? AND turn_id = ?",
+            Integer.class,
+            subject,
+            puzzle,
+            turn);
+    return count != null && count == 1;
   }
 
   private JsonNode json(String value) {

@@ -185,6 +185,8 @@ final class LocalGeometry {
                     transform.apply(add(origin, cubic(current, control1, control2, end, i)))));
           }
         } else throw new IllegalArgumentException("unsupported segment");
+        if (points.size() > 4096)
+          throw new IllegalArgumentException("unsupported contour complexity");
         current = end;
       }
       previous = current;
