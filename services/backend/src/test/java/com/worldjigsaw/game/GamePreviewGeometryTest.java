@@ -22,6 +22,176 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class GamePreviewGeometryTest {
   @Test
+  void previewCannotOccupyAnotherPlayersSavedPosition() throws Exception {
+    for (int rotation : new int[] {0, 90000, 180000, 270000}) {
+      var fixture = squareFixture(rotation, false);
+      UUID firstSubject = UUID.randomUUID(), secondSubject = UUID.randomUUID();
+      var first = fixture.game().begin(firstSubject, fixture.puzzle());
+      var second = fixture.game().begin(secondSubject, fixture.puzzle());
+      fixture
+          .game()
+          .preview(
+              firstSubject,
+              first.turnId(),
+              0,
+              1,
+              squareAction(UUID.randomUUID(), fixture, 0, -200000, rotation, false));
+      UUID action = UUID.randomUUID();
+      assertThatThrownBy(() ->
+              fixture
+                  .game()
+                  .preview(
+                      secondSubject,
+                      second.turnId(),
+                      0,
+                      1,
+                      squareAction(action, fixture, 1, -100000, rotation, false)))
+          .isInstanceOf(DraftRules.RuleError.class)
+          .hasMessageContaining("overlap");
+      assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).hasSize(1);
+      assertThat(
+              fixture
+                  .game()
+                  .preview(
+                      secondSubject,
+                      second.turnId(),
+                      0,
+                      1,
+                      squareAction(action, fixture, 1, -10000, rotation, false))
+                  .previews())
+          .hasSize(1);
+    }
+  }
+
+  @Test
+  void snappedJoinCannotOccupyAnotherPlayersSavedPosition() throws Exception {
+    for (int rotation : new int[] {0, 90000, 180000, 270000}) {
+      var fixture = squareFixture(rotation, true);
+      UUID firstSubject = UUID.randomUUID(), secondSubject = UUID.randomUUID();
+      var first = fixture.game().begin(firstSubject, fixture.puzzle());
+      var second = fixture.game().begin(secondSubject, fixture.puzzle());
+      fixture
+          .game()
+          .preview(
+              firstSubject,
+              first.turnId(),
+              0,
+              1,
+              squareAction(UUID.randomUUID(), fixture, 0, -200000, rotation, false));
+      UUID action = UUID.randomUUID();
+      assertThatThrownBy(() ->
+              fixture
+                  .game()
+                  .preview(
+                      secondSubject,
+                      second.turnId(),
+                      0,
+                      1,
+                      squareAction(action, fixture, 2, -5000, rotation, true)))
+          .isInstanceOf(DraftRules.RuleError.class);
+      assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).hasSize(1);
+      assertThat(
+              fixture
+                  .game()
+                  .preview(
+                      secondSubject,
+                      second.turnId(),
+                      0,
+                      1,
+                      squareAction(action, fixture, 2, -5000, rotation, false))
+                  .previews())
+          .hasSize(1);
+    }
+  }
+
+  private record SquareFixture(GameCoordinator game, UUID puzzle, UUID[] pieces, UUID[] groups) {}
+
+  private SquareFixture squareFixture(int rotation, boolean snap) throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode board =
+        mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());
+    JsonNode squares =
+        mapper.readTree(
+            Path.of("../../packages/contracts/v1/fixtures/local-geometry-v1.json").toFile());
+    ObjectNode definition = board.path("definition").deepCopy();
+    definition.set("pieces", squares.path("pieces").deepCopy());
+    ObjectNode snapshot = board.path("snapshot").deepCopy();
+    ArrayNode groups = snapshot.putArray("groups");
+    UUID[] pieceIds = new UUID[3], groupIds = new UUID[3];
+    for (int i = 0; i < 3; i++) {
+      pieceIds[i] = UUID.fromString(squares.path("pieces").get(i).path("pieceId").asText());
+      groupIds[i] = UUID.randomUUID();
+      ObjectNode group =
+          groups.addObject().put("groupId", groupIds[i].toString()).put("revision", 0);
+      group.putArray("pieceIds").add(pieceIds[i].toString());
+      ObjectNode transform = group.putObject("transform");
+      int translation = snap ? (i == 0 ? 285001 : i == 2 ? 500000 : 0) : 0;
+      transform
+          .putObject("translation")
+          .put("x", axisX(rotation) * translation)
+          .put("y", axisY(rotation) * translation);
+      transform.put("rotation", rotation);
+      group.put("finalPosition", false);
+    }
+    GameBoards boards = mock(GameBoards.class);
+    when(boards.currentFor(org.mockito.ArgumentMatchers.nullable(UUID.class)))
+        .thenReturn(
+            Map.of(
+                "definition",
+                mapper.convertValue(definition, Map.class),
+                "snapshot",
+                mapper.convertValue(snapshot, Map.class),
+                "allowance",
+                Map.of("remaining", 5),
+                "endsAt",
+                "2026-11-08T00:00:00Z"));
+    GameIdentityLedger identities = mock(GameIdentityLedger.class);
+    when(identities.reserveTurn(any(), any())).thenAnswer(call -> UUID.randomUUID());
+    when(identities.reserveGroup(any())).thenAnswer(call -> UUID.randomUUID());
+    Clock clock = Clock.fixed(Instant.parse("2026-11-07T12:00:00Z"), ZoneOffset.UTC);
+    GameCoordinator game =
+        new GameCoordinator(
+            boards,
+            new DraftRules(mock(BoardValidator.class)),
+            new TurnLeaseRegistry(clock),
+            identities,
+            mock(ConfirmationJournal.class),
+            mock(JdbcTemplate.class),
+            clock,
+            mock(GameWriterGuard.class));
+    return new SquareFixture(
+        game, UUID.fromString(snapshot.path("puzzleId").asText()), pieceIds, groupIds);
+  }
+
+  private PreviewGeneration.Action squareAction(
+      UUID id, SquareFixture fixture, int piece, int translation, int rotation, boolean join) {
+    return new PreviewGeneration.Action(
+        id,
+        "piece",
+        fixture.pieces()[piece],
+        join
+            ? List.of(fixture.pieces()[piece], fixture.pieces()[1])
+            : List.of(fixture.pieces()[piece]),
+        join
+            ? List.of(
+                new PreviewGeneration.BaseRevision(fixture.groups()[piece], 0),
+                new PreviewGeneration.BaseRevision(fixture.groups()[1], 0))
+            : List.of(new PreviewGeneration.BaseRevision(fixture.groups()[piece], 0)),
+        new PreviewGeneration.Transform(
+            new PreviewGeneration.Point(
+                axisX(rotation) * translation, axisY(rotation) * translation),
+            rotation));
+  }
+
+  private int axisX(int rotation) {
+    return rotation == 0 ? 1 : rotation == 180000 ? -1 : 0;
+  }
+
+  private int axisY(int rotation) {
+    return rotation == 90000 ? 1 : rotation == 270000 ? -1 : 0;
+  }
+
+  @Test
   void exhaustedJoinSearchIsRetryableAndLeavesTheDraftUnchanged() throws Exception {
     ObjectMapper mapper = new ObjectMapper();
     JsonNode board =

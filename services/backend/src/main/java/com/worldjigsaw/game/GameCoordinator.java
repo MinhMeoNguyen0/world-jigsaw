@@ -255,8 +255,7 @@ class GameCoordinator {
       DraftRules.Draft candidate =
           rules.move(turn.draft, moving, request.actionId().toString(), transform);
       JsonNode current = current(subject, turn.puzzle);
-      if (LocalGeometry.hasForbiddenOverlap(
-          turn.definition, combined(current.path("snapshot"), turn, candidate)))
+      if (hasForbiddenOverlap(turn, candidate, current))
         throw error("INVALID_ACTION", "Forbidden piece overlap");
       List<String> targets =
           new ArrayList<>(
@@ -283,12 +282,7 @@ class GameCoordinator {
         candidate = rules.attach(candidate, currentGroup, target, merged);
         currentGroup = merged;
       }
-      rules.confirm(
-          candidate,
-          current.path("snapshot"),
-          current.path("allowance").path("remaining").intValue());
-      JsonNode overlaid = combined(current.path("snapshot"), turn, candidate);
-      if (LocalGeometry.hasForbiddenOverlap(turn.definition, overlaid))
+      if (hasForbiddenOverlap(turn, candidate, current))
         throw error("INVALID_ACTION", "Forbidden piece overlap");
       List<PreviewGeneration.Action> frames = serverActions(candidate);
       List<PreviewGeneration.Preview> published =
@@ -325,12 +319,7 @@ class GameCoordinator {
       throw error("INTERNAL_ERROR", "Join search limit reached; retry with fewer groups");
     if (remaining.isEmpty()) {
       try {
-        rules.confirm(
-            draft,
-            current.path("snapshot"),
-            current.path("allowance").path("remaining").intValue());
-        if (LocalGeometry.hasForbiddenOverlap(
-            turn.definition, combined(current.path("snapshot"), turn, draft))) return null;
+        if (hasForbiddenOverlap(turn, draft, current)) return null;
         return new ArrayList<>();
       } catch (DraftRules.RuleError invalid) {
         return null;
@@ -356,6 +345,16 @@ class GameCoordinator {
       }
     }
     return null;
+  }
+
+  private boolean hasForbiddenOverlap(Turn turn, DraftRules.Draft draft, JsonNode current) {
+    JsonNode snapshot = current.path("snapshot");
+    JsonNode canonical =
+        rules
+            .confirm(draft, snapshot, current.path("allowance").path("remaining").intValue())
+            .snapshot();
+    return LocalGeometry.hasForbiddenOverlap(turn.definition, canonical)
+        || LocalGeometry.hasForbiddenOverlap(turn.definition, combined(snapshot, turn, draft));
   }
 
   private boolean remainingTransformsConnected(
