@@ -55,6 +55,10 @@ export interface ContractTypes {
   Rect: Rect
   ShapeParameters: ShapeParameters
   ContourSegment: ContourSegment
+  SubscribeV2: SubscribeV2
+  SubscribedV2: SubscribedV2
+  PreviewAcceptedV2: PreviewAcceptedV2
+  ConfirmV2: ConfirmV2
 }
 export interface Point {
   x: number
@@ -437,4 +441,55 @@ export interface ChatMessage {
 export interface ChatAccepted {
   schemaVersion: 1
   messageId: string
+}
+export interface SubscribeV2 {
+  schemaVersion: 1
+  type: 'subscribe.v2'
+  puzzleId: string
+  afterBoardVersion: number | null
+}
+export interface SubscribedV2 {
+  schemaVersion: 1
+  type: 'subscribed.v2'
+  snapshot: Snapshot
+  watermark: number
+  /**
+   * @minItems 0
+   */
+  previews: Preview[]
+  allowance: Allowance
+  ownTurn: Turn | null
+  /**
+   * @maxItems 80
+   */
+  actions: Action[]
+  nextSequence: number
+  draftRevision: number | null
+}
+export interface PreviewAcceptedV2 {
+  schemaVersion: 1
+  type: 'preview.accepted'
+  puzzleId: string
+  turnId: string
+  generation: number
+  sequence: number
+  actionId: string
+  /**
+   * @maxItems 80
+   */
+  actions: Action[]
+  draftRevision: number
+}
+export interface ConfirmV2 {
+  schemaVersion: 1
+  puzzleId: string
+  turnId: string
+  commandId: string
+  turnRevision: number
+  generation: number
+  /**
+   * @minItems 1
+   */
+  actions: [Action, ...Action[]]
+  draftRevision: number
 }

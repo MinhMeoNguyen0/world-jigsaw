@@ -28,17 +28,17 @@ export function validate(type, value) {
   if (type === 'Allowance' && value.used + value.remaining !== value.limit)
     errors.push('allowance must add up to limit')
   if (
-    ['CurrentGame', 'CancelResult', 'CommandResult'].includes(type) &&
+    ['CurrentGame', 'SubscribedV2', 'CancelResult', 'CommandResult'].includes(type) &&
     value.allowance !== null &&
     !validate('Allowance', value.allowance).valid
   )
     errors.push('invalid allowance')
-  if (type === 'Confirm') {
+  if (['Confirm', 'ConfirmV2', 'PreviewAcceptedV2', 'SubscribedV2'].includes(type)) {
     const ids = new Set(value.actions.map((action) => uuid(action.actionId)))
     if (ids.size !== value.actions.length) errors.push('duplicate action ID')
   }
   if (
-    type === 'Subscribed' &&
+    ['Subscribed', 'SubscribedV2'].includes(type) &&
     (value.snapshot.boardVersion !== value.watermark ||
       value.previews.some((preview) => uuid(preview.puzzleId) !== uuid(value.snapshot.puzzleId)))
   )

@@ -44,7 +44,13 @@ class GameCommandController {
   ResponseEntity<Map<?, ?>> confirm(@PathVariable UUID turnId, HttpServletRequest request)
       throws IOException {
     UUID subject = subject(request, true);
-    JsonNode payload = wire.parse("Confirm", body(request));
+    String raw = body(request);
+    JsonNode payload;
+    try {
+      payload = wire.parse("ConfirmV2", raw);
+    } catch (IllegalArgumentException notV2) {
+      payload = wire.parse("Confirm", raw);
+    }
     verifyTurn(turnId, payload);
     return response(game.confirm(subject, payload));
   }

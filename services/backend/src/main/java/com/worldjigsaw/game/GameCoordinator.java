@@ -44,7 +44,7 @@ class GameCoordinator {
     void slow();
   }
 
-  private record Subscriber(UUID subject, UUID puzzle, Sink sink) {}
+  private record Subscriber(UUID subject, UUID puzzle, Sink sink, boolean v2) {}
 
   private record PendingReceipt(UUID request, String kind, JsonNode payload, Runnable apply) {}
 
@@ -68,7 +68,7 @@ class GameCoordinator {
     final Set<UUID> usedActions = new HashSet<>();
     DraftRules.Draft draft;
     PendingReceipt pendingReceipt;
-    long generation, revision, lastClientSequence = -1;
+    long generation, revision, draftRevision, lastClientSequence = -1;
     final long boardVersion;
 
     Turn(
@@ -128,6 +128,7 @@ class GameCoordinator {
                   definition, snapshot, current.path("allowance").path("remaining").intValue()),
               snapshot.path("boardVersion").longValue());
       turns.put(turn.id, turn);
+      invalidateIdentity(subject, puzzle, null);
     }
     return started(turn, info);
   }
@@ -161,18 +162,46 @@ class GameCoordinator {
   }
 
   synchronized Changed preview(UUID subject, JsonNode payload) {
+    return preview(subject, payload, null);
+  }
+
+  synchronized Changed preview(UUID subject, JsonNode payload, UUID streamId) {
     drainLeaseClears();
     UUID turnId = BoardValidator.id(payload, "turnId"),
         puzzle = BoardValidator.id(payload, "puzzleId");
     long generation = payload.path("generation").longValue();
     Turn turn = turn(subject, turnId, generation);
     if (!turn.puzzle.equals(puzzle)) throw error("TURN_CLOSED", "Puzzle does not match the turn");
-    return preview(
-        subject,
-        turnId,
-        generation,
-        payload.path("sequence").longValue(),
-        readAction(payload.path("action")));
+    Changed changed =
+        preview(
+            subject,
+            turnId,
+            generation,
+            payload.path("sequence").longValue(),
+            readAction(payload.path("action")),
+            streamId);
+    Subscriber sender = subscribers.get(streamId);
+    if (sender != null && sender.v2() && sender.subject().equals(subject)) {
+      ObjectNode receipt =
+          mapper
+              .createObjectNode()
+              .put("schemaVersion", 1)
+              .put("type", "preview.accepted")
+              .put("puzzleId", puzzle.toString())
+              .put("turnId", turnId.toString())
+              .put("generation", generation)
+              .put("sequence", payload.path("sequence").longValue())
+              .put("actionId", payload.path("action").path("actionId").asText())
+              .put("draftRevision", turn.draftRevision);
+      ArrayNode actions = receipt.putArray("actions");
+      for (var frame : changed.previews())
+        actions.add(previewJson(frame).path("action").deepCopy());
+      if (!sender.sink().offer(receipt)) {
+        sender.sink().slow();
+        subscribers.remove(streamId);
+      }
+    }
+    return changed;
   }
 
   synchronized TurnLeaseRegistry.Info heartbeat(UUID subject, JsonNode payload) {
@@ -195,8 +224,20 @@ class GameCoordinator {
       long generation,
       long clientSequence,
       PreviewGeneration.Action request) {
+    return preview(subject, turnId, generation, clientSequence, request, null);
+  }
+
+  private Changed preview(
+      UUID subject,
+      UUID turnId,
+      long generation,
+      long clientSequence,
+      PreviewGeneration.Action request,
+      UUID streamId) {
     drainLeaseClears();
     Turn turn = turn(subject, turnId, generation);
+    if (turn.draftRevision == 9_007_199_254_740_991L)
+      throw error("INVALID_ACTION", "Draft revision exhausted");
     if (clientSequence < 0
         || clientSequence > 9_007_199_254_740_991L
         || clientSequence <= turn.lastClientSequence)
@@ -290,6 +331,8 @@ class GameCoordinator {
       turn.draft = candidate;
       turn.usedActions.add(request.actionId());
       turn.lastClientSequence = clientSequence;
+      turn.draftRevision++;
+      invalidateIdentity(subject, turn.puzzle, streamId);
       for (var frame : published) emit(previewJson(frame));
       return new Changed(published, rules.pendingCount(candidate));
     } catch (RuntimeException ex) {
@@ -411,8 +454,15 @@ class GameCoordinator {
   }
 
   synchronized void subscribe(UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink) {
+    subscribe(streamId, subject, puzzle, cursor, sink, false);
+  }
+
+  synchronized void subscribe(
+      UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink, boolean v2) {
     drainLeaseClears();
-    JsonNode current = current(subject, puzzle);
+    JsonNode current = v2 ? mapper.valueToTree(current(subject)) : current(subject, puzzle);
+    if (!puzzle.toString().equalsIgnoreCase(current.path("snapshot").path("puzzleId").asText()))
+      throw error("PUZZLE_UNAVAILABLE", "Puzzle is unavailable");
     JsonNode snapshot = current.path("snapshot");
     String reason = null;
     if (cursor != null && !seenSubjects.contains(subject)) reason = "restart";
@@ -431,17 +481,38 @@ class GameCoordinator {
       if (seenSubjects.size() < 10000) seenSubjects.add(subject);
       return;
     }
-    ObjectNode reply = mapper.createObjectNode().put("schemaVersion", 1).put("type", "subscribed");
+    ObjectNode reply =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", v2 ? "subscribed.v2" : "subscribed");
     reply.set("snapshot", snapshot.deepCopy());
     reply.put("watermark", snapshot.path("boardVersion").longValue());
     ArrayNode previews = reply.putArray("previews");
     for (var preview : leases.previews(puzzle)) previews.add(previewJson(preview));
+    if (v2) {
+      reply.set("allowance", current.path("allowance").deepCopy());
+      reply.set("ownTurn", current.path("ownTurn").deepCopy());
+      ArrayNode actions = reply.putArray("actions");
+      long nextSequence = 0;
+      reply.putNull("draftRevision");
+      if (!current.path("ownTurn").isNull()) {
+        Turn turn = turns.get(BoardValidator.id(current.path("ownTurn"), "turnId"));
+        if (turn == null) throw error("TURN_CLOSED", "Turn is closed");
+        nextSequence = Math.min(turn.lastClientSequence + 1, 9_007_199_254_740_991L);
+        reply.put("draftRevision", turn.draftRevision);
+        for (var preview : leases.previews(puzzle))
+          if (preview.turnId().equals(turn.id))
+            actions.add(previewJson(preview).path("action").deepCopy());
+      }
+      reply.put("nextSequence", nextSequence);
+    }
     if (!sink.offer(reply)) {
       subscribers.remove(streamId);
       sink.slow();
       return;
     }
-    subscribers.put(streamId, new Subscriber(subject, puzzle, sink));
+    subscribers.put(streamId, new Subscriber(subject, puzzle, sink, v2));
     if (seenSubjects.size() < 10000) seenSubjects.add(subject);
   }
 
@@ -616,7 +687,10 @@ class GameCoordinator {
           });
     }
     Turn turn = turn(subject, turnId, generation);
-    if (!turn.puzzle.equals(puzzle) || payload.path("turnRevision").longValue() != turn.revision)
+    if (!turn.puzzle.equals(puzzle)
+        || payload.path("turnRevision").longValue() != turn.revision
+        || (payload.has("draftRevision")
+            && payload.path("draftRevision").longValue() != turn.draftRevision))
       throw error("TURN_CLOSED", "Turn revision changed");
     rules.requireSupported(turn.draft);
     Map<UUID, PreviewGeneration.Action> expected = new HashMap<>();
@@ -913,7 +987,9 @@ class GameCoordinator {
     DraftRules.Draft updated = rules.undo(turn.draft, actionId.toString());
     List<PreviewGeneration.Action> survivors = serverActions(updated);
     leases.validateUndoAt(subject, turnId, generation, survivors, acceptedAt);
-    if (turn.revision == 9_007_199_254_740_991L || generation == 9_007_199_254_740_991L)
+    if (turn.revision == 9_007_199_254_740_991L
+        || turn.draftRevision == 9_007_199_254_740_991L
+        || generation == 9_007_199_254_740_991L)
       throw error("INVALID_ACTION", "Turn revision exhausted");
     ObjectNode result =
         mapper
@@ -955,7 +1031,9 @@ class GameCoordinator {
     turn.draft = updated;
     turn.generation = info.generation();
     turn.revision++;
+    turn.draftRevision++;
     turn.lastClientSequence = -1;
+    invalidateIdentity(turn.subject, turn.puzzle, null);
     drainLeaseClears();
     for (var preview : leases.previews(turn.puzzle))
       if (preview.turnId().equals(turn.id)) emit(previewJson(preview));
@@ -1082,6 +1160,8 @@ class GameCoordinator {
       turns.keySet().retainAll(leases.activeTurns());
     }
     for (var clear : batch.events()) {
+      Turn cleared = turns.get(clear.turn());
+      if (cleared != null) invalidateIdentity(cleared.subject, cleared.puzzle, null);
       if (!"undone".equals(clear.reason())) turns.remove(clear.turn());
       ObjectNode message =
           mapper
@@ -1093,6 +1173,28 @@ class GameCoordinator {
               .put("generation", clear.generation())
               .put("reason", clear.reason());
       emit(message);
+    }
+  }
+
+  private void invalidateIdentity(UUID subject, UUID puzzle, UUID exceptStream) {
+    var iterator = subscribers.entrySet().iterator();
+    while (iterator.hasNext()) {
+      var entry = iterator.next();
+      Subscriber subscriber = entry.getValue();
+      if (subscriber.v2()
+          && subscriber.subject().equals(subject)
+          && subscriber.puzzle().equals(puzzle)
+          && !entry.getKey().equals(exceptStream)) {
+        ObjectNode event =
+            mapper
+                .createObjectNode()
+                .put("schemaVersion", 1)
+                .put("type", "resyncRequired")
+                .put("puzzleId", puzzle.toString())
+                .put("reason", "gap");
+        if (!subscriber.sink().offer(event)) subscriber.sink().slow();
+        iterator.remove();
+      }
     }
   }
 

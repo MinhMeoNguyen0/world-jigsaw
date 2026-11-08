@@ -477,3 +477,102 @@ describe('live game adapter', () => {
     expect(h.sockets).toHaveLength(0)
   })
 })
+
+describe('versioned subscription and preview receipts', () => {
+  const action = fixture.confirm.actions[0] as Confirm['actions'][number]
+  const handoff = (actions: Confirm['actions'][number][] = [], draftRevision = 0) => ({
+    schemaVersion: 1,
+    type: 'subscribed.v2',
+    snapshot: current.snapshot,
+    watermark: current.snapshot.boardVersion,
+    previews: [],
+    allowance: current.allowance,
+    ownTurn: turn,
+    actions,
+    nextSequence: draftRevision,
+    draftRevision,
+  })
+  const accepted = (sequence: number, draftRevision: number) => ({
+    schemaVersion: 1,
+    type: 'preview.accepted',
+    puzzleId,
+    turnId: turn.turnId,
+    generation: turn.generation,
+    sequence,
+    actionId: action.actionId,
+    draftRevision,
+    actions: [action],
+  })
+
+  it('confirms only the latest correlated receipt and retains its exact action and revision', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    expect(h.client.getState().connection).toBe('ready')
+    h.client.preview(action)
+    socket.emit(accepted(1, 1))
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    socket.emit(accepted(0, 1))
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    socket.emit(accepted(1, 2))
+    const pending = deferred<Response>()
+    h.setCommandReply(pending.promise)
+    const result = h.client.confirm()
+    expect(h.client.getState().pendingConfirm).toMatchObject({
+      draftRevision: 2,
+      actions: [action],
+      turnRevision: turn.turnRevision,
+    })
+    pending.resolve(
+      new Response(
+        JSON.stringify({
+          ...fixture.commandResult,
+          commandId: h.client.getState().pendingConfirm?.commandId,
+        }),
+      ),
+    )
+    await result
+  })
+
+  it('requires cancellation for a recovered draft and does not trust duplicate handoffs', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff([action], 1))
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    socket.emit(handoff())
+    expect(h.client.getState().connection).not.toBe('ready')
+  })
+
+  it('resynchronizes on a receipt that reveals another tab changed the draft', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 2))
+    expect(h.client.getState().connection).not.toBe('ready')
+    await expect(h.client.confirm()).rejects.toThrow()
+  })
+
+  it('never treats a lost receipt or an old socket as acceptance', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.drop()
+    await h.client.connect()
+    const replacement = h.sockets.at(-1)
+    if (!replacement) throw new Error('Missing replacement socket')
+    replacement.open()
+    replacement.emit(handoff([action], 1))
+    socket.emit(accepted(0, 1))
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
+  })
+})

@@ -33,3 +33,22 @@ use the original command ID for retries, validate again under the board lock, pe
 quota, event and command result atomically, then emit the event and fence the preview. A response
 lost after commit must be resolved from the durable command ID. None of this document replaces the
 shared v1 schema or authorizes public exposure.
+
+## Versioned identity and acceptance handoff
+
+A client opts in by sending `subscribe.v2` in the v1 envelope. The corresponding
+`subscribed.v2` includes the board snapshot and previews plus the authenticated subject's
+allowance, nullable own turn, accepted actions, draft revision and next client sequence at one
+coordinator handoff. Identity-changing operations invalidate affected v2 subscriptions with
+`resyncRequired`; clients must resubscribe before editing. The original `subscribe` and
+`subscribed` shapes remain unchanged.
+
+After installing a valid `preview.submit`, the coordinator sends only its originating v2 socket
+`preview.accepted`, echoing the submitted sequence and action ID along with the turn identity,
+the authoritative action set and its draft revision. The broadcast preview sequence remains a
+different server sequence. Each accepted mutation and undo advances the draft revision. The
+closed `ConfirmV2` payload includes that revision in addition to the existing turn revision and
+complete accepted action set; both checks occur under the coordinator lock before persistence.
+An intervening same-session tab therefore fences a stale command even if the action set returns
+to the same values. Existing v1 confirmation retains its original semantics. Clients must not
+infer acceptance from a broadcast and must reconcile an unknown result before another save.

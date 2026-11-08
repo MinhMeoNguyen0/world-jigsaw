@@ -150,6 +150,7 @@ class GameStream extends TextWebSocketHandler {
     String schema =
         switch (type) {
           case "subscribe" -> "Subscribe";
+          case "subscribe.v2" -> "SubscribeV2";
           case "preview.submit" -> "PreviewSubmit";
           case "heartbeat" -> "Heartbeat";
           default -> null;
@@ -166,13 +167,13 @@ class GameStream extends TextWebSocketHandler {
       return;
     }
     UUID puzzle = BoardValidator.id(payload, "puzzleId");
-    if ("subscribe".equals(type)) {
+    if ("subscribe".equals(type) || "subscribe.v2".equals(type)) {
       try {
         Long cursor =
             payload.path("afterBoardVersion").isNull()
                 ? null
                 : payload.path("afterBoardVersion").longValue();
-        game.subscribe(peer.id, peer.subject, puzzle, cursor, peer);
+        game.subscribe(peer.id, peer.subject, puzzle, cursor, peer, "subscribe.v2".equals(type));
       } catch (RuntimeException ex) {
         peer.sendError(code(ex), message(ex), retryable(ex));
       }
@@ -201,7 +202,7 @@ class GameStream extends TextWebSocketHandler {
       return;
     }
     try {
-      game.preview(peer.subject, payload);
+      game.preview(peer.subject, payload, peer.id);
     } catch (RuntimeException ex) {
       ObjectNode rejected =
           mapper
@@ -285,7 +286,7 @@ class GameStream extends TextWebSocketHandler {
     public boolean offer(JsonNode value) {
       if (stopped.get() || overloaded.get()) return false;
       String type = value.path("type").asText();
-      if ("subscribed".equals(type))
+      if ("subscribed".equals(type) || "subscribed.v2".equals(type))
         puzzle = UUID.fromString(value.path("snapshot").path("puzzleId").textValue());
       if ("resyncRequired".equals(type) || "puzzleChanged".equals(type)) puzzle = null;
       return queue.offer(value.toString());

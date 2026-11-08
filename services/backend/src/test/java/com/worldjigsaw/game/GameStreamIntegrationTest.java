@@ -392,8 +392,128 @@ class GameStreamIntegrationTest {
     JsonNode recovered = reconnect.next();
     assertThat(recovered.path("snapshot")).isEqualTo(after.path("snapshot"));
     assertThat(recovered.path("previews")).isEmpty();
+    versionedSameSessionFence(origin, puzzle, after.path("snapshot"));
     sa.sendClose(WebSocket.NORMAL_CLOSURE, "done").get();
     sc.sendClose(WebSocket.NORMAL_CLOSURE, "done").get();
+  }
+
+  private void versionedSameSessionFence(String origin, String puzzle, JsonNode snapshot)
+      throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    String cookie = cookie(client, URI.create(origin + "/api/v1/session"), origin);
+    URI socketUri = URI.create("ws://127.0.0.1:" + port + "/api/v1/game/stream");
+    Listener first = new Listener(), second = new Listener();
+    WebSocket a =
+        client
+            .newWebSocketBuilder()
+            .header("Origin", origin)
+            .header("Cookie", cookie)
+            .buildAsync(socketUri, first)
+            .get();
+    WebSocket b =
+        client
+            .newWebSocketBuilder()
+            .header("Origin", origin)
+            .header("Cookie", cookie)
+            .buildAsync(socketUri, second)
+            .get();
+    ObjectNode subscribe =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", "subscribe.v2")
+            .put("puzzleId", puzzle)
+            .putNull("afterBoardVersion");
+    send(a, subscribe);
+    send(b, subscribe);
+    JsonNode initial = first.next();
+    assertSchema("SubscribedV2", initial);
+    assertThat(initial.path("ownTurn").isNull()).isTrue();
+    assertThat(initial.path("allowance").path("used").intValue()).isZero();
+    second.next();
+    JsonNode turn = post(client, origin + "/api/v1/game/turns", origin, cookie, begin(puzzle));
+    assertThat(first.next().path("type").asText()).isEqualTo("resyncRequired");
+    assertThat(second.next().path("type").asText()).isEqualTo("resyncRequired");
+    send(a, subscribe);
+    send(b, subscribe);
+    JsonNode handoff = first.next();
+    second.next();
+    assertThat(handoff.path("ownTurn").path("turnId")).isEqualTo(turn.path("turnId"));
+    assertThat(handoff.path("draftRevision").intValue()).isZero();
+    JsonNode group = null;
+    for (JsonNode candidate : snapshot.path("groups"))
+      if (candidate.path("pieceIds").size() == 1
+          && !candidate.path("finalPosition").booleanValue()
+          && !candidate
+              .path("transform")
+              .path("translation")
+              .equals(mapper.createObjectNode().put("x", 0).put("y", 0))) {
+        group = candidate;
+        break;
+      }
+    assertThat(group).isNotNull();
+    String actionId = UUID.randomUUID().toString(), turnId = turn.path("turnId").asText();
+    JsonNode submission = preview(puzzle, turnId, 0, 0, action(actionId, group, 0, 0));
+    send(a, submission);
+    assertPreview(first.next(), turnId);
+    JsonNode ack = first.next();
+    assertSchema("PreviewAcceptedV2", ack);
+    assertThat(ack.path("sequence").intValue()).isZero();
+    assertThat(ack.path("draftRevision").intValue()).isEqualTo(1);
+    assertThat(second.next().path("type").asText()).isEqualTo("resyncRequired");
+    send(b, subscribe);
+    JsonNode recovered = second.next();
+    assertThat(recovered.path("draftRevision").intValue()).isEqualTo(1);
+    assertThat(recovered.path("actions")).isEqualTo(ack.path("actions"));
+    ObjectNode repeated = submission.deepCopy();
+    repeated.put("sequence", 1);
+    send(b, repeated);
+    assertThat(first.next().path("type").asText()).isEqualTo("resyncRequired");
+    assertPreview(second.next(), turnId);
+    JsonNode ack2 = second.next();
+    assertThat(ack2.path("actions")).isEqualTo(ack.path("actions"));
+    assertThat(ack2.path("draftRevision").intValue()).isEqualTo(2);
+    ObjectNode stale =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("puzzleId", puzzle)
+            .put("turnId", turnId)
+            .put("commandId", UUID.randomUUID().toString())
+            .put("turnRevision", 0)
+            .put("generation", 0)
+            .put("draftRevision", 1);
+    stale.set("actions", ack.path("actions"));
+    var rejected =
+        client.send(
+            postRequest(
+                origin + "/api/v1/game/turns/" + turnId + "/confirm", origin, cookie, stale),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(rejected.statusCode()).isEqualTo(409);
+    assertThat(mapper.readTree(rejected.body()).path("error").path("code").asText())
+        .isEqualTo("TURN_CLOSED");
+    assertThat(
+            get(client, origin + "/api/v1/game/current", cookie)
+                .path("allowance")
+                .path("used")
+                .intValue())
+        .isZero();
+    ObjectNode confirm = stale.deepCopy();
+    confirm.put("commandId", UUID.randomUUID().toString()).put("draftRevision", 2);
+    JsonNode result =
+        post(client, origin + "/api/v1/game/turns/" + turnId + "/confirm", origin, cookie, confirm);
+    assertThat(result.path("outcome").asText()).isEqualTo("confirmed");
+    assertThat(result.path("allowance").path("used").intValue()).isEqualTo(1);
+    assertThat(
+            post(
+                client,
+                origin + "/api/v1/game/turns/" + turnId + "/confirm",
+                origin,
+                cookie,
+                confirm))
+        .isEqualTo(result);
+    a.sendClose(WebSocket.NORMAL_CLOSURE, "done").get();
+    b.sendClose(WebSocket.NORMAL_CLOSURE, "done").get();
   }
 
   private JsonNode findGroup(JsonNode snapshot, String id) {

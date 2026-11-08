@@ -7,10 +7,14 @@ import type {
   CancelResult,
   CommandResult,
   Confirm,
+  ConfirmV2,
   CurrentGame,
   Preview,
   PreviewCleared,
+  LeaseRenewed,
   PreviewRejected,
+  PreviewAcceptedV2,
+  SubscribedV2,
   PreviewState,
   PuzzleChanged,
   Subscribed,
@@ -104,7 +108,9 @@ export class LiveGame {
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
   private sequence = 0
   private uncertainDraft = false
-  private inFlight: { sequence: number; actionId: string } | null = null
+  private inFlight: { sequence: number; actionId: string; draftRevision: number } | null = null
+  private draftRevision: number | null = null
+  private acceptedActions: Action[] = []
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
   private cancelRequest: Cancel | null = null
   private undoRequest: Undo | null = null
@@ -191,7 +197,7 @@ export class LiveGame {
           socket.send(
             JSON.stringify({
               schemaVersion: 1,
-              type: 'subscribe',
+              type: 'subscribe.v2',
               puzzleId: game.snapshot.puzzleId,
               afterBoardVersion: null,
             }),
@@ -268,6 +274,11 @@ export class LiveGame {
       const type = message.type
       const game = this.state.game
       if (!game) throw new Error('Missing current game')
+      if (
+        (type === 'subscribed' || type === 'subscribed.v2') &&
+        this.state.connection !== 'resyncing'
+      )
+        throw new Error('Unexpected subscription handoff')
       if (type === 'subscribed') {
         const reply = checked<Subscribed>('Subscribed', message)
         if (!validateBoard(game.definition, reply.snapshot).valid)
@@ -293,6 +304,75 @@ export class LiveGame {
           connection: 'resyncing',
           issue: 'Service must provide identity state atomically with the subscription.',
         })
+      } else if (type === 'subscribed.v2') {
+        const reply = checked<SubscribedV2>('SubscribedV2', message)
+        if (
+          !validateBoard(game.definition, reply.snapshot).valid ||
+          !sameId(reply.snapshot.puzzleId, game.snapshot.puzzleId) ||
+          reply.watermark !== reply.snapshot.boardVersion ||
+          reply.watermark < game.snapshot.boardVersion ||
+          (reply.ownTurn && !sameId(reply.ownTurn.puzzleId, reply.snapshot.puzzleId)) ||
+          (!reply.ownTurn &&
+            (reply.actions.length || reply.nextSequence || reply.draftRevision !== null)) ||
+          (reply.ownTurn && reply.draftRevision === null)
+        )
+          throw new Error('Invalid subscription handoff')
+        const previews: Record<string, PreviewState> = {}
+        for (const preview of reply.previews) {
+          if (!sameId(preview.puzzleId, reply.snapshot.puzzleId))
+            throw new Error('Wrong preview puzzle')
+          const key = preview.turnId.toLowerCase()
+          const next = applyPreview(previews[key] ?? null, preview)
+          if (next) previews[key] = next
+        }
+        this.history = { byVersion: new Map(), eventIds: new Set() }
+        this.sequence = reply.nextSequence
+        this.draftRevision = reply.draftRevision
+        this.acceptedActions = structuredClone(reply.actions)
+        // A recovered draft may include work from another tab or an unknown submit.
+        this.uncertainDraft = reply.actions.length > 0
+        this.publish({
+          game: {
+            ...game,
+            snapshot: reply.snapshot,
+            allowance: reply.allowance,
+            ownTurn: reply.ownTurn,
+          },
+          previews,
+          connection: 'ready',
+          previewPending: false,
+          issue: this.uncertainDraft
+            ? 'Recovered draft is uncertain; cancel it before editing.'
+            : null,
+        })
+      } else if (type === 'preview.accepted') {
+        const receipt = checked<PreviewAcceptedV2>('PreviewAcceptedV2', message)
+        const turn = game.ownTurn
+        const pending = this.inFlight
+        if (
+          !pending ||
+          !turn ||
+          !sameId(receipt.puzzleId, turn.puzzleId) ||
+          !sameId(receipt.turnId, turn.turnId) ||
+          receipt.generation !== turn.generation ||
+          receipt.sequence !== pending.sequence ||
+          !sameId(receipt.actionId, pending.actionId)
+        )
+          return
+        if (
+          receipt.draftRevision !== pending.draftRevision + 1 ||
+          !receipt.actions.some((action) => sameId(action.actionId, pending.actionId)) ||
+          new Set(receipt.actions.map((action) => action.actionId.toLowerCase())).size !==
+            receipt.actions.length
+        ) {
+          this.uncertainDraft = true
+          this.resync('Draft changed concurrently; resynchronizing.')
+          return
+        }
+        this.inFlight = null
+        this.acceptedActions = structuredClone(receipt.actions)
+        this.draftRevision = receipt.draftRevision
+        this.publish({ previewPending: false, issue: null })
       } else if (type === 'preview' || type === 'previewCleared') {
         const event = checked<Preview | PreviewCleared>(
           type === 'preview' ? 'Preview' : 'PreviewCleared',
@@ -307,7 +387,8 @@ export class LiveGame {
           next !== previous &&
           game.ownTurn &&
           sameId(event.turnId, game.ownTurn.turnId) &&
-          event.generation >= game.ownTurn.generation
+          event.generation >= game.ownTurn.generation &&
+          type === 'previewCleared'
         ) {
           this.uncertainDraft = true
           this.resync(
@@ -320,15 +401,14 @@ export class LiveGame {
         const rejection = checked<PreviewRejected>('PreviewRejected', message)
         if (
           this.inFlight?.sequence === rejection.sequence &&
+          sameId(rejection.puzzleId, game.snapshot.puzzleId) &&
           rejection.generation === game.ownTurn?.generation &&
           sameId(rejection.turnId, game.ownTurn.turnId) &&
           sameId(this.inFlight.actionId, rejection.actionId)
         ) {
           this.inFlight = null
-          this.publish({
-            previewPending: false,
-            issue: `${rejection.error.code}: ${rejection.error.message}`,
-          })
+          this.uncertainDraft = true
+          this.resync(`Preview rejected: ${rejection.error.code}; resynchronizing.`)
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
       } else if (type === 'boardChanged') {
         const result = applyBoardChanged(
@@ -348,7 +428,16 @@ export class LiveGame {
           if (epoch === this.epoch) this.resync('Board changed; refreshing allowance and turn.')
         }
       } else if (type === 'leaseRenewed') {
-        checked('LeaseRenewed', message)
+        const renewed = checked<LeaseRenewed>('LeaseRenewed', message)
+        if (
+          game.ownTurn &&
+          sameId(renewed.puzzleId, game.ownTurn.puzzleId) &&
+          sameId(renewed.turnId, game.ownTurn.turnId) &&
+          renewed.generation === game.ownTurn.generation
+        )
+          this.publish({
+            game: { ...game, ownTurn: { ...game.ownTurn, expiresAt: renewed.expiresAt } },
+          })
       } else if (type === 'resyncRequired' || type === 'puzzleChanged') {
         if (type === 'puzzleChanged') {
           const event = checked<PuzzleChanged>('PuzzleChanged', message)
@@ -410,10 +499,12 @@ export class LiveGame {
         this.beginRequest = null
       throw error
     }
-    this.requireEpoch(epoch)
     if (!sameId(turn.puzzleId, game.snapshot.puzzleId)) throw new Error('Turn puzzle mismatch')
+    if (epoch !== this.epoch) return turn
     this.beginRequest = null
     this.sequence = 0
+    this.draftRevision = 0
+    this.acceptedActions = []
     this.uncertainDraft = false
     this.publish({ game: { ...this.readyGame(), ownTurn: turn }, issue: null })
     return turn
@@ -437,20 +528,46 @@ export class LiveGame {
       throw new Error('Draft is not ready for a preview; resolve or cancel it first')
     checked<Action>('Action', action)
     const sequence = this.sequence++
+    const socket = this.socket
+    if (!socket) throw new Error('Game stream is not connected')
+    if (this.draftRevision === null) throw new Error('Missing draft revision')
+    const epoch = this.epoch
+    this.inFlight = { sequence, actionId: action.actionId, draftRevision: this.draftRevision }
+    this.publish({ previewPending: true, issue: null })
+    if (epoch !== this.epoch || socket !== this.socket)
+      throw new Error('Connection changed before preview')
+    try {
+      socket.send(
+        JSON.stringify({
+          schemaVersion: 1,
+          type: 'preview.submit',
+          puzzleId: turn.puzzleId,
+          turnId: turn.turnId,
+          generation: turn.generation,
+          sequence,
+          action,
+        }),
+      )
+    } catch (error) {
+      this.uncertainDraft = true
+      this.resync('Preview outcome unknown; resynchronizing.')
+      throw error
+    }
+  }
+
+  /** Renew the active turn while the integrating UI is open. */
+  heartbeat() {
+    const turn = this.turn()
     if (!this.socket) throw new Error('Game stream is not connected')
     this.socket.send(
       JSON.stringify({
         schemaVersion: 1,
-        type: 'preview.submit',
+        type: 'heartbeat',
         puzzleId: turn.puzzleId,
         turnId: turn.turnId,
         generation: turn.generation,
-        sequence,
-        action,
       }),
     )
-    this.inFlight = { sequence, actionId: action.actionId }
-    this.publish({ previewPending: true, issue: null })
   }
 
   async undo(actionId: string): Promise<UndoResult> {
@@ -530,19 +647,28 @@ export class LiveGame {
         payload,
       )
     } catch (error) {
-      if (epoch === this.epoch && error instanceof GameRequestError && error.definitive) {
+      if (this.cancelRequest === payload && error instanceof GameRequestError && error.definitive) {
         this.cancelRequest = null
-        this.resync('Cancel rejected; refreshing turn before retry.')
+        if (epoch === this.epoch) this.resync('Cancel rejected; refreshing turn before retry.')
       }
       throw error
     }
-    this.requireEpoch(epoch)
     if (
       !sameId(result.requestId, payload.requestId) ||
       !sameId(result.turnId, payload.turnId) ||
       !sameId(result.puzzleId, payload.puzzleId)
     )
       throw new Error('Cancel response mismatch')
+    if (epoch !== this.epoch) {
+      if (
+        this.cancelRequest === payload &&
+        (result.outcome === 'canceled' || result.outcome === 'already_canceled')
+      ) {
+        this.cancelRequest = null
+        return result
+      }
+      this.requireEpoch(epoch)
+    }
     this.cancelRequest = null
     if (result.outcome === 'canceled' || result.outcome === 'already_canceled') {
       this.inFlight = null
@@ -571,7 +697,24 @@ export class LiveGame {
         this.cancelRequest
       )
         throw new Error('Draft is not ready to confirm')
-      throw new Error('Confirmation requires a correlated preview receipt from the service')
+      if (!this.acceptedActions.length) throw new Error('No accepted actions to confirm')
+      const turn = this.turn()
+      if (this.draftRevision === null) throw new Error('Missing draft revision')
+      const payload: ConfirmV2 = {
+        schemaVersion: 1,
+        puzzleId: turn.puzzleId,
+        turnId: turn.turnId,
+        commandId: this.deps.id(),
+        turnRevision: turn.turnRevision,
+        generation: turn.generation,
+        draftRevision: this.draftRevision,
+        actions: structuredClone(this.acceptedActions) as [Action, ...Action[]],
+      }
+      this.publish({ pendingConfirm: payload })
+      // Listeners run synchronously and may disconnect or replace the pending command.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (this.state.pendingConfirm !== payload || this.state.connection !== 'ready')
+        throw new Error('Connection changed before confirmation')
     }
     const payload = this.state.pendingConfirm
     const epoch = this.epoch
@@ -586,7 +729,7 @@ export class LiveGame {
         'CommandResult',
         payload,
       )
-      this.requireEpoch(epoch)
+      if (epoch !== this.epoch && this.state.connection === 'disconnected') this.requireEpoch(epoch)
       return this.acceptResult(result, payload, epoch, unresolvedCommand)
     } catch (error) {
       if (
@@ -594,7 +737,11 @@ export class LiveGame {
         this.state.pendingConfirm === payload &&
         this.state.unresolvedCommand === unresolvedCommand
       )
-        this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
+        if (error instanceof GameRequestError && error.definitive) {
+          this.publish({ pendingConfirm: null })
+          this.uncertainDraft = true
+          if (epoch === this.epoch) this.resync('Confirmation rejected; refreshing the draft.')
+        } else this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
       throw error
     } finally {
       if (this.confirmBusy === busy) this.confirmBusy = null
@@ -650,7 +797,7 @@ export class LiveGame {
 
   /** Restore an unresolved payload retained by the integrating application across a reload. */
   restorePendingConfirm(payload: Confirm) {
-    checked<Confirm>('Confirm', payload)
+    if (!validate('ConfirmV2', payload).valid) checked<Confirm>('Confirm', payload)
     if (this.state.pendingConfirm) throw new Error('A confirmation is already pending')
     this.publish({
       pendingConfirm: structuredClone(payload),
