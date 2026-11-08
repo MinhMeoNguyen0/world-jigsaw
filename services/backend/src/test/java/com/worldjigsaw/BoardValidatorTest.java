@@ -53,7 +53,14 @@ class BoardValidatorTest {
         .hasMessage("version mismatch");
     snapshot.put("definitionVersion", 1);
     ((ObjectNode)
-            definition.path("pieces").get(0).path("edges").get(0).path("segments").get(0).path("to"))
+            definition
+                .path("pieces")
+                .get(0)
+                .path("edges")
+                .get(0)
+                .path("segments")
+                .get(0)
+                .path("to"))
         .put("x", 999.0);
     ObjectNode withoutChecksum = definition.deepCopy();
     withoutChecksum.remove("checksum");
@@ -61,7 +68,8 @@ class BoardValidatorTest {
         new JsonCanonicalizer(mapper.writeValueAsString(withoutChecksum)).getEncodedUTF8();
     definition.put(
         "checksum",
-        "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical)));
+        "sha256:"
+            + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical)));
     assertThat(
             assertThrows(
                 IllegalArgumentException.class, () -> validator.validate(definition, snapshot)))
