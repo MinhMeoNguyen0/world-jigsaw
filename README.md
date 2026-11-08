@@ -49,7 +49,7 @@ pull request and on pushes to `main`.
 | `pnpm typecheck`    | TypeScript type check (strict mode)                     |
 | `pnpm lint`         | ESLint                                                  |
 | `pnpm format:check` | Prettier check (`pnpm format` rewrites files)           |
-| `pnpm test`         | Shared contract and web unit tests                      |
+| `pnpm test`         | Shared contract, generator and web unit tests           |
 | `pnpm build`        | Production build of the web app                         |
 | `pnpm test:e2e`     | Builds the web app, then runs the Playwright smoke test |
 | `pnpm check`        | All of the above, in CI order                           |
