@@ -148,7 +148,11 @@ test('CLI produces fixture and rejects invalid inputs', () => {
     invalidArgs[invalidArgs.indexOf('--columns') + 1] = value
     assert.notEqual(spawnSync(process.execPath, [cli, ...invalidArgs]).status, 0)
   }
-  for (const bad of [['--bad', '1'], ['--seed', 'again'], ['--columns', '10']]) {
+  for (const bad of [
+    ['--bad', '1'],
+    ['--seed', 'again'],
+    ['--columns', '10'],
+  ]) {
     assert.notEqual(spawnSync(process.execPath, [cli, ...args, ...bad]).status, 0)
   }
   for (const invalid of [
