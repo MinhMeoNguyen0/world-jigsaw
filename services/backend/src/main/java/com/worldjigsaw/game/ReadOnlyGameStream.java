@@ -1,6 +1,5 @@
 package com.worldjigsaw.game;
 
-import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -29,16 +28,16 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 /** Snapshot-only stream; game mutations and previews remain unavailable. */
 @Component
 class ReadOnlyGameStream extends TextWebSocketHandler {
-  private static final long MAX_SAFE = 9_007_199_254_740_991L;
-  private final ObjectMapper mapper =
-      new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+  private final ObjectMapper mapper = new ObjectMapper();
   private final GameBoards boards;
   private final Clock clock;
+  private final GameWireValidator wire;
   private final Semaphore connections = new Semaphore(100);
 
-  ReadOnlyGameStream(GameBoards boards, Clock clock) {
+  ReadOnlyGameStream(GameBoards boards, Clock clock, GameWireValidator wire) {
     this.boards = boards;
     this.clock = clock;
+    this.wire = wire;
   }
 
   @Override
@@ -66,22 +65,9 @@ class ReadOnlyGameStream extends TextWebSocketHandler {
     }
     JsonNode request;
     try {
-      request = mapper.readTree(message.getPayload());
-    } catch (Exception e) {
-      error(session, "INVALID_REQUEST", "Invalid message", false);
-      return;
-    }
-    if (request == null
-        || !request.isObject()
-        || request.size() != 4
-        || !request.path("schemaVersion").isIntegralNumber()
-        || !request.path("schemaVersion").canConvertToLong()
-        || request.path("schemaVersion").longValue() != 1
-        || !request.path("type").isTextual()
-        || !"subscribe".equals(request.path("type").textValue())
-        || !request.path("puzzleId").isTextual()
-        || !request.has("afterBoardVersion")) {
-      error(session, "INVALID_REQUEST", "Only snapshot subscriptions are available", false);
+      request = wire.parse("Subscribe", message.getPayload());
+    } catch (IllegalArgumentException e) {
+      error(session, "INVALID_REQUEST", "Only valid snapshot subscriptions are available", false);
       return;
     }
     UUID puzzle;
@@ -95,14 +81,6 @@ class ReadOnlyGameStream extends TextWebSocketHandler {
       return;
     }
     JsonNode cursor = request.path("afterBoardVersion");
-    if (!cursor.isNull()
-        && (!cursor.isIntegralNumber()
-            || !cursor.canConvertToLong()
-            || cursor.longValue() < 0
-            || cursor.longValue() > MAX_SAFE)) {
-      error(session, "INVALID_REQUEST", "Invalid cursor", false);
-      return;
-    }
     try {
       JsonNode snapshot = mapper.valueToTree(boards.current().get("snapshot"));
       if (!puzzle.equals(BoardValidator.id(snapshot, "puzzleId"))) {

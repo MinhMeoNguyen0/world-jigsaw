@@ -43,6 +43,7 @@ class ConfirmationJournalTest {
   @Autowired ConfirmationJournal journal;
   @Autowired BoardValidator validator;
   @Autowired DraftRules rules;
+  @Autowired GameIdentityLedger identities;
   @Autowired JdbcTemplate jdbc;
   @Autowired PlatformTransactionManager transactions;
   @Autowired Clock clock;
@@ -116,6 +117,52 @@ class ConfirmationJournalTest {
             mapper.valueToTree(boards.currentFor(subject).get("allowance")).path("used").intValue())
         .isEqualTo(1);
     assertThat(jdbc.queryForObject("SELECT count(*) FROM game_events", Integer.class)).isEqualTo(1);
+
+    UUID persistedTurn = identities.reserveTurn(subject, puzzle),
+        reservedGroup = identities.reserveGroup(puzzle);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM game_turn_ids WHERE turn_id = ?",
+                Integer.class,
+                persistedTurn))
+        .isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM game_group_ids WHERE puzzle_id = ? AND group_id = ?",
+                Integer.class,
+                puzzle,
+                reservedGroup))
+        .isEqualTo(1);
+    UUID requestId = UUID.randomUUID();
+    JsonNode request =
+        mapper
+            .createObjectNode()
+            .put("puzzleId", puzzle.toString())
+            .put("requestId", requestId.toString())
+            .put("turnId", persistedTurn.toString());
+    JsonNode cancelResult = mapper.createObjectNode().put("outcome", "canceled");
+    assertThat(
+            identities.record(subject, puzzle, requestId, "cancel", request, cancelResult).result())
+        .isEqualTo(cancelResult);
+    GameIdentityLedger reloadedIdentities = new GameIdentityLedger(jdbc);
+    var identityTx = new TransactionTemplate(transactions);
+    assertThat(
+            identityTx
+                .execute(status ->
+                    reloadedIdentities.record(
+                        subject, puzzle, requestId, "cancel", request, mapper.nullNode()))
+                .result())
+        .isEqualTo(cancelResult);
+    ObjectNode differentRequest = request.deepCopy();
+    differentRequest.put("turnId", UUID.randomUUID().toString());
+    assertThat(
+            identities
+                .record(subject, puzzle, requestId, "cancel", differentRequest, cancelResult)
+                .conflict())
+        .isTrue();
+    assertThat(
+            identities.record(subject, puzzle, requestId, "undo", request, cancelResult).conflict())
+        .isTrue();
 
     // Recreate the service object and transaction to model a process that reloads persisted state.
     ConfirmationJournal restarted = new ConfirmationJournal(jdbc, validator, clock);

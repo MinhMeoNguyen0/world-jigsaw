@@ -29,7 +29,7 @@ class PuzzleMigrationTest {
   void freshMigrationEnforcesUniqueIdentityAndUtcDay() throws SQLException {
     String schema = schemaName();
     Flyway flyway = flyway(schema, null);
-    assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
+    assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
     assertThat(flyway.migrate().migrationsExecuted).isZero();
 
     UUID first = UUID.randomUUID();
@@ -71,7 +71,7 @@ class PuzzleMigrationTest {
     String schema = schemaName();
     assertThat(flyway(schema, "1").migrate().migrationsExecuted).isEqualTo(1);
     Flyway latest = flyway(schema, null);
-    assertThat(latest.migrate().migrationsExecuted).isEqualTo(3);
+    assertThat(latest.migrate().migrationsExecuted).isEqualTo(4);
 
     UUID id = UUID.randomUUID();
     LocalDate day = LocalDate.of(2026, 11, 8);
@@ -101,7 +101,7 @@ class PuzzleMigrationTest {
       insert(connection, id, day);
     }
     Flyway latest = flyway(schema, null);
-    assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
+    assertThat(latest.migrate().migrationsExecuted).isEqualTo(3);
     assertThat(latest.migrate().migrationsExecuted).isZero();
     try (Connection connection = connection(schema);
         PreparedStatement query =
@@ -160,9 +160,14 @@ class PuzzleMigrationTest {
       connection.commit();
       before = boardData(connection);
     }
-    assertThat(flyway(schema, null).migrate().migrationsExecuted).isEqualTo(1);
+    assertThat(flyway(schema, null).migrate().migrationsExecuted).isEqualTo(2);
     try (Connection connection = connection(schema)) {
       assertThat(boardData(connection)).isEqualTo(before);
+      try (var statement = connection.createStatement();
+          ResultSet rows = statement.executeQuery("SELECT count(*) FROM game_group_ids")) {
+        assertThat(rows.next()).isTrue();
+        assertThat(rows.getInt(1)).isEqualTo(2);
+      }
       try (var statement = connection.createStatement();
           ResultSet rows =
               statement.executeQuery("SELECT rotation FROM game_groups ORDER BY rotation")) {
