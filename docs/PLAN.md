@@ -5,7 +5,7 @@
 
 **Core concept:** One world, one daily destination, one shared jigsaw puzzle, five accepted moves per anonymous contributor, and a global countdown.
 
-For the current integration baseline, see the [shared v1 contract](../packages/contracts/README.md). This earlier plan contains superseded proposals, including immediate move commits, chat history, and example API and WebSocket messages; it is not the wire contract.
+For the current integration baseline, see the [shared v1 contract](../packages/contracts/README.md). This earlier plan contains superseded proposals, including immediate move commits and example API and WebSocket messages; it is not the wire contract.
 
 ---
 

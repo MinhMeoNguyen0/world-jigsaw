@@ -9,7 +9,7 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 | -------------------- | -------------------------------------------------- |
 | `apps/web`           | Web client: Vite, React, TypeScript, React Router  |
 | `services/backend`   | Java Spring Boot backend                           |
-| `services/chat`      | Independent local ephemeral chat relay              |
+| `services/chat`      | Independent local ephemeral chat relay             |
 | `packages/contracts` | Versioned shared schemas, fixtures and types       |
 | `packages/generator` | Deterministic puzzle generator and review fixtures |
 | `packages/rules`     | Local puzzle rules                                 |
