@@ -10,9 +10,9 @@
   "scripts": {
     "dev": "pnpm --filter @world-jigsaw/web dev",
     "build": "pnpm --filter @world-jigsaw/web build",
-    "typecheck": "pnpm --filter @world-jigsaw/contracts typecheck && pnpm --filter @world-jigsaw/web typecheck",
+    "typecheck": "pnpm --filter @world-jigsaw/contracts typecheck && pnpm --filter @world-jigsaw/generator typecheck && pnpm --filter @world-jigsaw/web typecheck",
     "lint": "pnpm --filter @world-jigsaw/web lint",
-    "test": "pnpm --filter @world-jigsaw/contracts test && pnpm --filter @world-jigsaw/web test",
+    "test": "pnpm --filter @world-jigsaw/contracts test && pnpm --filter @world-jigsaw/generator test && pnpm --filter @world-jigsaw/web test",
     "test:e2e": "pnpm build && pnpm --filter @world-jigsaw/web test:e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

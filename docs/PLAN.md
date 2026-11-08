@@ -46,11 +46,9 @@ World Jigsaw is a browser-based, collaborative daily jigsaw puzzle. At a server-
 
 ### 1.2 Puzzle sizing and the crowding problem
 
-A single 150-piece puzzle with thousands of eager contributors will finish quickly. Do not promise five meaningful moves to *every* visitor once the board is complete.
+A single small puzzle with thousands of eager contributors will finish quickly. Do not promise five meaningful moves to *every* visitor once the board is complete.
 
-- Launch experiments: 300–600 pieces, with a fast renderer and a curated image.
-- Build for 1,000–5,000 pieces if daily participation warrants it (performance/UX validation required).
-- Calculate the next day's piece count from prior days' unique legitimate contributors, accepted moves, time-to-finish, and actual connections; target a satisfying fraction of the 24-hour window rather than guaranteeing completion.
+- Target around 60 pieces, with at most 80, using a fast renderer and a curated image.
 - Choose piece count *before activation*. Do not change geometry or add pieces in the middle of a day.
 - Show both **pieces anchored** and **pieces in connected assemblies**; these are not interchangeable progress metrics.
 - Provide a smart **Find an open area** action to help players find movable pieces, especially on crowded boards.
@@ -123,7 +121,7 @@ Rollover and completion must be idempotent. Never let the same puzzle be complet
 ├────────────────────────────────────────────────────────┬──────────────────────┤
 │                                                        │ REFERENCE PHOTO      │
 │                 SHARED VIRTUAL TABLE                   │ [full small photo]   │
-│   piece       [connected group]                          │ 1,146/2,000 anchored │
+│   piece       [connected group]                          │  36/60 anchored      │
 │                                                        │                      │
 │             ┌────────────────────────┐                 │ WORLD CHAT           │
 │  piece      │    FINAL IMAGE FRAME   │       group     │ SleepyMango042: ...  │
@@ -131,7 +129,7 @@ Rollover and completion must be idempotent. Never let the same puzzle be complet
 │             └────────────────────────┘                 │ [Message...]         │
 │                                                        │                      │
 ├────────────────────────────────────────────────────────┤ TODAY'S STATS        │
-│ BAG [piece] [piece] [piece] [piece]  Filter: edges      │ contributors / joins │
+│ SHARED PIECE SPACE                    Filter: edges      │ contributors / joins │
 ├────────────────────────────────────────────────────────┴──────────────────────┤
 │ ACTIVITY ▾  🥭 SleepyMango042 joined 3 pieces  ·  🥝 BraveKiwi508 anchored... │
 ├───────────────────────────────────────────────────────────────────────────────┤
@@ -146,7 +144,7 @@ Key: activity ticker is **below the board** as requested; it expands into the re
 - Header: destination, countdown, live participant number.
 - Puzzle board takes most of the screen.
 - Reference becomes floating expandable thumbnail; chat becomes collapsible bottom sheet.
-- Piece bag becomes bottom drawer; activity ticker appears just under board with swipeable 1–2 notable items.
+- Keep the shared piece space accessible; activity ticker appears just under board with swipeable 1–2 notable items.
 - Sticky five-move counter and disabled/enabled interaction state.
 - One-finger drag piece, background pan, two-finger zoom, accessible keyboard alternatives where possible.
 - Option to hide cursor overlays and animations for performance/accessibility.
@@ -296,7 +294,7 @@ Offer **Save my name with a passkey**. Using WebAuthn, an opted-in visitor can b
 | Pan, zoom, inspect preview | 0 | No | No |
 | Invalid/out-of-bounds drop | 0 | No | No |
 | Drop same location, no join | 0 | No | No |
-| Bring a piece from the bag to the canvas | 1 | On Confirm | Possibly aggregated |
+| Bring a piece from the shared outer workspace to the play surface | 1 | On Confirm | Possibly aggregated |
 | Move a previously confirmed loose piece/group | 1 | On Confirm | Not individually |
 | Adjust or join a selection already moved in this batch | 0 additional | On Confirm | Possibly aggregated |
 | Anchor a selection already moved in this batch | 0 additional | On Confirm | Yes |
@@ -387,7 +385,7 @@ type Group = {
 };
 ```
 
-All groups begin as individual pieces in a virtual shared bag/staging area, or lazily instantiated from a known initial distribution. Bag state belongs to the *global puzzle*, not to a player's private browser.
+Initial groups are individual pieces in the shared outer workspace or already placed on the play surface. Their state belongs to the *global puzzle*, not to a player's private browser. See the [generator documentation](../packages/generator/README.md) for the current initial distribution.
 
 ### 7.3 Drag lifecycle
 
@@ -421,7 +419,7 @@ Track distinct metrics:
 
 ### 7.5 Controls and polish
 
-Desktop: left-drag pieces, left-drag background pan, Space-drag pan, wheel zoom around cursor, Escape cancel preview, F fit, H reference overlay, E edge filter, click to inspect. Mobile: one-finger piece drag or empty-space pan, pinch zoom, bottom bag drawer, chat drawer, collapse live overlays. All gesture paths must support pointer capture; cancel on page visibility change.
+Desktop: left-drag pieces, left-drag background pan, Space-drag pan, wheel zoom around cursor, Escape cancel preview, F fit, H reference overlay, E edge filter, click to inspect. Mobile: one-finger piece drag or empty-space pan, pinch zoom, shared piece space, chat drawer, collapse live overlays. All gesture paths must support pointer capture; cancel on page visibility change.
 
 Visual polish: piece raises under cursor; good matching edge glows; snap eases ~100–150 ms; subtle optional sound; server failure animates spring-back; show pending moves separately from quota charged on Confirm. Add reduced-motion setting, keyboard equivalents and high-contrast accessible focus states.
 
@@ -460,8 +458,8 @@ Public types: `PIECES_JOINED`, `GROUPS_MERGED`, `ANCHOR_COMPLETED`, `CONTRIBUTIO
 Raw persistent events:
 
 ```text
-12:00:01 SleepyMango042 drop piece 21 from bag
-12:00:04 SleepyMango042 drop piece 22 from bag
+12:00:01 SleepyMango042 drop piece 21 from shared space
+12:00:04 SleepyMango042 drop piece 22 from shared space
 12:00:06 SleepyMango042 connect pieces 21 & 22
 12:00:09 BraveKiwi508 attach group of 3 to group of 4
 ```
@@ -916,7 +914,7 @@ apps/web/src/
   pages/           TodayPage, PlayPage, ActivityPage, ArchivePage
   components/
     header/        GlobalCountdown, IdentityChip, OnlineCount
-    puzzle/        PuzzleCanvas, PieceBag, Preview, CameraToolbar
+    puzzle/        PuzzleCanvas, PieceSpace, Preview, CameraToolbar
     contribution/  FiveMoveBar, ConfirmSummary, SpectatorBanner
     activity/      BottomTicker, ActivityDrawer, DashboardCharts
     chat/          ChatPanel, MessageRow, ReportDialog
@@ -940,8 +938,8 @@ Visual game state separates authoritative `committedGroups` from local and remot
 
 **Proposed targets to validate with measured load (not performance claims):**
 
-- A 60/150-piece offline puzzle can be completed flawlessly on desktop and mobile first.
-- 300–600-piece daily puzzles on launch with deterministic generation; larger boards after profiling.
+- A 60–80-piece offline puzzle can be completed flawlessly on desktop and mobile first.
+- Daily puzzles use deterministic generation and the piece-count target in section 1.2.
 - Client pointer tracking/drag locally targets 60 FPS on representative desktop, graceful 30+ FPS on older mobile hardware.
 - Healthy-region preview drop acknowledgement p95 target < 250 ms, measured from client release to ack.
 - Relative real-time group update target p95 < 300 ms in same region at tested load, with degradations visible in telemetry.
@@ -1038,7 +1036,7 @@ A fresh visitor joins with `AdjectiveFruitNNN`, sees one global daily destinatio
 ### Phase 0 — Definition and prerequisites
 
 - Finalize daily reset policy, quota semantics, UI maps, database invariants, licensing requirements and identity privacy policy.
-- Decide a representative first licensed photo and fixtures with 60/150 pieces.
+- Decide a representative first licensed photo and fixtures with 60–80 pieces.
 - Write event schemas and fixture tests; define metrics before architecture splitting.
 
 **Exit:** everyone can describe what counts as a move, when quota resets, and what Confirm does.
@@ -1046,8 +1044,8 @@ A fresh visitor joins with `AdjectiveFruitNNN`, sees one global daily destinatio
 ### Phase 1 — Standalone puzzle engine (no network)
 
 - Deterministic jigsaw piece geometry and image clipping.
-- PixiJS renderer, pan/zoom, bag, drag/select, snap, connected groups, anchored frame and rollback.
-- Test full completion and mobile touch interactions with 60/150 pieces.
+- PixiJS renderer, pan/zoom, shared piece space, drag/select, snap, connected groups, anchored frame and rollback.
+- Test full completion and mobile touch interactions with 60–80 pieces.
 
 **Exit:** satisfying single-browser puzzle with deterministic placement and no rendering bugs.
 
@@ -1106,7 +1104,7 @@ A fresh visitor joins with `AdjectiveFruitNNN`, sees one global daily destinatio
 
 ## 22. Work tracking — epic breakdown
 
-**Epic A — Core engine:** shape generator, deterministic seed, group transform, snap validator, bag, anchors, camera, UI input, tests.
+**Epic A — Core engine:** shape generator, deterministic seed, group transform, snap validator, shared piece space, anchors, camera, UI input, tests.
 
 **Epic B — Persistence:** DB schema/migrations, command IDs, event store, snapshots, transactional quota, outbox.
 
