@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "description": "Portable exact-snap and accounting scenarios shared by local TypeScript and backend Java rules.",
+  "scenarios": [
+    {
+      "name": "stationary neighbors join then move as one",
+      "fixture": "review-60.json",
+      "operations": [
+        {
+          "kind": "move",
+          "group": "0",
+          "action": "00000000-0000-4000-8000-000000000901",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "pending": 0
+        },
+        {
+          "kind": "attach",
+          "group": "0",
+          "target": "1",
+          "merged": "00000000-0000-4000-8000-000000000911",
+          "pending": 0
+        },
+        {
+          "kind": "move",
+          "group": "00000000-0000-4000-8000-000000000911",
+          "action": "00000000-0000-4000-8000-000000000901",
+          "x": 100,
+          "y": 0,
+          "rotation": 0,
+          "pending": 1
+        }
+      ],
+      "charged": 1,
+      "groupDelta": -1,
+      "generation": 0
+    },
+    {
+      "name": "separately entered neighbors retain both charges",
+      "fixture": "sample-80.json",
+      "operations": [
+        {
+          "kind": "move",
+          "group": "0",
+          "action": "00000000-0000-4000-8000-000000000901",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "pending": 1
+        },
+        {
+          "kind": "move",
+          "group": "1",
+          "action": "00000000-0000-4000-8000-000000000902",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "pending": 2
+        },
+        {
+          "kind": "attach",
+          "group": "0",
+          "target": "1",
+          "merged": "00000000-0000-4000-8000-000000000911",
+          "pending": 2
+        },
+        {
+          "kind": "move",
+          "group": "00000000-0000-4000-8000-000000000911",
+          "action": "00000000-0000-4000-8000-000000000902",
+          "x": 100,
+          "y": 100,
+          "rotation": 0,
+          "pending": 2
+        }
+      ],
+      "charged": 2,
+      "groupDelta": -1,
+      "generation": 0
+    },
+    {
+      "name": "undo removes provisional charge and fences generation",
+      "fixture": "review-60.json",
+      "operations": [
+        {
+          "kind": "move",
+          "group": "3",
+          "action": "00000000-0000-4000-8000-000000000901",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "pending": 1
+        },
+        { "kind": "undo", "action": "00000000-0000-4000-8000-000000000901", "pending": 0 }
+      ],
+      "charged": 0,
+      "groupDelta": 0,
+      "generation": 1
+    }
+  ]
+}

@@ -22,12 +22,14 @@ dependencies {
     implementation(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
 
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
+    implementation("org.springframework.boot:spring-boot-starter-websocket")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("com.networknt:json-schema-validator:1.5.6")
     implementation("io.github.erdtman:java-json-canonicalization:1.1")
+    implementation("org.locationtech.jts:jts-core:1.20.0")
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -47,6 +49,12 @@ tasks.register<JavaExec>("previewDemo") {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    systemProperty(
+        "worldjigsaw.test.classpath",
+        sourceSets.test
+            .get()
+            .runtimeClasspath.asPath,
+    )
 }
 
 spotless {

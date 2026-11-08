@@ -1,0 +1,35 @@
+# Local turn wire interpretation
+
+This is the private-local service's interpretation of the existing closed v1 schema. The frontend
+has not yet agreed to or integrated it; coordinate the handoff through Firstmate. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
+A position frame should not irreversibly join a group merely because a pointer passed a neighbor.
+
+For a normal move or adjustment, `targetId` identifies a draft group or one of its pieces and
+`affectedPieceIds` names exactly that draft group's complete members. Its `baseRevisions` names
+all canonical source groups represented by those members. To request a join, the same frame names
+in `affectedPieceIds` the complete union of the moving group and intended target groups and names
+all their canonical source revisions. The server treats this as a request, not as proof: it must
+acquire all source leases atomically, validate revision and membership, require each join to have a
+reciprocal neighboring edge within the server's snap tolerance, and validate the resulting complete
+board against the collision policy. It authors any merged group ID and returns its own previews.
+Omitting the union is a movement frame; it never silently joins while dragging. Busy, stale, invalid,
+or collision outcomes reject the frame without mutating the preceding draft or consuming a move.
+If the bounded join search cannot decide, it reports a retryable `INTERNAL_ERROR`; the player can
+retry the join in smaller steps without losing the draft.
+
+A server preview for an action reflects its current draft component, even after joining: `targetId`
+is the server-authored draft group ID for a multi-piece group, or the piece ID for a singleton;
+`affectedPieceIds` and `baseRevisions` describe the entire component. Independently introduced
+actions remain distinct and keep their own charges. Each accepted change can re-emit the latest
+preview for each affected action. The server allocates strictly increasing outgoing preview
+sequences within each generation; the client's submitted sequence is tracked independently for
+rejecting stale submissions and is reported on rejection. A reconnect receives every current action
+in outgoing sequence order. This separation needs frontend agreement before use.
+
+Undo fences and clears the old generation, rejects removal of an action with joined dependencies,
+then re-emits surviving previews under the new generation. Cancel clears only the draft and reveals
+the latest canonical board. Confirm must match the server's current action set and turn revision,
+use the original command ID for retries, validate again under the board lock, persist the board,
+quota, event and command result atomically, then emit the event and fence the preview. A response
+lost after commit must be resolved from the durable command ID. None of this document replaces the
+shared v1 schema or authorizes public exposure.

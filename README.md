@@ -80,6 +80,8 @@ expressions (variables, conditionals, concatenation) is not detected, so keep it
 ## Backend local setup
 
 The Java 21 Spring Boot backend runs independently of the web app and deployment tooling.
+It binds to `127.0.0.1` by default. It has no public authentication or security review; changing
+the bind address or placing it behind a proxy is not authorized as a public deployment.
 You need JDK 21 or newer and a reachable PostgreSQL database. The database and its user must
 already exist, and the user needs permission to run Flyway migrations. Connection settings
 default to `jdbc:postgresql://localhost:5432/worldjigsaw`, user `worldjigsaw`, password
@@ -102,8 +104,37 @@ Run the service from `services/backend`; Flyway applies migrations on startup:
 Check it with `curl http://localhost:8080/actuator/health`; a healthy service reports
 `"status":"UP"`. No frontend, gateway, dashboard, Kubernetes, or self-host platform is needed.
 
-For the private preview transport demo and its limitations, see the
-[backend integration note](services/backend/PREVIEW-INTEGRATION.md).
+The private local game service provides `POST /api/v1/session` and an authenticated WebSocket at
+`/api/v1/game/stream`. Session creation, mutations and the socket require an `Origin` matching the
+service's literal `localhost` or `127.0.0.1` origin, including port. A session uses a host-only,
+HttpOnly, SameSite=Strict cookie; its random secret is stored only as a hash. Sessions last 30 days.
+This is local prototype identity, not public authentication. No proxy, cross-origin frontend, public
+address or TLS termination has been reviewed. The service uses a process-lifetime local file lock
+and PostgreSQL advisory locks to fence a single writer. Run every backend using the same database on
+one host, from the same absolute `services/backend` directory on a local filesystem supporting
+cross-process locks; do not remove or replace `.world-jigsaw-writer.lock` while any backend runs.
+All instances for that database must use the same JDBC URL. Multiple hosts, isolated filesystem
+namespaces, network filesystems and high-availability deployment are not supported.
+Once loss of the database lock connection is detected, new game operations fail closed and connected
+clients are closed. The service attempts to reacquire ownership after earlier durable transactions
+settle, provided its local lock remains valid and no successor has replaced its ownership. Clients
+must resubscribe after recovery. Stop the backend process before starting a replacement; after restart,
+unsaved drafts are lost, while committed Confirm results remain available by command ID.
+
+The socket accepts v1 `subscribe`, `preview.submit`, and `heartbeat` messages and fans out temporary
+previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a
+turn; its `/confirm`, `/cancel`, and `/undo` routes settle or discard that turn. A confirmed batch,
+its quota charge, board version, event and command result commit together. Cancel reveals the latest
+saved board. Lost Confirm replies can be retried with the same command ID and payload or queried at
+`GET /api/v1/game/commands/{commandId}`; an unknown old-puzzle command can supply `?puzzleId=`.
+Receipts and identifier tombstones are retained indefinitely in this local prototype.
+
+The [turn wire note](services/backend/TURN-WIRE.md) explains the local v1 join request and outgoing
+sequence semantics. The [geometry note](services/backend/LOCAL-GEOMETRY.md) documents provisional
+collision and snap rules. The current frontend is not integrated with these endpoints; its actual
+mouse and touch controls still need the owning frontend worker's end-to-end validation. Chat is not
+integrated. The separate [preview demo](services/backend/PREVIEW-INTEGRATION.md) is not the game
+service.
 
 Run formatting checks and tests from `services/backend`:
 
@@ -122,7 +153,7 @@ backend does not connect to it. A trusted operator can import a JSON document wi
 and `snapshot` fields, assigning its UTC day explicitly. For example, from `services/backend`:
 
 ```sh
-./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/contracts/v1/fixtures/board-and-batch.json'
+./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/review-60.json'
 ```
 
 Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing
@@ -133,18 +164,16 @@ membership. It commits the definition and canonical board together. It does not 
 collision or game rules; generated content needs further validation before production use.
 
 `GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
-UTC close time. If today's puzzle has not been imported, it returns a structured `PUZZLE_UNAVAILABLE` (503),
-not a previous day's board. Reads use a repeatable-read transaction. Allowance and own turn are null
-until an authenticated game application supplies them. This endpoint does not implement preview,
-confirmation, authentication, or multiplayer commands.
+UTC close time. If today's puzzle has not been imported, it returns `PUZZLE_UNAVAILABLE` (503),
+not a previous day's board. A valid local session receives its committed allowance and active turn;
+without a session both are null. Reads use a repeatable-read database transaction.
 
-The writer integration must lock the `game_boards` row for the puzzle before admitting a Confirm,
-then sample the authoritative UTC clock and compare it with `closes_at`. Admission strictly before
-close permits that transaction to finish after midnight; admission at or after close must fail. Keep
-that lock through commit or rollback and perform board, membership, quota, event and command outcome
-updates in the same transaction. Do not restore an old snapshot on cancel. This slice records the
-immutable close time but does not implement admission, lifecycle fencing or Confirm. Future writers
-must use the same board lock when changing canonical state, and must validate geometry and game rules.
+Confirm locks the board before sampling the authoritative UTC clock. Admission strictly before
+close permits the transaction to finish afterward; admission at or after close is rejected. An
+unconfirmed preview is cleared at rollover without a charge. On restart, committed command results
+remain queryable and unconfirmed drafts are discarded. Imported legacy arbitrary-angle boards remain
+readable but interaction returns `UNSUPPORTED_LEGACY_ORIENTATION` in an `INVALID_ACTION` error;
+their data is not rewritten.
 
 ## Chat local setup
 

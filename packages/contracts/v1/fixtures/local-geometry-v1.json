@@ -1,0 +1,890 @@
+{
+  "description": "Local v1 provisional contour-core collision and snap examples. All coordinates are integer thousandths. Independent axis-aligned square arithmetic establishes the expected boundaries.",
+  "pieces": [
+    {
+      "pieceId": "00000000-0000-4000-8000-000000000001",
+      "solvedPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "referencePoint": {
+        "x": 50000,
+        "y": 50000
+      },
+      "edges": [
+        {
+          "edgeId": "top",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 100000,
+                "y": 0
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "right",
+          "neighborPieceId": "00000000-0000-4000-8000-000000000002",
+          "neighborEdgeId": "left",
+          "start": {
+            "x": 100000,
+            "y": 0
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 100000,
+                "y": 100000
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "bottom",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 100000,
+            "y": 100000
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 0,
+                "y": 100000
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "left",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 0,
+            "y": 100000
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 0,
+                "y": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pieceId": "00000000-0000-4000-8000-000000000002",
+      "solvedPosition": {
+        "x": 100000,
+        "y": 0
+      },
+      "referencePoint": {
+        "x": 50000,
+        "y": 50000
+      },
+      "edges": [
+        {
+          "edgeId": "top",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 100000,
+                "y": 0
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "right",
+          "neighborPieceId": "00000000-0000-4000-8000-000000000003",
+          "neighborEdgeId": "left",
+          "start": {
+            "x": 100000,
+            "y": 0
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 100000,
+                "y": 100000
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "bottom",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 100000,
+            "y": 100000
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 0,
+                "y": 100000
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "left",
+          "neighborPieceId": "00000000-0000-4000-8000-000000000001",
+          "neighborEdgeId": "right",
+          "start": {
+            "x": 0,
+            "y": 100000
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 0,
+                "y": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pieceId": "00000000-0000-4000-8000-000000000003",
+      "solvedPosition": {
+        "x": 200000,
+        "y": 0
+      },
+      "referencePoint": {
+        "x": 50000,
+        "y": 50000
+      },
+      "edges": [
+        {
+          "edgeId": "top",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 0,
+            "y": 0
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 100000,
+                "y": 0
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "right",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 100000,
+            "y": 0
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 100000,
+                "y": 100000
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "bottom",
+          "neighborPieceId": null,
+          "neighborEdgeId": null,
+          "start": {
+            "x": 100000,
+            "y": 100000
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 0,
+                "y": 100000
+              }
+            }
+          ]
+        },
+        {
+          "edgeId": "left",
+          "neighborPieceId": "00000000-0000-4000-8000-000000000002",
+          "neighborEdgeId": "right",
+          "start": {
+            "x": 0,
+            "y": 100000
+          },
+          "segments": [
+            {
+              "kind": "line",
+              "to": {
+                "x": 0,
+                "y": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "collisionCases": [
+    {
+      "name": "touching",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "gap",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 1,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "small overlap",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -9999,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "exact allowance",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -10000,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "just over allowance",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -10001,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    },
+    {
+      "name": "deep intrusion",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -50000,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    },
+    {
+      "name": "coincident pieces",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -100000,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    },
+    {
+      "name": "quarter turn touching",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 200000,
+            "y": -100000
+          },
+          "rotation": 90000
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "quarter turn deep intrusion",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 150000,
+            "y": -100000
+          },
+          "rotation": 90000
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    },
+    {
+      "name": "simultaneous legal individually colliding together",
+      "transforms": [
+        {
+          "translation": {
+            "x": 50000,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -50000,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    },
+    {
+      "name": "negative positions with gap",
+      "transforms": [
+        {
+          "translation": {
+            "x": -500000,
+            "y": -400000
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -500000,
+            "y": -400000
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "vertical touching",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -100000,
+            "y": 100000
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "vertical exact allowance",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -100000,
+            "y": 90000
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "vertical past allowance",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -100000,
+            "y": 89999
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    },
+    {
+      "name": "corner small overlap",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -10000,
+            "y": 90000
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": false
+    },
+    {
+      "name": "corner deep overlap",
+      "transforms": [
+        {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": -10001,
+            "y": 89999
+          },
+          "rotation": 0
+        },
+        {
+          "translation": {
+            "x": 300000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      ],
+      "forbidden": true
+    }
+  ],
+  "snapCases": [
+    {
+      "name": "correct neighbors aligned",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": true
+    },
+    {
+      "name": "threshold inclusive",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 5000,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": true
+    },
+    {
+      "name": "over threshold",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 5001,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": false
+    },
+    {
+      "name": "wrong neighbors",
+      "moving": 0,
+      "target": 2,
+      "movingTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": false
+    },
+    {
+      "name": "different orientation",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 100000,
+          "y": 0
+        },
+        "rotation": 90000
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": false
+    },
+    {
+      "name": "matching quarter turn",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 270000
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 270000
+      },
+      "allowed": true
+    },
+    {
+      "name": "diagonal 3-4-5 threshold",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 3000,
+          "y": 4000
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": true
+    },
+    {
+      "name": "diagonal beyond threshold",
+      "moving": 0,
+      "target": 1,
+      "movingTransform": {
+        "translation": {
+          "x": 3001,
+          "y": 4000
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "allowed": false
+    }
+  ],
+  "concaveCases": {
+    "contour": [
+      [0, 0],
+      [100000, 0],
+      [100000, 48000],
+      [160000, 48000],
+      [160000, 52000],
+      [100000, 52000],
+      [100000, 100000],
+      [0, 100000]
+    ],
+    "squareLeft": [
+      {
+        "x": 160000,
+        "forbidden": false
+      },
+      {
+        "x": 155000,
+        "forbidden": false
+      },
+      {
+        "x": 150000,
+        "forbidden": false
+      },
+      {
+        "x": 149999,
+        "forbidden": true
+      },
+      {
+        "x": 130000,
+        "forbidden": true
+      }
+    ]
+  }
+}
