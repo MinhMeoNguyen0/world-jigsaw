@@ -175,42 +175,34 @@ class ChatServerTest {
   }
 
   @Test
-  void paddingLargerThanHeapIsParsedIncrementally() throws Exception {
-    String classpath =
-        java.util.stream.Stream.of(
-                ChatRequestMemoryProbe.class,
-                ChatServer.class,
-                com.ibm.icu.text.BreakIterator.class,
-                com.fasterxml.jackson.databind.ObjectMapper.class,
-                com.fasterxml.jackson.core.JsonParser.class,
-                com.fasterxml.jackson.annotation.JsonInclude.class)
-            .map(type -> {
-              try {
-                return java.nio.file.Path.of(
-                        type.getProtectionDomain().getCodeSource().getLocation().toURI())
-                    .toString();
-              } catch (java.net.URISyntaxException ex) {
-                throw new IllegalStateException(ex);
-              }
-            })
-            .distinct()
-            .collect(java.util.stream.Collectors.joining(java.io.File.pathSeparator));
-    var process =
-        new ProcessBuilder(
-                java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Xmx64m",
-                "-cp",
-                classpath,
-                ChatRequestMemoryProbe.class.getName())
-            .redirectErrorStream(true)
-            .start();
-    try {
-      assertTrue(
-          process.waitFor(45, java.util.concurrent.TimeUnit.SECONDS), "memory probe timed out");
-      String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-      assertEquals(0, process.exitValue(), output);
-    } finally {
-      process.destroyForcibly();
+  void limitsCompleteUtf8BodyAt65536Bytes() throws Exception {
+    try (BufferedReader live = subscribe(subject)) {
+      String body =
+          json.writeValueAsString(
+              java.util.Map.of(
+                  "schemaVersion",
+                  1,
+                  "messageId",
+                  UUID.randomUUID().toString(),
+                  "text",
+                  "🙂" + "\u0301".repeat(1000)));
+      int size = body.getBytes(StandardCharsets.UTF_8).length;
+      String exact = body + " ".repeat(65536 - size);
+      for (String candidate : new String[] {exact, exact + " "}) {
+        var response =
+            client.send(
+                request("/api/v1/chat/messages")
+                    .header("X-Local-Subject", subject)
+                    .POST(HttpRequest.BodyPublishers.ofString(candidate))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(candidate.length() == exact.length() ? 202 : 413, response.statusCode());
+        if (response.statusCode() == 413)
+          assertEquals(
+              "MESSAGE_TOO_LARGE",
+              json.readTree(response.body()).path("error").path("code").asText());
+      }
+      assertEquals("🙂" + "\u0301".repeat(1000), event(live).path("text").asText());
     }
   }
 
@@ -299,7 +291,7 @@ class ChatServerTest {
         while (!in.readLine().isEmpty()) {}
         stalled.add(socket);
       }
-      String large = "a" + "\u0301".repeat(100000);
+      String large = "a" + "\u0301".repeat(30000);
       int status = 202;
       for (int i = 0; i < 80 && status == 202; i++) {
         status = send(UUID.randomUUID().toString(), large).statusCode();

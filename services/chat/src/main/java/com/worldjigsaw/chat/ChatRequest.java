@@ -3,6 +3,7 @@ package com.worldjigsaw.chat;
 import com.ibm.icu.lang.UCharacter;
 import com.ibm.icu.lang.UProperty;
 import java.io.BufferedReader;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -13,8 +14,34 @@ import java.util.Set;
 import java.util.UUID;
 
 record ChatRequest(String messageId, String text) {
+  static final int MAX_BODY_BYTES = 64 * 1024;
+
+  static final class TooLarge extends IOException {}
+
   static ChatRequest read(InputStream body, int maxGraphemes) throws IOException {
-    return new Decoder(body, maxGraphemes).read();
+    return new Decoder(new LimitedBody(body), maxGraphemes).read();
+  }
+
+  private static final class LimitedBody extends FilterInputStream {
+    private int count;
+
+    LimitedBody(InputStream input) {
+      super(input);
+    }
+
+    @Override
+    public int read() throws IOException {
+      int value = in.read();
+      if (value != -1 && ++count > MAX_BODY_BYTES) throw new TooLarge();
+      return value;
+    }
+
+    @Override
+    public int read(byte[] bytes, int offset, int length) throws IOException {
+      int read = in.read(bytes, offset, Math.min(length, MAX_BODY_BYTES - count + 1));
+      if (read > 0 && (count += read) > MAX_BODY_BYTES) throw new TooLarge();
+      return read;
+    }
   }
 
   private static final class Decoder {

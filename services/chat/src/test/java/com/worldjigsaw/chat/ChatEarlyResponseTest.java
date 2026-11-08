@@ -89,6 +89,51 @@ class ChatEarlyResponseTest {
     }
   }
 
+  @Test
+  void slowValidUploadsRemainConnected() throws Exception {
+    try (var server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"))) {
+      server.start();
+      try (var fixed = connect(server);
+          var chunked = connect(server)) {
+        String body =
+            "{\"schemaVersion\":1,\"messageId\":\"00000000-0000-4000-8000-000000000700\",\"text\":\"hi\"}";
+        var request = new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "", 0);
+        write(fixed, request, "Content-Length: " + body.length() + "\r\n", "{");
+        write(chunked, request, "Transfer-Encoding: chunked\r\n", "1\r\n{\r\n");
+        Thread.sleep(7000);
+        fixed.getOutputStream().write(body.substring(1).getBytes(StandardCharsets.UTF_8));
+        fixed.getOutputStream().flush();
+        String remainder = body.substring(1);
+        chunked
+            .getOutputStream()
+            .write(
+                (Integer.toHexString(remainder.length()) + "\r\n" + remainder + "\r\n0\r\n\r\n")
+                    .getBytes(StandardCharsets.UTF_8));
+        chunked.getOutputStream().flush();
+        assertStatus(fixed, 503);
+        assertStatus(chunked, 503);
+      }
+    }
+  }
+
+  @Test
+  void oversizedChunkedUploadIsRejectedWithoutWaitingForEnd() throws Exception {
+    try (var server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"))) {
+      server.start();
+      try (var socket = connect(server)) {
+        String body =
+            "{\"schemaVersion\":1,\"messageId\":\"00000000-0000-4000-8000-000000000700\",\"text\":\"hi\"}";
+        String payload = body + " ".repeat(65537 - body.length());
+        write(
+            socket,
+            new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "", 0),
+            "Transfer-Encoding: chunked\r\n",
+            Integer.toHexString(payload.length()) + "\r\n" + payload + "\r\n");
+        assertStatus(socket, 413);
+      }
+    }
+  }
+
   private static Socket open(ChatServer server, Request request, boolean chunked) throws Exception {
     Socket socket = connect(server);
     String framing = chunked ? "Transfer-Encoding: chunked\r\n" : "Content-Length: 134217728\r\n";

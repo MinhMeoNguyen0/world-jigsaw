@@ -70,6 +70,6 @@ allowed. Browser counts are advisory; server validation is authoritative. The S3
 and Unicode 15.1 grapheme-break data are exercised in tests; the actual shared contract and game
 issuer must still be integrated before an interoperability claim.
 
-The parser and JVM require memory proportional to the message size, but not to JSON whitespace;
-they have finite implementation limits even though this service does not impose a separate byte
-quota. Under worker saturation the server closes excess connections.
+The [shared chat contract](../../packages/contracts/README.md#ephemeral-chat) specifies the request
+body limit and error behavior. Clients can measure their serialized body with `TextEncoder`. Under
+worker saturation the server closes excess connections.

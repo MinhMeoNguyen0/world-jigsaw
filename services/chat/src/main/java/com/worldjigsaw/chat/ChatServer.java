@@ -230,6 +230,9 @@ public final class ChatServer implements AutoCloseable {
     ChatRequest request;
     try {
       request = ChatRequest.read(e.getRequestBody(), settings.maxGraphemes());
+    } catch (ChatRequest.TooLarge ex) {
+      error(e, 413, "MESSAGE_TOO_LARGE");
+      return;
     } catch (IOException ex) {
       error(e, 400, "INVALID_REQUEST");
       return;
