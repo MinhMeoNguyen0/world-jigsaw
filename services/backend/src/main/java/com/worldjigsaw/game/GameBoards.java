@@ -93,6 +93,12 @@ public class GameBoards {
   /** One repeatable-read transaction holds definition, version and all memberships together. */
   @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
   public Map<String, Object> current() {
+    return currentFor(null);
+  }
+
+  /** The caller supplies an authenticated subject; quota and board use one database snapshot. */
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+  public Map<String, Object> currentFor(UUID subject) {
     Instant now = clock.instant();
     LocalDate day = now.atZone(ZoneOffset.UTC).toLocalDate();
     var boards =
@@ -158,7 +164,18 @@ public class GameBoards {
     result.put("endsAt", board.closesAt().toString());
     result.put("definition", board.definition());
     result.put("snapshot", snapshot);
-    result.put("allowance", null);
+    if (subject == null) {
+      result.put("allowance", null);
+    } else {
+      List<Integer> usedValues =
+          jdbc.query(
+              "SELECT used FROM game_allowances WHERE subject_id = ? AND puzzle_id = ?",
+              (rs, row) -> rs.getInt("used"),
+              subject,
+              board.id());
+      int used = usedValues.isEmpty() ? 0 : usedValues.getFirst();
+      result.put("allowance", Map.of("limit", 5, "used", used, "remaining", 5 - used));
+    }
     result.put("ownTurn", null);
     return result;
   }

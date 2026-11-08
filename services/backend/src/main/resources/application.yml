@@ -1,3 +1,7 @@
+# This prototype has no public authentication or security review. Keep it local by default.
+server:
+  address: 127.0.0.1
+
 spring:
   application:
     name: world-jigsaw-backend

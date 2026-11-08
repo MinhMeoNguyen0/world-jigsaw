@@ -80,6 +80,8 @@ expressions (variables, conditionals, concatenation) is not detected, so keep it
 ## Backend local setup
 
 The Java 21 Spring Boot backend runs independently of the web app and deployment tooling.
+It binds to `127.0.0.1` by default. It has no public authentication or security review; changing
+the bind address or placing it behind a proxy is not authorized as a public deployment.
 You need JDK 21 or newer and a reachable PostgreSQL database. The database and its user must
 already exist, and the user needs permission to run Flyway migrations. Connection settings
 default to `jdbc:postgresql://localhost:5432/worldjigsaw`, user `worldjigsaw`, password
@@ -102,7 +104,18 @@ Run the service from `services/backend`; Flyway applies migrations on startup:
 Check it with `curl http://localhost:8080/actuator/health`; a healthy service reports
 `"status":"UP"`. No frontend, gateway, dashboard, Kubernetes, or self-host platform is needed.
 
-For the private preview transport demo and its limitations, see the
+The private local service provides `POST /api/v1/session` and an authenticated,
+same-origin snapshot-only WebSocket at `/api/v1/game/stream`. Session creation and the socket
+require an `Origin` matching the service's literal `localhost` or `127.0.0.1` origin, including
+port. A session uses a host-only, HttpOnly, SameSite=Strict cookie; its random secret is stored
+only as a hash. Sessions last 30 days. This is local prototype identity, not public authentication.
+No proxy, cross-origin frontend, public address or TLS termination has been reviewed. The socket
+accepts v1 `subscribe` messages, sends a canonical snapshot and watermark, then closes with code 1013 because live fanout is not
+available. It requests a fresh subscription for unsupported cursors and rejects previews. It does
+not fan out changes or implement
+live multiplayer yet. The current frontend is not integrated with this endpoint.
+
+For the separate private preview transport demo and its limitations, see the
 [backend integration note](services/backend/PREVIEW-INTEGRATION.md).
 
 Run formatting checks and tests from `services/backend`:
@@ -134,9 +147,9 @@ collision or game rules; generated content needs further validation before produ
 
 `GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
 UTC close time. If today's puzzle has not been imported, it returns a structured `PUZZLE_UNAVAILABLE` (503),
-not a previous day's board. Reads use a repeatable-read transaction. Allowance and own turn are null
-until an authenticated game application supplies them. This endpoint does not implement preview,
-confirmation, authentication, or multiplayer commands.
+not a previous day's board. Reads use a repeatable-read transaction. A valid local session receives its committed allowance from the same database snapshot; without a
+session the allowance is null. The own turn is null because turns are not implemented. This endpoint
+does not implement preview, confirmation, or multiplayer commands.
 
 The writer integration must lock the `game_boards` row for the puzzle before admitting a Confirm,
 then sample the authoritative UTC clock and compare it with `closes_at`. Admission strictly before

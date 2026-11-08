@@ -18,7 +18,7 @@ snapshot, queue or replay events across subscription, and order each accepted pr
 with its broadcast. A `snapshot()` call alone is not an atomic network handoff. Confirm must clear
 the overlay only in coordination with the actual durable outcome; it must not turn a preview into
 a claimed save. Integration with the [board import and read API](../../README.md#game-board-import-and-reads)
-remains pending, as do the generator, rules engine, session identity and live transport. See the
+remains pending, as do integration of the generator and rules engine, preview transport and live event fanout. The application has a separate authenticated snapshot-only WebSocket and local session; neither provides game mutations or preview fanout. See the
 [v1 contract](../../packages/contracts/README.md) and its unresolved integration constraints.
 
 ## Private transport demo

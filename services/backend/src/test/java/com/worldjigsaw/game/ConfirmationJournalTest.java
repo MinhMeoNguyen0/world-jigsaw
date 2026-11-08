@@ -1,0 +1,366 @@
+package com.worldjigsaw.game;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+@SpringBootTest
+@Testcontainers
+@Import(ConfirmationJournalTest.ClockConfig.class)
+class ConfirmationJournalTest {
+  @Container static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+  static final AtomicReference<Instant> NOW =
+      new AtomicReference<>(Instant.parse("2026-11-07T23:59:59Z"));
+  private final ObjectMapper mapper = new ObjectMapper();
+  @Autowired GameBoards boards;
+  @Autowired ConfirmationJournal journal;
+  @Autowired BoardValidator validator;
+  @Autowired JdbcTemplate jdbc;
+  @Autowired PlatformTransactionManager transactions;
+  @Autowired Clock clock;
+
+  @TestConfiguration
+  static class ClockConfig {
+    @Bean
+    @Primary
+    Clock mutableClock() {
+      return new Clock() {
+        @Override
+        public java.time.ZoneId getZone() {
+          return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+          return Clock.fixed(instant(), zone);
+        }
+
+        @Override
+        public Instant instant() {
+          return NOW.get();
+        }
+      };
+    }
+  }
+
+  @DynamicPropertySource
+  static void properties(DynamicPropertyRegistry registry) {
+    registry.add("spring.datasource.url", postgres::getJdbcUrl);
+    registry.add("spring.datasource.username", postgres::getUsername);
+    registry.add("spring.datasource.password", postgres::getPassword);
+  }
+
+  @Test
+  void commitsOnceAcrossRestartAndConflictsAndAdmitsBeforeUtcClose() throws Exception {
+    JsonNode fixture =
+        mapper.readTree(
+            Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
+    ObjectNode initial = fixture.path("snapshot").deepCopy();
+    for (JsonNode group : initial.path("groups"))
+      ((ObjectNode) group.path("transform")).put("rotation", 0);
+    boards.importBoard(LocalDate.parse("2026-11-07"), fixture.path("definition"), initial);
+    UUID puzzle = UUID.fromString(initial.path("puzzleId").textValue());
+    UUID subject = UUID.randomUUID();
+    UUID command = UUID.randomUUID();
+    JsonNode payload = payload(puzzle, command, 1);
+    JsonNode result = journal.confirm(subject, puzzle, command, payload, move(2, 500));
+    assertThat(result.path("outcome").asText()).isEqualTo("confirmed");
+    assertThat(result.path("boardVersion").intValue()).isEqualTo(8);
+    assertThat(result.path("allowance").path("used").intValue()).isEqualTo(1);
+    assertThat(
+            mapper.valueToTree(boards.currentFor(subject).get("allowance")).path("used").intValue())
+        .isEqualTo(1);
+    assertThat(jdbc.queryForObject("SELECT count(*) FROM game_events", Integer.class)).isEqualTo(1);
+
+    // Recreate the service object and transaction to model a process that reloads persisted state.
+    ConfirmationJournal restarted = new ConfirmationJournal(jdbc, validator, clock);
+    var tx = new TransactionTemplate(transactions);
+    JsonNode retry =
+        tx.execute(status ->
+            restarted.confirm(
+                subject,
+                puzzle,
+                command,
+                payload,
+                (d, s, remaining) -> {
+                  throw new AssertionError("duplicate must not execute");
+                }));
+    assertThat(retry).isEqualTo(result);
+    JsonNode conflict =
+        journal.confirm(subject, puzzle, command, payload(puzzle, command, 2), move(2, 500));
+    assertThat(conflict.path("error").path("code").asText()).isEqualTo("COMMAND_CONFLICT");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT used FROM game_allowances WHERE subject_id = ?", Integer.class, subject))
+        .isEqualTo(1);
+
+    // Two independently identified contenders start from the same observed group revision.
+    UUID contenderA = UUID.randomUUID(), contenderB = UUID.randomUUID();
+    var start = new CountDownLatch(1);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var a =
+          pool.submit(() -> {
+            start.await();
+            UUID id = UUID.randomUUID();
+            return journal.confirm(contenderA, puzzle, id, payload(puzzle, id, 1), move(3, 100));
+          });
+      var b =
+          pool.submit(() -> {
+            start.await();
+            UUID id = UUID.randomUUID();
+            return journal.confirm(contenderB, puzzle, id, payload(puzzle, id, 1), move(3, 100));
+          });
+      start.countDown();
+      assertThat(
+              java.util.List.of(a.get().path("outcome").asText(), b.get().path("outcome").asText()))
+          .containsExactlyInAnyOrder("confirmed", "rejected");
+    }
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT board_version FROM game_boards WHERE puzzle_id = ?", Long.class, puzzle))
+        .isEqualTo(9);
+    assertThat(jdbc.queryForObject("SELECT count(*) FROM game_events", Integer.class)).isEqualTo(2);
+
+    // An event insert failure occurs after board replacement; the entire transaction rolls back.
+    jdbc.execute(
+        "CREATE FUNCTION fail_journal_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test failure'; END $$");
+    jdbc.execute(
+        "CREATE TRIGGER fail_journal_event BEFORE INSERT ON game_events FOR EACH ROW EXECUTE FUNCTION fail_journal_event()");
+    UUID failure = UUID.randomUUID();
+    assertThatThrownBy(() ->
+            journal.confirm(subject, puzzle, failure, payload(puzzle, failure, 1), move(4, 100)))
+        .isInstanceOf(RuntimeException.class);
+    jdbc.execute("DROP TRIGGER fail_journal_event ON game_events");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT board_version FROM game_boards WHERE puzzle_id = ?", Long.class, puzzle))
+        .isEqualTo(9);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM game_commands WHERE command_id = ?", Integer.class, failure))
+        .isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT used FROM game_allowances WHERE subject_id = ?", Integer.class, subject))
+        .isEqualTo(1);
+
+    UUID admitted = UUID.randomUUID();
+    JsonNode admittedResult =
+        journal.confirm(
+            subject,
+            puzzle,
+            admitted,
+            payload(puzzle, admitted, 1),
+            (definition, latest, remaining) -> {
+              var plan = move(4, 100).apply(definition, latest, remaining);
+              NOW.set(Instant.parse("2026-11-08T00:00:00Z"));
+              return plan;
+            });
+    assertThat(admittedResult.path("outcome").asText()).isEqualTo("confirmed");
+    assertThat(admittedResult.path("boardVersion").intValue()).isEqualTo(10);
+    UUID closed = UUID.randomUUID();
+    JsonNode closedResult =
+        journal.confirm(
+            subject,
+            puzzle,
+            closed,
+            payload(puzzle, closed, 1),
+            (d, s, remaining) -> {
+              throw new AssertionError("closed puzzle admitted");
+            });
+    assertThat(closedResult.path("error").path("code").asText()).isEqualTo("PUZZLE_CLOSED");
+    assertThat(journal.confirm(subject, puzzle, closed, payload(puzzle, closed, 1), move(5, 100)))
+        .isEqualTo(closedResult);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT used FROM game_allowances WHERE subject_id = ?", Integer.class, subject))
+        .isEqualTo(2);
+
+    // A request waiting on the board lock at midnight is admitted only after acquiring it.
+    NOW.set(Instant.parse("2026-11-07T23:59:59Z"));
+    var locked = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var holder =
+          pool.submit(() ->
+              tx.execute(status -> {
+                jdbc.queryForObject(
+                    "SELECT puzzle_id FROM game_boards WHERE puzzle_id = ? FOR UPDATE",
+                    UUID.class,
+                    puzzle);
+                locked.countDown();
+                try {
+                  release.await();
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                  throw new IllegalStateException(e);
+                }
+                return null;
+              }));
+      locked.await();
+      UUID waitingCommand = UUID.randomUUID();
+      var waiting =
+          pool.submit(() ->
+              journal.confirm(
+                  UUID.randomUUID(),
+                  puzzle,
+                  waitingCommand,
+                  payload(puzzle, waitingCommand, 1),
+                  move(5, 100)));
+      try {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        int waiters = 0;
+        while (waiters == 0 && System.nanoTime() < deadline) {
+          waiters =
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT definition%FOR UPDATE%'",
+                  Integer.class);
+          if (waiters == 0) Thread.sleep(20);
+        }
+        assertThat(waiters).isPositive();
+        NOW.set(Instant.parse("2026-11-08T00:00:00Z"));
+      } finally {
+        release.countDown();
+      }
+      holder.get();
+      assertThat(waiting.get().path("error").path("code").asText()).isEqualTo("PUZZLE_CLOSED");
+    }
+
+    // Concurrent retries of the same command execute the trusted planner exactly once.
+    NOW.set(Instant.parse("2026-11-07T23:59:59Z"));
+    UUID duplicateSubject = UUID.randomUUID(), duplicateCommand = UUID.randomUUID();
+    JsonNode duplicatePayload = payload(puzzle, duplicateCommand, 1);
+    var executions = new java.util.concurrent.atomic.AtomicInteger();
+    var duplicateStart = new CountDownLatch(1);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<JsonNode> call =
+          () -> {
+            duplicateStart.await();
+            return journal.confirm(
+                duplicateSubject,
+                puzzle,
+                duplicateCommand,
+                duplicatePayload,
+                (d, s, remaining) -> {
+                  executions.incrementAndGet();
+                  return move(5, 100).apply(d, s, remaining);
+                });
+          };
+      var a = pool.submit(call);
+      var b = pool.submit(call);
+      duplicateStart.countDown();
+      assertThat(a.get()).isEqualTo(b.get());
+      assertThat(executions).hasValue(1);
+    }
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT used FROM game_allowances WHERE subject_id = ?",
+                Integer.class,
+                duplicateSubject))
+        .isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT board_version FROM game_boards WHERE puzzle_id = ?", Long.class, puzzle))
+        .isEqualTo(11);
+
+    // A candidate with a deep overlap is rejected without changing the board or charging quota.
+    UUID collisionCommand = UUID.randomUUID();
+    JsonNode collision =
+        journal.confirm(
+            subject,
+            puzzle,
+            collisionCommand,
+            payload(puzzle, collisionCommand, 1),
+            (d, latest, remaining) -> {
+              ObjectNode proposed = latest.deepCopy();
+              ObjectNode group = (ObjectNode) proposed.path("groups").get(0);
+              ((ObjectNode) group.path("transform").path("translation"))
+                  .put("x", 5000)
+                  .put("y", -2000);
+              group.put("revision", group.path("revision").longValue() + 1);
+              proposed.put("boardVersion", latest.path("boardVersion").longValue() + 1);
+              return new ConfirmationJournal.Plan(proposed, 1);
+            });
+    assertThat(collision.path("error").path("message").asText())
+        .isEqualTo("Forbidden piece overlap");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT used FROM game_allowances WHERE subject_id = ?", Integer.class, subject))
+        .isEqualTo(2);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT board_version FROM game_boards WHERE puzzle_id = ?", Long.class, puzzle))
+        .isEqualTo(11);
+
+    // Imported arbitrary-angle groups are never rewritten when interaction is refused.
+    jdbc.update(
+        "UPDATE game_groups SET rotation = 31500 WHERE group_id = ?::uuid",
+        "00000000-0000-4000-8000-000000000201");
+    JsonNode beforeLegacy = mapper.valueToTree(boards.current().get("snapshot"));
+    UUID legacyCommand = UUID.randomUUID();
+    JsonNode legacyResult =
+        journal.confirm(
+            subject,
+            puzzle,
+            legacyCommand,
+            payload(puzzle, legacyCommand, 1),
+            (d, s, remaining) -> {
+              throw new AssertionError("legacy board mutated");
+            });
+    assertThat(legacyResult.path("error").path("message").asText())
+        .isEqualTo("UNSUPPORTED_LEGACY_ORIENTATION");
+    assertThat((JsonNode) mapper.valueToTree(boards.current().get("snapshot")))
+        .isEqualTo(beforeLegacy);
+  }
+
+  private JsonNode payload(UUID puzzle, UUID command, int marker) {
+    return mapper
+        .createObjectNode()
+        .put("puzzleId", puzzle.toString())
+        .put("commandId", command.toString())
+        .put("marker", marker);
+  }
+
+  private ConfirmationJournal.Planner move(long expectedRevision, int delta) {
+    return (definition, latest, remaining) -> {
+      ObjectNode snapshot = latest.deepCopy();
+      ObjectNode group = (ObjectNode) snapshot.path("groups").get(0);
+      if (group.path("revision").longValue() != expectedRevision)
+        throw new ConfirmationJournal.Rejected("STALE_REVISION", "Group changed");
+      if (remaining == 0)
+        throw new ConfirmationJournal.Rejected("QUOTA_EXCEEDED", "No moves remain");
+      ObjectNode translation = (ObjectNode) group.path("transform").path("translation");
+      translation.put("x", translation.path("x").intValue() + delta);
+      group.put("revision", expectedRevision + 1);
+      snapshot.put("boardVersion", latest.path("boardVersion").longValue() + 1);
+      return new ConfirmationJournal.Plan(snapshot, 1);
+    };
+  }
+}
