@@ -1,0 +1,18 @@
+{
+  "name": "@world-jigsaw/generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node src/cli.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc6 -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "npm:@typescript/typescript6@6.0.2"
+  },
+  "dependencies": {
+    "@world-jigsaw/contracts": "workspace:*"
+  }
+}

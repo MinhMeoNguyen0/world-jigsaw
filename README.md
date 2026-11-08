@@ -5,13 +5,16 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 
 ## Repository layout
 
-| Path                 | Contents                                          |
-| -------------------- | ------------------------------------------------- |
-| `apps/web`           | Web client: Vite, React, TypeScript, React Router |
-| `services/backend`   | Java Spring Boot backend                          |
-| `packages/contracts` | Versioned shared schemas, fixtures and types      |
-| `docs`               | Product and engineering plan                      |
-| `.github`            | CI workflows and Dependabot configuration         |
+| Path                 | Contents                                           |
+| -------------------- | -------------------------------------------------- |
+| `apps/web`           | Web client: Vite, React, TypeScript, React Router  |
+| `services/backend`   | Java Spring Boot backend                           |
+| `packages/contracts` | Versioned shared schemas, fixtures and types       |
+| `packages/generator` | Deterministic puzzle generator and review fixtures |
+| `docs`               | Product and engineering plan                       |
+| `.github`            | CI workflows and Dependabot configuration          |
+
+The [puzzle generator](packages/generator/README.md) produces standalone definitions and starting snapshots.
 
 The [shared v1 contract](packages/contracts/README.md) describes the integration baseline; the schemas do not implement a running multiplayer service.
 
