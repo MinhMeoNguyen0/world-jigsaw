@@ -111,6 +111,11 @@ HttpOnly, SameSite=Strict cookie; its random secret is stored only as a hash. Se
 This is local prototype identity, not public authentication. No proxy, cross-origin frontend, public
 address or TLS termination has been reviewed. The service takes a PostgreSQL advisory lock to
 reject a second local writer; it is not a distributed or high-availability deployment.
+Once loss of that lock connection is detected, new game operations fail closed and connected clients
+are closed.
+Stop the backend process completely before starting a replacement: the advisory lock alone does not
+fence a request already running on another database connection. After restart, clients must
+resubscribe; unsaved drafts are lost, while committed Confirm results remain available by command ID.
 
 The socket accepts v1 `subscribe`, `preview.submit`, and `heartbeat` messages and fans out temporary
 previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a
