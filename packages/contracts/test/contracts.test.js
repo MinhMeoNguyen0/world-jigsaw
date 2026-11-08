@@ -79,7 +79,7 @@ test('confirmed event applies atomically; duplicates, gaps and invalid membershi
     type: 'boardChanged',
     puzzleId: snapshot.puzzleId,
     boardVersion: 8,
-    eventId: id(800),
+    eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     commandId: confirm.commandId,
     removedGroupIds: [],
     groups: [
@@ -101,6 +101,33 @@ test('confirmed event applies atomically; duplicates, gaps and invalid membershi
       applied.seenEvents,
     ).status,
     'resync',
+  )
+  const next = {
+    ...event,
+    boardVersion: 9,
+    groups: [{ ...event.groups[0], transform: { ...event.groups[0].transform, rotation: 1000 } }],
+  }
+  assert.equal(
+    applyBoardChanged(definition, applied.snapshot, next, applied.seenEvents).status,
+    'resync',
+  )
+  assert.equal(
+    applyBoardChanged(
+      definition,
+      applied.snapshot,
+      { ...next, eventId: next.eventId.toUpperCase() },
+      applied.seenEvents,
+    ).status,
+    'resync',
+  )
+  assert.equal(
+    applyBoardChanged(
+      definition,
+      applied.snapshot,
+      { ...next, eventId: id(801) },
+      applied.seenEvents,
+    ).status,
+    'applied',
   )
   assert.equal(
     applyBoardChanged(definition, snapshot, { ...event, boardVersion: 9 }).status,
@@ -308,6 +335,29 @@ test('all allowance representations enforce committed quota arithmetic', () => {
     assert.equal(validate(type, { ...value, allowance: bad }).valid, false, type)
   }
   assert.equal(validate('CurrentGame', { ...current, allowance: null }).valid, true)
+})
+
+test('cancel response identifies an in-flight or completed confirm', () => {
+  const result = {
+    schemaVersion: 1,
+    puzzleId: confirm.puzzleId,
+    turnId: confirm.turnId,
+    requestId: id(1402),
+    outcome: 'canceled',
+    boardVersion: snapshot.boardVersion,
+    allowance: { limit: 5, used: 2, remaining: 3 },
+    commandId: null,
+  }
+  for (const outcome of ['confirming', 'confirmed']) {
+    assert.equal(validate('CancelResult', { ...result, outcome }).valid, false)
+    assert.equal(
+      validate('CancelResult', { ...result, outcome, commandId: confirm.commandId }).valid,
+      true,
+    )
+  }
+  for (const outcome of ['canceled', 'already_canceled']) {
+    assert.equal(validate('CancelResult', { ...result, outcome }).valid, true)
+  }
 })
 
 test('undo returns the one selected action identity', () => {

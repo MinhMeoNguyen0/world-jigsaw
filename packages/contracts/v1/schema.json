@@ -1109,6 +1109,17 @@
     },
     "CancelResult": {
       "type": "object",
+      "if": {
+        "properties": {
+          "outcome": { "enum": ["confirming", "confirmed"] }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "commandId": { "type": "string", "format": "uuid" }
+        }
+      },
       "properties": {
         "schemaVersion": {
           "const": 1

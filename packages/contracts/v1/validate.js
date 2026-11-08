@@ -160,6 +160,16 @@ export function applyBoardChanged(definition, snapshot, event, seenEvents = {}) 
     return { status: seenEvents[event.boardVersion] === canonical(event) ? 'duplicate' : 'resync' }
   }
   if (event.boardVersion !== snapshot.boardVersion + 1) return { status: 'resync' }
+  try {
+    if (
+      Object.values(seenEvents).some(
+        (seen) => JSON.parse(seen).eventId.toLowerCase() === event.eventId.toLowerCase(),
+      )
+    )
+      return { status: 'resync' }
+  } catch {
+    return { status: 'resync' }
+  }
   const groups = new Map(snapshot.groups.map((group) => [group.groupId, group]))
   for (const id of event.removedGroupIds) groups.delete(id)
   for (const group of event.groups) groups.set(group.groupId, group)
