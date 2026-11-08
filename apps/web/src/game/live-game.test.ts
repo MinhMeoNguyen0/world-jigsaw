@@ -45,6 +45,7 @@ function harness() {
   const sockets: TestSocket[] = []
   let game = structuredClone(current)
   let commandReply: Promise<Response> | null = null
+  let currentUnavailable = false
   const calls: string[] = []
   const fetcher = vi.fn((input: RequestInfo | URL) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -53,6 +54,8 @@ function harness() {
       if (!commandReply) throw new Error('Missing command response')
       return commandReply
     }
+    if (path === '/api/v1/game/current' && currentUnavailable)
+      return Promise.resolve(new Response(JSON.stringify({ schemaVersion: 1, error: { code: 'PUZZLE_UNAVAILABLE', message: 'No current puzzle', requestId: '00000000-0000-4000-8000-000000000099', retryable: true } }), { status: 503 }))
     const value = path === '/api/v1/session'
       ? { schemaVersion: 1, displayName: 'Player', expiresAt: '2026-11-09T00:00:00Z' }
       : path === '/api/v1/game/current' ? game : null
@@ -78,6 +81,7 @@ function harness() {
   return {
     client, sockets, calls, start, subscribe,
     setGame: (value: CurrentGame) => { game = value },
+    setCurrentUnavailable: (value: boolean) => { currentUnavailable = value },
     setCommandReply: (value: Promise<Response>) => { commandReply = value },
   }
 }
@@ -175,6 +179,73 @@ describe('live game adapter', () => {
     h.subscribe(next, fixture.confirmedSnapshot as CurrentGame['snapshot'])
     expect(h.client.getState().game?.allowance?.used).toBe(1)
     expect(h.client.getState().connection).not.toBe('ready')
+  })
+
+  it.each([
+    ['unavailable', null, false, '2026-11-09'],
+    ['different puzzle', '00000000-0000-4000-8000-000000000101', true, '2026-11-09'],
+  ] as const)('clears the old game immediately on a %s rollover', async (_name, nextId, available, day) => {
+    const h = harness()
+    const socket = await h.start()
+    h.subscribe(socket)
+    h.client.restorePendingConfirm(fixture.confirm as Confirm)
+    h.setCurrentUnavailable(true)
+    socket.emit({ schemaVersion: 1, type: 'puzzleChanged', puzzleId: nextId, available, day })
+    expect(h.client.getState().game).toBeNull()
+    expect(h.client.getState().previews).toEqual({})
+    expect(h.client.getState().pendingConfirm).toEqual(fixture.confirm)
+    await vi.waitFor(() => expect(h.client.getState().connection).toBe('disconnected'))
+    expect(h.client.getState().game).toBeNull()
+  })
+
+  it('clears the old game when reconnect reports no current puzzle', async () => {
+    const h = harness()
+    await h.start()
+    h.setCurrentUnavailable(true)
+    await expect(h.client.connect()).rejects.toThrow('PUZZLE_UNAVAILABLE')
+    expect(h.client.getState().game).toBeNull()
+    expect(h.client.getState().connection).toBe('disconnected')
+  })
+
+  it('keeps the current board when a same-puzzle event triggers a refresh', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({ schemaVersion: 1, type: 'puzzleChanged', puzzleId, available: true, day: current.day })
+    expect(h.client.getState().game?.snapshot).toEqual(current.snapshot)
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+  })
+
+  it('clears the board on a stream puzzle-unavailable error', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({ schemaVersion: 1, type: 'error', error: { code: 'PUZZLE_UNAVAILABLE', message: 'No current puzzle', requestId: '00000000-0000-4000-8000-000000000099', retryable: true } })
+    expect(h.client.getState().game).toBeNull()
+  })
+
+  it.each(['new command', 'new connection'] as const)('keeps the new confirmation busy after an old request settles: %s', async (scenario) => {
+    const h = harness()
+    const commandA = fixture.confirm as Confirm
+    const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
+    h.client.restorePendingConfirm(commandA)
+    const first = deferred<Response>()
+    h.setCommandReply(first.promise)
+    const old = h.client.confirm()
+    await expect(h.client.confirm()).rejects.toThrow('already in progress')
+    if (scenario === 'new command') {
+      h.setCommandReply(Promise.resolve(confirmed()))
+      await h.client.resolveConfirm()
+      h.client.restorePendingConfirm(commandB)
+    } else h.client.disconnect()
+    const second = deferred<Response>()
+    h.setCommandReply(second.promise)
+    const active = h.client.confirm()
+    first.resolve(confirmed())
+    if (scenario === 'new connection') await expect(old).rejects.toThrow('Connection changed')
+    else await old
+    await expect(h.client.confirm()).rejects.toThrow('already in progress')
+    second.resolve(new Response(JSON.stringify({ ...fixture.commandResult, commandId: scenario === 'new command' ? commandB.commandId : commandA.commandId })))
+    await active
+    expect(h.client.getState().pendingConfirm).toBeNull()
   })
 
   it.each(['confirm', 'lookup'] as const)('ignores a delayed %s result after disconnect', async (operation) => {

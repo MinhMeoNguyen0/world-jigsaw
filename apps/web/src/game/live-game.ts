@@ -12,6 +12,7 @@ import type {
   PreviewCleared,
   PreviewRejected,
   PreviewState,
+  PuzzleChanged,
   Subscribed,
   Turn,
   Undo,
@@ -46,10 +47,13 @@ const defaults = (): LiveGameDependencies => ({
 
 const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 class GameRequestError extends Error {
-  readonly definitive: boolean
-  constructor(message: string, definitive: boolean) {
+  constructor(
+    message: string,
+    readonly definitive: boolean,
+    readonly code: string,
+    readonly path: string,
+  ) {
     super(message)
-    this.definitive = definitive
   }
 }
 // The schema name determines the corresponding return type at the call site.
@@ -102,7 +106,7 @@ export class LiveGame {
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
   private cancelRequest: Cancel | null = null
   private undoRequest: Undo | null = null
-  private confirmBusy = false
+  private confirmBusy: { payload: Confirm; epoch: number } | null = null
   private readonly deps: LiveGameDependencies
 
   constructor(deps: LiveGameDependencies = defaults()) {
@@ -142,6 +146,8 @@ export class LiveGame {
       throw new GameRequestError(
         `${error.error.code}: ${error.error.message}`,
         response.status < 500 && !error.error.retryable,
+        error.error.code,
+        path,
       )
     }
     return checked<T>(name, value)
@@ -207,7 +213,14 @@ export class LiveGame {
           this.publish({ issue: 'Game stream error; reconnect if it closes.' })
       }
     } catch (error) {
-      if (epoch === this.epoch) this.publish({ connection: 'disconnected', issue: String(error) })
+      if (epoch === this.epoch)
+        this.publish({
+          connection: 'disconnected',
+          issue: String(error),
+          ...(error instanceof GameRequestError && error.path === '/api/v1/game/current' && error.code === 'PUZZLE_UNAVAILABLE'
+            ? { game: null, previews: {} }
+            : {}),
+        })
       throw error
     }
   }
@@ -325,11 +338,20 @@ export class LiveGame {
       } else if (type === 'leaseRenewed') {
         checked('LeaseRenewed', message)
       } else if (type === 'resyncRequired' || type === 'puzzleChanged') {
-        checked(type === 'resyncRequired' ? 'ResyncRequired' : 'PuzzleChanged', message)
+        if (type === 'puzzleChanged') {
+          const event = checked<PuzzleChanged>('PuzzleChanged', message)
+          if (!event.available || !event.puzzleId || !sameId(event.puzzleId, game.snapshot.puzzleId) || event.day !== game.day) {
+            this.publish({ game: null, previews: {} })
+            if (epoch !== this.epoch) return
+          }
+        } else checked('ResyncRequired', message)
         this.resync('Game changed; resynchronizing.')
       } else if (type === 'error') {
         const error = checked<{ error: { code: string; message: string } }>('SocketError', message)
-        this.publish({ issue: `${error.error.code}: ${error.error.message}` })
+        this.publish({
+          issue: `${error.error.code}: ${error.error.message}`,
+          ...(error.error.code === 'PUZZLE_UNAVAILABLE' ? { game: null, previews: {} } : {}),
+        })
       } else throw new Error('Unsupported stream event')
     } catch (error) {
       if (epoch === this.epoch) this.resync(String(error))
@@ -521,7 +543,6 @@ export class LiveGame {
   }
 
   async confirm(): Promise<CommandResult> {
-    if (this.confirmBusy) throw new Error('Confirmation already in progress')
     if (!this.state.pendingConfirm) {
       this.turn()
       if (
@@ -537,8 +558,11 @@ export class LiveGame {
     const payload = this.state.pendingConfirm
     if (!payload) throw new Error('No confirmation payload')
     const epoch = this.epoch
+    if (this.confirmBusy?.payload === payload && this.confirmBusy.epoch === epoch)
+      throw new Error('Confirmation already in progress')
     const unresolvedCommand = this.state.unresolvedCommand
-    this.confirmBusy = true
+    const busy = { payload, epoch }
+    this.confirmBusy = busy
     try {
       const result = await this.request<CommandResult>(
         `/api/v1/game/turns/${payload.turnId}/confirm`,
@@ -552,7 +576,7 @@ export class LiveGame {
         this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
       throw error
     } finally {
-      this.confirmBusy = false
+      if (this.confirmBusy === busy) this.confirmBusy = null
     }
   }
 
