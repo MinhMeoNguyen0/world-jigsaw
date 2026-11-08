@@ -20,7 +20,7 @@ World Jigsaw is a browser-based, collaborative daily jigsaw puzzle. At a server-
 6. **Uniqueness is enforced transactionally.** Display names are unique within the active namespace; the UUID, not the display name, is used for identity and access control.
 7. **Anonymous identity cannot conclusively establish a human.** Cookie and browser-key continuity, IP/UA anomaly checks, rate limiting and adaptive challenges discourage casual evasion without covert device fingerprinting or false human-level guarantees.
 8. **Java 21 + Spring Boot** runs the server-authoritative game coordinator, APIs and gateways. React + TypeScript + PixiJS renders the front end. PostgreSQL stores durable truth. Redis is for ephemeral signaling and counters.
-9. **At scale, fanout is interest-based.** Everyone has the same durable board, but not every participant receives every mouse movement or drag preview globally. Broadcast durable group changes efficiently; sample and cap nearby cursor presence.
+9. **At scale, fanout is interest-based.** Everyone receives complete batch preview state and the same durable board; sampled drag motion and cursors may be limited to nearby viewers.
 10. **The bottom activity ticker shows notable accepted actions only.** A full dashboard shows aggregate activity and a compact recent event feed. Never stream individual mouse clicks into the public activity timeline.
 11. **Use images whose rights permit online interactive reuse.** Do not automatically scrape and republish Fine Art America images without permission/license; curated Wikimedia Commons assets or permissioned artist uploads are better initial sources.
 
@@ -36,10 +36,10 @@ World Jigsaw is a browser-based, collaborative daily jigsaw puzzle. At a server-
 - `starts_at = 2026-11-07T00:00:00Z` and `ends_at = 2026-11-08T00:00:00Z`.
 - At most one puzzle is `ACTIVE`; each puzzle has a globally unique `puzzle_id` independent of its day. If the next puzzle is not ready, gameplay is temporarily unavailable.
 - Everyone sees the same server-supplied `ends_at`. The browser updates a smooth local countdown using an estimated server offset; the server never pushes every tick.
-- At the boundary, close admission for the old puzzle and activate the next `SCHEDULED` puzzle if ready in an idempotent, serialized rollover operation. Allow already admitted saves to settle before the old puzzle becomes `COMPLETED` (if solved) or `EXPIRED` (if unsolved) and read-only.
+- At the boundary, atomically close old-day admission and transition an `ACTIVE` old puzzle to `DRAINING`; then activate the next `SCHEDULED` puzzle if ready in the serialized, idempotent rollover. A `DRAINING` puzzle admits no new saves but allows previously admitted saves to settle. After all have a definitive result, it becomes `COMPLETED` (if solved) or `EXPIRED` (if unsolved) and read-only. A puzzle completed early remains `COMPLETED`. Exactly one or zero puzzles are `ACTIVE` throughout.
 - If a rollover scheduler is late or fails, any read or command path must reject new old-day saves at or after `ends_at`; a leader/scheduler reconciles activation. If the next puzzle is not ready, make it temporarily unavailable.
 - Use authoritative server/database time at save admission: a Confirm admitted before `ends_at` may commit afterward; a Confirm admitted at or after `ends_at` is rejected with `DAY_ENDED`, consumes no moves, and its preview rolls back.
-- A daily puzzle that completes early stays in celebration/read-only mode until the next reset. Users can view the completed image, chat, inspect activity, and browse archives. Do not silently replace it early.
+- When all pieces are anchored early, close admission and drain any previously admitted saves to definitive outcomes before marking the puzzle `COMPLETED`. It then stays in celebration/read-only mode until the next reset. Users can view the completed image, chat, inspect activity, and browse archives. Do not silently replace it early.
 
 ### 1.2 Puzzle sizing and the crowding problem
 
@@ -51,7 +51,7 @@ A single 150-piece puzzle with thousands of eager contributors will finish quick
 - Choose piece count *before activation*. Do not change geometry or add pieces in the middle of a day.
 - Show both **pieces anchored** and **pieces in connected assemblies**; these are not interchangeable progress metrics.
 - Provide a smart **Find an open area** action to help players find movable pieces, especially on crowded boards.
-- If the board completes early, accept that the day's puzzle is finished; show celebration, read-only replay, chat, activity, and a countdown to tomorrow.
+- If the board completes early, close admission and settle admitted saves before celebrating and showing read-only replay, chat, activity, and a countdown to tomorrow.
 
 ### 1.3 State machine
 
@@ -59,9 +59,12 @@ A single 150-piece puzzle with thousands of eager contributors will finish quick
 SCHEDULED
     |
     v (UTC start)
-ACTIVE -- all pieces anchored --> COMPLETED
+ACTIVE
     |
-    v (UTC end: close admission, settle admitted saves)
+    v (UTC end or all pieces anchored: close admission)
+DRAINING
+    | (admitted saves settle)
+    v
 COMPLETED (if solved) or EXPIRED (if incomplete)
     |
     v
@@ -83,7 +86,7 @@ Rollover and completion must be idempotent. Never let the same puzzle be complet
 5. Large **Join today's puzzle** button opens the same global board; the viewer is a spectator by default until they grab a movable piece.
 6. First accepted drop begins their daily contribution implicitly; there is no mandatory modal just to start moving.
 7. A persistent five-dot move counter shows their remaining quota.
-8. Confirm saves the pending batch. After five moves are used or pending, new moves lock; after Confirm, any unused moves remain available that day. Canceling restores the pending preview.
+8. Confirm saves the pending batch. After five moves are used or pending, new moves lock; after Confirm, any unused moves remain available that day. Canceling before admission restores the pending preview.
 9. They continue watching, chatting, exploring the dashboard and replaying history until tomorrow.
 
 ### 2.2 Returning visit
@@ -304,24 +307,27 @@ Offer **Save my name with a passkey**. Using WebAuthn, an opted-in visitor can b
 ```text
 AVAILABLE --> PREVIEWING(batch moves reserved)
 PREVIEWING -- cancel --> AVAILABLE (committed quota unchanged)
-PREVIEWING -- Confirm --> AVAILABLE (unused moves remain) or FINISHED (none remain)
+PREVIEWING -- Confirm admitted --> SETTLING
+SETTLING -- commit --> AVAILABLE (unused moves remain) or FINISHED (none remain)
+SETTLING -- definitive failure --> AVAILABLE (committed quota unchanged)
 AVAILABLE, PREVIEWING or FINISHED -- UTC rollover --> NEW DAILY QUOTA for next puzzle
+SETTLING -- UTC rollover --> settle old-day save independently of new daily quota
 ```
 
-Valid movements update the shared temporary preview on release. Canceling or losing the unconfirmed batch restores its original positions and leaves committed quota unchanged. After a successful Confirm, unused moves remain available on return until that same day's puzzle ends. Do not impose a 15-minute timeout because that belonged to the older rolling-lock design.
+Valid movements update the shared temporary preview on release. Canceling or losing an unadmitted batch restores its original positions and leaves committed quota unchanged. Once Confirm is admitted, client cancellation, disconnect, or preview lease expiry cannot discard the settling batch; only a definitive failure restores its positions. After a successful Confirm, unused moves remain available on return until that same day's puzzle ends. Do not impose a 15-minute timeout because that belonged to the older rolling-lock design.
 
-When five moves are used or pending, disable new move selections and show Confirm; adjustments to selections already in the batch remain possible. Confirm commits the batch, while cancel restores it.
+When five moves are used or pending, disable new move selections and show Confirm; adjustments to selections already in the batch remain possible. Confirm admits the batch for atomic commit; cancel restores an unadmitted batch. Once admitted, reject cancellation as too late and return the eventual outcome.
 
 ### 6.3 Transactional acceptance
 
-At `piece.drop`, validate ownership, geometry and revisions, then update the temporary batch preview without persisting board changes or charging durable quota. Reserve the pending move count across tabs and prevent conflicting edits to affected groups.
+At `piece.drop`, validate ownership, geometry and revisions, then update the temporary batch preview without persisting board changes or charging durable quota. Reserve the pending move count across tabs and prevent conflicting edits to affected groups. Publish the latest complete batch preview to every puzzle subscriber as specified in section 10.3.
 
 At Confirm:
 
-1. Resolve the identity and puzzle; return the original outcome for a previously committed command ID, or continue an already admitted save, including on a retry after midnight. Otherwise admit the save using authoritative time before the old day closes.
-2. In a PostgreSQL transaction, lock the contribution and affected state, revalidate ownership, revisions, geometry and the batch move count against the remaining quota.
-3. Atomically apply the entire batch, update group membership, puzzle version and move history, charge its moves, and write outbox events. Commit and acknowledge, then broadcast; retry outbox publication without duplicate application.
-4. On rejection or cancellation, discard the batch and restore its original positions. A save admitted before closure may complete after midnight.
+1. Resolve the identity and puzzle; return the original outcome for a completed command ID, or continue an already admitted save, including on a retry after midnight. Otherwise serialize admission with day closure using authoritative time. Before acknowledging admission, persist the command ID, batch contents, admission time and protected group/quota ownership so they remain recoverable and exclusive until a definitive result.
+2. In a PostgreSQL transaction, lock the contribution and affected state, revalidate the admitted ownership, revisions, geometry and batch move count against the remaining quota. Client connection and preview lease expiry do not revoke admitted ownership.
+3. Atomically apply the entire batch, update group membership, puzzle version and move history, charge its moves, record the result, and write outbox events. Commit and acknowledge, then broadcast; retry outbox publication without duplicate application.
+4. On rejection before admission or definitive failure after admission, discard the batch and restore its original positions; release protected ownership only once the outcome is recorded. A save admitted before closure may complete after midnight.
 
 Quota and pending reservations are shared across tabs; concurrent batches cannot exceed five moves.
 
@@ -383,16 +389,17 @@ All groups begin as individual pieces in a virtual shared bag/staging area, or l
 
 ```text
 pointerdown -> try_grab -> lease granted -> live drag preview
-    -> pointerup -> validate drop -> preview and snap OR rollback
-    -> Confirm -> commit batch OR cancel -> restore original positions
+    -> pointerup -> validate drop -> preview and snap OR restore preceding preview
+    -> cancel batch before admission -> restore original positions
+    -> Confirm admitted -> settle batch -> commit OR definitive failure -> restore
 ```
 
 - Optimistic local motion feels immediate, but server holds truth.
-- Other users see leased group's transient motion only when relevant to their viewport.
+- Sampled drag motion may be viewport-limited; every puzzle subscriber receives the latest complete batch preview and its replacement or clear.
 - Group is exclusive during drag; second grab is denied with subtle outline.
 - Lease example: five seconds renewed during drag, with maximum hold policy and inactivity timeout.
-- On cancellation, disconnect, lease expiration, or rejected batch, restore every affected group to its last committed valid transform.
-- If groups merge, calculate canonical result from server geometry and publish removed IDs + new/updated group.
+- On batch cancellation, disconnect, or lease expiration before admission, discard the draft and restore every affected group to its last committed valid transform. After admission, retain protected ownership and settle independently of the client or preview lease; restore only on a definitive failure.
+- If groups merge, calculate the result from server geometry and publish the complete temporary batch preview; publish the canonical removed IDs and new/updated group on commit.
 - If a target group is concurrently leased, reject/defer merge instead of racing another drag.
 - When anchored to completed-image frame, group becomes immovable; other groups can join anchored geometry.
 
@@ -518,7 +525,8 @@ Metrics are updated asynchronously for dashboard only. **Game integrity never de
 | Authoritative mutations | confirmed batches, joins, anchors, quota | PostgreSQL | Ordered, acked, idempotent, resyncable | On Confirm |
 | Critical lifecycle | day reset, completion, quota lock | PostgreSQL | Durable events + snapshot/reconnect | On event |
 | Semi-live projections | activity ticker, stats, presence | cache/read model | Batches, periodic repair | ~1 Hz or slower |
-| Ephemeral interaction | cursors, drag previews, clicks | None | Best effort, droppable | Capped/sampled |
+| Batch preview state | final drop positions, replacement, clear | Temporary coordinator state | Ordered, acknowledged, resyncable for all puzzle subscribers | On state change |
+| Ephemeral interaction | cursors, sampled drag motion, clicks | None | Best effort, droppable | Capped/sampled |
 | Chat | messages | PostgreSQL recent history | Ack, moderated, replay recent | Low user rate |
 
 ### 10.2 The N-squared cursor problem
@@ -537,11 +545,11 @@ At 10,000 connected users, if each sends ten pointer updates/second, this is 100
 Everyone must converge on one durable board, but not necessarily receive every transient visual gesture:
 
 1. HTTP serves immutable puzzle geometry and image assets through CDN.
-2. Initial current snapshot through HTTP or WS; versioned state.
-3. After valid movement, server emits compact `room.patch(version, changedGroups, removedGroups, statsDelta)`.
-4. Gateways batch/coalesce nondependent patches for their subscribers under load, without skipping logical versions without a recoverable checkpoint.
-5. Client detects version gaps and resyncs via snapshot + bounded event replay.
-6. Optional view-based snapshots for very large boards plus authoritative whole-board version. Panning loads missing regions and revisions; server always maintains one global truth.
+2. Initial subscription and resync provide a consistent committed board snapshot and complete current batch previews with a preview-stream epoch and sequence watermark. The handoff to subsequent messages must not lose changes between snapshot and subscription.
+3. The first granted grab publishes an initial batch preview without charging a move; each validated drop publishes a complete replacement for that batch, including batch ID, affected group transforms and joins, epoch and increasing sequence, to every puzzle subscriber. Sampled `piece.dragging` frames are only optional animation and cannot replace this state.
+4. Canceling or rejecting an individual drag publishes a replacement with the batch's preceding valid preview; cancellation of the whole batch, disconnect or lease expiry before admission, and definitive Confirm failure publish an ordered batch clear. Successful Confirm publishes a clear linked to its committed board version; clients retain the preview until that version is applied, then remove it.
+5. Preview replacements and clears are acknowledged per subscriber and retransmitted or followed by a fresh snapshot on missing acknowledgements; a gap, reconnect, or epoch change requires resync. Clients discard old epochs and sequences. Drag frames apply only to an existing batch at its current preview sequence and never create a batch, so a delayed frame cannot resurrect a cleared or replaced preview. New subscribers and subscribers returning from disconnection replace all preview state from the snapshot.
+6. Confirmed mutations emit `puzzle.patch(version, changedGroups, removedGroups, statsDelta)`; gateways may coalesce only with a recoverable checkpoint. Clients detect committed version gaps and resync via snapshot plus bounded event replay. Optional view-based board snapshots retain the authoritative whole-board version; batch preview state still reaches all puzzle subscribers.
 
 ### 10.4 Room owner and actor model
 
@@ -600,9 +608,9 @@ Components (start modular in one Spring Boot binary, split when ready):
 ### Recovery
 
 - Coordinator holds owner lease with monotonically increasing `owner_epoch`.
-- On crash, new leader acquires epoch, loads latest saved snapshot, replays durable changes, cancels transient drag leases, resumes at next version.
+- On crash, new leader acquires epoch, loads latest saved snapshot, replays durable changes, discards unadmitted drafts and cancels their transient leases. It recovers admitted batches and their protected ownership from persisted admission records, reconstructs their previews, settles each to a definitive outcome under the new fenced epoch, and resumes at the next version. It starts a new preview-stream epoch and requires subscribers to resync.
 - Old leader's delayed writes fail fencing checks.
-- Gateways require resync after leadership change. No accepted committed group mutation can be lost; clients may briefly see drag rollback.
+- Gateways require resync after leadership change. No accepted committed group mutation can be lost; unadmitted previews may roll back, while admitted previews are reconstructed until their outcome.
 - Identity quota and replayed command ID are durable across failover.
 
 ---
@@ -660,7 +668,8 @@ daily_contributions(
 
 move_commands(
   command_id UUID PRIMARY KEY, identity_id UUID FK, puzzle_id UUID FK,
-  result_code, resulting_puzzle_version, move_cost, created_at
+  admission_state, admitted_at, batch_payload, protected_ownership,
+  result_code nullable, resulting_puzzle_version nullable, move_cost, created_at
 )
 
 puzzle_events(
@@ -702,7 +711,7 @@ image_assets(
 )
 ```
 
-A confirmed batch is represented by one command and one versioned event carrying its constituent changes and move count.
+An admitted command persists its batch and protected ownership until a definitive committed or failed result is recorded; the result remains available for idempotent retries. A confirmed batch is represented by one command and one versioned event carrying its constituent changes and move count.
 
 Indexes: `puzzle_events(puzzle_id,event_version)`, `daily_contributions(identity_id,puzzle_id)` unique, `puzzle_groups(puzzle_id)`, `chat_messages(puzzle_id,created_at DESC)`, `activity_events(puzzle_id,created_at DESC)`, `identity_sessions(identity_id,expires_at)`, outbox by `published_at`. Prefer retention/partitioning for high-volume event, chat and risk tables.
 
@@ -714,7 +723,7 @@ Indexes: `puzzle_events(puzzle_id,event_version)`, `daily_contributions(identity
 4. Each puzzle version is unique and monotonically increasing.
 5. For any `(identity_id,puzzle_id)`, `0 <= moves_used <= 5`.
 6. Each Confirm command ID commits at most one batch and charges that batch once, even across retries/failover.
-7. No save admitted at or after a puzzle's deadline may commit; a save admitted before it may finish afterward.
+7. No save admitted at or after a puzzle's deadline may commit; a save admitted before it may finish afterward, including while its puzzle is `DRAINING`. At most one puzzle is `ACTIVE`.
 8. Last committed position can always be reconstructed.
 9. Activity/feed projection never changes canonical puzzle state.
 
@@ -759,7 +768,8 @@ piece.drag             transient drag preview (throttled)
 piece.drop             validate and update temporary batch preview; requires commandId
 piece.cancel           cancel a drag without a move
 contribution.confirm    save the pending batch; requires commandId
-contribution.cancel     discard the pending batch and restore original positions
+contribution.cancel     discard an unadmitted batch; reject cancellation after admission
+preview.ack            acknowledge preview stream epoch/sequence
 chat.send              moderated and rate limited
 presence.heartbeat     renew presence
 ```
@@ -768,12 +778,14 @@ Server → client:
 
 ```text
 session.ready          public identity + serverTime + daily quota
-puzzle.snapshot        full immutable/mutable state + version
+puzzle.snapshot        committed board + version and complete previews + stream epoch/sequence
 puzzle.patch           authoritative changed group(s) + version
 piece.granted          lease token and expiration
 piece.denied           busy or invalid state
-piece.dragging         sampled remote movement
-move.previewed         commandId + pending move count
+piece.dragging         sampled movement tagged with batchId and preview epoch/sequence
+move.previewed         commandId + pending move count (sender acknowledgement)
+preview.replace        complete batch preview + batchId + stream epoch/sequence
+preview.clear          batchId + stream epoch/sequence; committed version on success
 contribution.confirmed commandId + remaining moves + committed version
 move.rejected          reason + rollback transform
 cursor.batch           nearby cursor samples
@@ -832,7 +844,7 @@ Avoid real-time scraping when users visit. Every daily puzzle asset should be re
 
 ### Scenario A: Two visitors grab the same group
 
-The authoritative game actor grants a lease. Winner previews movement; loser sees a subtle owner outline and can grab something else. Grab itself costs zero moves. Keep affected groups protected through the pending batch; cancel, disconnect or expiration discards the preview, and stale lease tokens are rejected.
+The authoritative game actor grants a lease. Winner previews movement; loser sees a subtle owner outline and can grab something else. Grab itself costs zero moves. Keep affected groups protected through the pending batch; cancel, disconnect or expiration discards only an unadmitted draft. Admission pins ownership until a definitive result independently of the preview lease; stale lease tokens cannot start new edits.
 
 ### Scenario B: Two tabs sharing same identity submit their fifth move simultaneously
 
@@ -844,7 +856,7 @@ Reject/defer the join because target group is leased. Allow a legal staging drop
 
 ### Scenario D: Reconnect after a lost acknowledgement
 
-A lost preview can be discarded and restored. For a lost Confirm acknowledgement, retry the same `commandId`; the backend returns the committed outcome with its original version and quota without charging again.
+A lost unadmitted preview is discarded and restored. After admission, disconnect or preview lease expiry does not revoke the batch; retry the same `commandId` to continue its settlement or retrieve its definitive outcome without charging twice.
 
 ### Scenario E: Heavy cursor load
 
@@ -882,7 +894,7 @@ Service boundaries are logical first. In deployment stage one they can share a s
 
 **Hot-path transaction:**
 
-On Confirm, return the original outcome for a committed command ID or continue an already admitted save; otherwise admit the batch against the authoritative deadline, then transactionally deduplicate its command ID, lock the contribution and affected groups, revalidate revisions and geometry, apply the entire batch, charge its move count, and write versioned events and outbox records. A retry returns the original outcome. Admission before the deadline remains valid if the transaction finishes afterward. Preview drops never apply durable mutations.
+On Confirm, return the definitive outcome for a completed command ID or continue an already admitted save; otherwise atomically admit and persist the batch and protected ownership against the authoritative deadline. Then transactionally deduplicate its command ID, lock the contribution and affected groups, revalidate revisions and geometry against that admitted ownership, apply the entire batch, charge its move count, and write its outcome, versioned event and outbox records. A retry returns the original outcome. Admission before the deadline remains valid if the transaction finishes afterward. Preview drops never apply durable mutations.
 
 The implementation must handle database uniqueness races and failed transactions, isolate geometry computation from held locks where possible, verify the batch's ownership and epoch with the authoritative actor, and revalidate mutable revisions under commit.
 
@@ -914,7 +926,7 @@ apps/web/src/
   styles/          tokens and responsive layout
 ```
 
-Visual game state should separate authoritative `committedGroups` from local and remote batch previews. Preview acknowledgements do not mutate the canonical store; the confirmed batch patch does.
+Visual game state separates authoritative `committedGroups` from local and remote batch previews. Preview acknowledgements do not mutate the canonical store; the confirmed batch patch does. Replace previews from the ordered stream or resync snapshot, ignore stale epochs/sequences, and apply a successful clear only after its linked committed version.
 
 ---
 
@@ -982,12 +994,15 @@ SLO-focused alerts should watch move success/latency, stuck active puzzle or rol
 
 ### Distributed failures
 
-- Node crash before transaction commit: no move charged and no change committed.
+- Node crash before transaction commit: no partial move charge or board change; recover an admitted batch and settle it to a definitive result.
 - Crash after commit before ack: same `commandId` returns original outcome.
 - Gateway misses a patch: resync and exact state convergence.
 - Old owner tries writing after lease transfer: fenced out.
 - Multiple rollover attempts: at most one puzzle admits new saves; the next is active when ready.
-- Confirm admitted before the UTC boundary may commit afterward; a later admission is rejected and the preview restored.
+- Confirm admitted before the UTC boundary may commit afterward, including after disconnect or preview lease expiry; a later admission is rejected and the preview restored. The old puzzle is `DRAINING` while the ready next puzzle alone is `ACTIVE`.
+- Drop sampled drag frames and preview messages, then reconnect or resync: every subscriber converges on the latest complete preview or clear, and delayed frames cannot resurrect it.
+- Disconnect or expire a preview lease after admission: the pinned batch settles once and a retry returns its outcome; before admission the draft is cleared.
+- Crash after admission: recovery preserves protected ownership and settles the recorded batch once under a fenced epoch.
 - Activity projector restarts/replays: no duplicated public feed items.
 - Redis outage: durable game data not lost; degrade ephemeral features gracefully.
 
@@ -1106,7 +1121,7 @@ A fresh visitor joins with `AdjectiveFruitNNN`, sees one global daily destinatio
 1. **One board, many visitors:** expect early completion or contention if popular. Adaptive *next-day* difficulty, view-based editing, and good spectating matter. Keep one global board, not secretly separate copies.
 2. **Five moves vs fairness:** a single group drag counts one regardless of group size; this is simple and fun, but can be gamed with low-value repositioning. Provide a visible contribution count vs meaningful connection count, rather than silently charging extra for group size.
 3. **Identity trust:** user-requested 'no login' fundamentally conflicts with strict one-human-five-moves enforcement. Communicate best-effort protections; consider optional passkey for retention/recovery rather than turning the game into surveillance.
-4. **Confirm:** commit the batch atomically after validating its affected revisions so a preview cannot overwrite collaborators. Canceling restores the original positions; unused moves remain available today.
+4. **Confirm:** commit the batch atomically after validating its affected revisions so a preview cannot overwrite collaborators. Canceling before admission restores the original positions; unused moves remain available today.
 5. **Daily clock:** choose 00:00 UTC first, revisit after community feedback. Set globally, not by visitor locale.
 6. **No meaningless public noise:** store valid moves for integrity, aggregate feed, and never show mouse clicks as ticker entries.
 7. **Image rights:** verify every photo. 'Available online' is not a license to republish an interactive crop.
