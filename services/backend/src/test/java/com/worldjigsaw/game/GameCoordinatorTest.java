@@ -41,6 +41,7 @@ class GameCoordinatorTest {
   @Autowired Clock clock;
   @Autowired GameWriterGuard writer;
   @Autowired TurnLeaseRegistry leases;
+  @Autowired BoardValidator validator;
   private final ObjectMapper mapper = new ObjectMapper();
 
   @TestConfiguration
@@ -290,6 +291,60 @@ class GameCoordinatorTest {
     leases.pinConfirm(b, pinTurn.turnId(), 0, command, clock.instant());
     assertThat(game.confirm(b, confirm).path("outcome").asText()).isEqualTo("confirmed");
     assertThat(game.confirm(b, confirm).path("outcome").asText()).isEqualTo("confirmed");
+    recoverCommittedConfirmationAfterDisconnect(puzzle, snapshot.path("groups").get(4));
+  }
+
+  private void recoverCommittedConfirmationAfterDisconnect(UUID puzzle, JsonNode group) {
+    UUID subject = UUID.randomUUID(), command = UUID.randomUUID();
+    jdbc.update("INSERT INTO game_subjects(subject_id) VALUES (?)", subject);
+    var unavailable = new java.util.concurrent.atomic.AtomicBoolean();
+    ConfirmationJournal interrupted = new ConfirmationJournal(jdbc, validator, clock) {
+      @Override
+      public JsonNode lookup(UUID s, UUID p, UUID c, JsonNode payload) {
+        if (unavailable.get()) throw new IllegalStateException("temporary outage");
+        return journal.lookup(s, p, c, payload);
+      }
+
+      @Override
+      public JsonNode findForRecovery(UUID s, UUID c) {
+        if (unavailable.get()) throw new IllegalStateException("temporary outage");
+        return journal.findForRecovery(s, c);
+      }
+
+      @Override
+      public JsonNode confirm(UUID s, UUID p, UUID c, JsonNode payload, Planner planner,
+          java.util.function.Consumer<Instant> admitted) {
+        journal.confirm(s, p, c, payload, planner, admitted);
+        unavailable.set(true);
+        throw new IllegalStateException("lost commit reply");
+      }
+    };
+    TurnLeaseRegistry localLeases = new TurnLeaseRegistry(clock);
+    GameCoordinator local = new GameCoordinator(boards, rules, localLeases, identities,
+        interrupted, jdbc, clock, writer);
+    java.util.List<JsonNode> received = new java.util.ArrayList<>();
+    local.subscribe(UUID.randomUUID(), subject, puzzle, null, new GameCoordinator.Sink() {
+      @Override public boolean offer(JsonNode message) { received.add(message.deepCopy()); return true; }
+      @Override public void slow() { throw new AssertionError("unexpected slow consumer"); }
+    });
+    long before = local.subscribe(puzzle).snapshot().path("boardVersion").longValue();
+    var turn = local.begin(subject, puzzle);
+    local.preview(subject, turn.turnId(), 0, 1, action(UUID.randomUUID(), group, 0, 0));
+    JsonNode frame = local.drainEvents().values().getLast().path("action");
+    ObjectNode payload = mapper.createObjectNode().put("puzzleId", puzzle.toString())
+        .put("turnId", turn.turnId().toString()).put("commandId", command.toString())
+        .put("turnRevision", 0).put("generation", 0);
+    payload.putArray("actions").add(frame);
+    assertThatThrownBy(() -> local.confirm(subject, payload)).hasMessageContaining("unknown");
+    local.disconnected(subject);
+    local.tick();
+    assertThat(localLeases.confirming(subject, turn.turnId(), 0)).isEqualTo(command);
+    unavailable.set(false);
+    local.tick();
+    assertThat(localLeases.activeTurns()).doesNotContain(turn.turnId());
+    assertThat(received).extracting(e -> e.path("type").asText()).contains("resyncRequired");
+    assertThat(local.subscribe(puzzle).snapshot().path("boardVersion").longValue()).isEqualTo(before + 1);
+    assertThat(journal.find(subject, command).path("outcome").asText()).isEqualTo("confirmed");
   }
 
   private void recoveryAndConnectedJoins(UUID puzzle, JsonNode snapshot) {

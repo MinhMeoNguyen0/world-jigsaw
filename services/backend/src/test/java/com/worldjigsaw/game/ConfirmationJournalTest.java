@@ -467,6 +467,8 @@ class ConfirmationJournalTest {
           if (waiting < readers.size()) Thread.sleep(20);
         }
         assertThat(waiting).isGreaterThanOrEqualTo(readers.size());
+        assertThatThrownBy(() -> journal.findForRecovery(subject, command))
+            .isInstanceOf(org.springframework.dao.DataAccessException.class);
       } finally {
         release.countDown();
       }

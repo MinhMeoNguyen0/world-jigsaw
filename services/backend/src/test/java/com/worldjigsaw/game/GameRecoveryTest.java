@@ -75,8 +75,10 @@ class GameRecoveryTest {
       @Override public Instant instant() { return now.get(); }
     };
     leases = new TurnLeaseRegistry(clock);
+    GameWriterGuard writer = mock(GameWriterGuard.class);
+    when(writer.healthy()).thenReturn(true);
     game = new GameCoordinator(boards, new DraftRules(mock(BoardValidator.class)), leases,
-        identities, journal, jdbc, clock, mock(GameWriterGuard.class));
+        identities, journal, jdbc, clock, writer);
   }
 
   @Test
@@ -234,6 +236,61 @@ class GameRecoveryTest {
     org.mockito.Mockito.verify(journal, org.mockito.Mockito.times(1))
         .confirm(any(), any(), any(), any(), any(), any());
     assertThat(game.subscribe(puzzle).previews()).isEmpty();
+  }
+
+  @Test
+  void tickRecoversAbandonedConfirmedAndUncommittedTurnsAfterOutage() {
+    for (String outcome : List.of("confirmed", "rejected", "absent")) {
+      var turn = game.begin(subject, puzzle);
+      game.preview(subject, turn.turnId(), 0, 1, action(UUID.randomUUID(), snapshot.path("groups").get(0)));
+      JsonNode frame = game.drainEvents().values().getLast().path("action");
+      UUID command = UUID.randomUUID();
+      ObjectNode confirm = mapper.createObjectNode().put("puzzleId", puzzle.toString())
+          .put("turnId", turn.turnId().toString()).put("commandId", command.toString())
+          .put("turnRevision", 0).put("generation", 0);
+      confirm.putArray("actions").add(frame);
+      when(journal.lookup(subject, puzzle, command, confirm))
+          .thenReturn(null).thenThrow(new IllegalStateException("unavailable"));
+      doAnswer(call -> {
+        java.util.function.Consumer<Instant> admitted = call.getArgument(5);
+        admitted.accept(clock.instant());
+        throw new IllegalStateException("reply lost");
+      }).when(journal).confirm(any(), any(), any(), any(), any(), any());
+      assertThatThrownBy(() -> game.confirm(subject, confirm)).hasMessageContaining("unknown");
+      game.disconnected(subject);
+      JsonNode result = "absent".equals(outcome) ? null : mapper.createObjectNode().put("outcome", outcome);
+      when(journal.findForRecovery(subject, command))
+          .thenThrow(new IllegalStateException("unavailable")).thenReturn(result);
+      game.tick();
+      assertThat(leases.confirming(subject, turn.turnId(), 0)).isEqualTo(command);
+      game.drainEvents();
+      game.tick();
+      var events = game.drainEvents();
+      if (result == null) {
+        assertThat(leases.confirming(subject, turn.turnId(), 0)).isNull();
+        assertThat(game.subscribe(puzzle).previews()).hasSize(1);
+        game.cancel(subject, payload(turn.turnId(), UUID.randomUUID()));
+      } else {
+        assertThat(leases.activeTurns()).doesNotContain(turn.turnId());
+        assertThat(game.subscribe(puzzle).previews()).isEmpty();
+        assertThat(events.values()).extracting(e -> e.path("type").asText()).contains("previewCleared");
+        assertThat(events.resyncRequired()).isEqualTo("confirmed".equals(outcome));
+      }
+    }
+  }
+
+  @Test
+  void tickRetiresAbandonedUncommittedTurnAfterItsLeaseExpires() {
+    var turn = game.begin(subject, puzzle);
+    game.preview(subject, turn.turnId(), 0, 1, action(UUID.randomUUID(), snapshot.path("groups").get(0)));
+    UUID command = UUID.randomUUID();
+    leases.pinConfirm(subject, turn.turnId(), 0, command, clock.instant());
+    now.set(now.get().plusSeconds(31));
+    game.tick();
+    assertThat(leases.activeTurns()).doesNotContain(turn.turnId());
+    assertThat(game.subscribe(puzzle).previews()).isEmpty();
+    assertThat(game.drainEvents().values()).filteredOn(e -> "previewCleared".equals(e.path("type").asText()))
+        .extracting(e -> e.path("reason").asText()).contains("expired");
   }
 
   private ObjectNode payload(UUID turn, UUID request) {

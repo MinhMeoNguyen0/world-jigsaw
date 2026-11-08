@@ -36,6 +36,7 @@ class GameCoordinator {
   private java.time.LocalDate currentDay;
   private final Map<UUID, Subscriber> subscribers = new HashMap<>();
   private final Set<UUID> seenSubjects = new HashSet<>();
+  private UUID recoveryCursor;
 
   interface Sink {
     boolean offer(JsonNode message);
@@ -480,6 +481,7 @@ class GameCoordinator {
       return;
     }
     drainLeaseClears();
+    recoverConfirmation();
     java.time.LocalDate day = clock.instant().atZone(java.time.ZoneOffset.UTC).toLocalDate();
     if (day.equals(currentDay)) return;
     currentDay = day;
@@ -500,6 +502,35 @@ class GameCoordinator {
     }
     emit(changed);
     subscribers.clear();
+  }
+
+  private void recoverConfirmation() {
+    List<Turn> pending = new ArrayList<>();
+    for (Turn turn : List.copyOf(turns.values())) {
+      try {
+        if (leases.confirming(turn.subject, turn.id, turn.generation) != null) pending.add(turn);
+      } catch (TurnLeaseRegistry.LeaseError expired) {
+        drainLeaseClears();
+      }
+    }
+    if (pending.isEmpty()) return;
+    pending.sort(java.util.Comparator.comparing(t -> t.id));
+    Turn turn = pending.getFirst();
+    if (recoveryCursor != null)
+      for (Turn candidate : pending)
+        if (candidate.id.compareTo(recoveryCursor) > 0) {
+          turn = candidate;
+          break;
+        }
+    recoveryCursor = turn.id;
+    UUID command = leases.confirming(turn.subject, turn.id, turn.generation);
+    JsonNode result;
+    try {
+      result = journal.findForRecovery(turn.subject, command);
+    } catch (RuntimeException unavailable) {
+      return;
+    }
+    reconcileConfirmation(turn, command, result);
   }
 
   synchronized Subscription subscribe(UUID puzzle) {
@@ -657,14 +688,17 @@ class GameCoordinator {
         continue;
       }
       if (!command.equals(processing)) continue;
-      if (result == null) {
-        unpinConfirm(turn, command);
-      } else {
-        if ("confirmed".equals(result.path("outcome").asText())) forceResyncAll("gap");
-        finishConfirmedTurn(turn, command, result, -1);
-      }
+      reconcileConfirmation(turn, command, result);
     }
     return result;
+  }
+
+  private void reconcileConfirmation(Turn turn, UUID command, JsonNode result) {
+    if (result == null) unpinConfirm(turn, command);
+    else {
+      if ("confirmed".equals(result.path("outcome").asText())) forceResyncAll("gap");
+      finishConfirmedTurn(turn, command, result, -1);
+    }
   }
 
   private void unpinConfirm(Turn turn, UUID command) {

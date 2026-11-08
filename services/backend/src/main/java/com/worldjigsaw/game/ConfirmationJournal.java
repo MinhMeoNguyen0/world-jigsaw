@@ -235,6 +235,17 @@ class ConfirmationJournal {
   @Transactional(timeout = 30)
   public JsonNode find(UUID subject, UUID command) {
     jdbc.queryForList("SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE", subject);
+    return findResult(subject, command);
+  }
+
+  @Transactional(timeout = 1)
+  public JsonNode findForRecovery(UUID subject, UUID command) {
+    jdbc.queryForList(
+        "SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE NOWAIT", subject);
+    return findResult(subject, command);
+  }
+
+  private JsonNode findResult(UUID subject, UUID command) {
     List<String> rows =
         jdbc.query(
             "SELECT result::text FROM game_commands WHERE subject_id = ? AND command_id = ?",
