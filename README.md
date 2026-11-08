@@ -116,9 +116,10 @@ cross-process locks; do not remove or replace `.world-jigsaw-writer.lock` while 
 All instances for that database must use the same JDBC URL. Multiple hosts, isolated filesystem
 namespaces, network filesystems and high-availability deployment are not supported.
 Once loss of the database lock connection is detected, new game operations fail closed and connected
-clients are closed. Stop the backend process before starting a replacement. The replacement waits for
-earlier durable transactions to settle. After restart, clients must resubscribe; unsaved drafts are
-lost, while committed Confirm results remain available by command ID.
+clients are closed. The service attempts to reacquire ownership after earlier durable transactions
+settle, provided its local lock remains valid and no successor has replaced its ownership. Clients
+must resubscribe after recovery. Stop the backend process before starting a replacement; after restart,
+unsaved drafts are lost, while committed Confirm results remain available by command ID.
 
 The socket accepts v1 `subscribe`, `preview.submit`, and `heartbeat` messages and fans out temporary
 previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a

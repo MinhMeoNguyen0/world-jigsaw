@@ -68,9 +68,10 @@ class GameWriterGuard {
         barrier.setQueryTimeout(30);
         barrier.execute();
       }
-      try (PreparedStatement epoch = candidate.prepareStatement(
-          "INSERT INTO game_writer_ownership(singleton, owner) VALUES (true, ?) "
-              + "ON CONFLICT (singleton) DO UPDATE SET owner = EXCLUDED.owner")) {
+      try (PreparedStatement epoch =
+          candidate.prepareStatement(
+              "INSERT INTO game_writer_ownership(singleton, owner) VALUES (true, ?) "
+                  + "ON CONFLICT (singleton) DO UPDATE SET owner = EXCLUDED.owner")) {
         epoch.setObject(1, ownership);
         epoch.executeUpdate();
       }
@@ -173,13 +174,15 @@ class GameWriterGuard {
         }
       }
       candidate.setAutoCommit(false);
-      try (PreparedStatement barrier = candidate.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+      try (PreparedStatement barrier =
+          candidate.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
         barrier.setLong(1, DRAIN_KEY);
         barrier.setQueryTimeout(30);
         barrier.execute();
       }
-      try (PreparedStatement query = candidate.prepareStatement(
-          "SELECT owner FROM game_writer_ownership WHERE singleton = true");
+      try (PreparedStatement query =
+              candidate.prepareStatement(
+                  "SELECT owner FROM game_writer_ownership WHERE singleton = true");
           ResultSet result = query.executeQuery()) {
         if (!result.next() || !ownership.equals(result.getObject(1, UUID.class))) {
           synchronized (this) {
@@ -204,7 +207,8 @@ class GameWriterGuard {
         try {
           if (locked) {
             if (!candidate.getAutoCommit()) candidate.rollback();
-            try (PreparedStatement unlock = candidate.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+            try (PreparedStatement unlock =
+                candidate.prepareStatement("SELECT pg_advisory_unlock(?)")) {
               unlock.setLong(1, LOCK_KEY);
               unlock.execute();
             }

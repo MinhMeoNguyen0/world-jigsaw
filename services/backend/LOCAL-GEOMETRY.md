@@ -12,6 +12,8 @@ failure must reject the operation without saving or charging. For legacy arbitra
 the interaction API reports `UNSUPPORTED_LEGACY_ORIENTATION` without rewriting the
 board. All pieces in a candidate state must be checked together after locking the board, including
 pieces changed simultaneously and the result of snapping; a previous validation is not sufficient.
+Before accepting a preview, the coordinator checks both its candidate canonical board and the board
+with other active previews overlaid, so it cannot rely on another unconfirmed move to avoid a collision.
 
 - Coordinates are integer thousandths. Each cubic contour segment is sampled at 32 equal parameter
   intervals using integer arithmetic and rounding `floor(x + 0.5)` to the nearest coordinate unit.
