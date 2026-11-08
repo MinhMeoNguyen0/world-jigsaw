@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "note": "Behavioral vectors for engine and integration implementations; these are not evidence that a service exists.",
+  "scenarios": [
+    {
+      "name": "outer-sort-and-entry",
+      "startingRemaining": 5,
+      "steps": [
+        {
+          "operation": "sort loose piece outside surface",
+          "pending": 0,
+          "remaining": 5
+        },
+        {
+          "operation": "enter surface with same action ID",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "return unjoined piece outside",
+          "pending": 0,
+          "remaining": 5
+        },
+        {
+          "operation": "confirm sort only",
+          "pending": 0,
+          "remaining": 5
+        }
+      ]
+    },
+    {
+      "name": "adjust-piece-and-move-connected-group",
+      "startingRemaining": 5,
+      "steps": [
+        {
+          "operation": "introduce piece P1 as A1",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "adjust A1",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "introduce connected group G1 as A2",
+          "pending": 2,
+          "remaining": 5
+        },
+        {
+          "operation": "confirm A1 and A2",
+          "pending": 0,
+          "remaining": 3
+        }
+      ]
+    },
+    {
+      "name": "join-two-pending-actions",
+      "startingRemaining": 5,
+      "steps": [
+        {
+          "operation": "introduce P1 as A1",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "introduce P2 as A2",
+          "pending": 2,
+          "remaining": 5
+        },
+        {
+          "operation": "join and adjust A1 and A2",
+          "pending": 2,
+          "remaining": 5
+        },
+        {
+          "operation": "confirm A1 and A2",
+          "pending": 0,
+          "remaining": 3
+        }
+      ]
+    },
+    {
+      "name": "undo-independent-action",
+      "expected": "Removing one independent pending action clears only its overlay and provisional slot; the other actions remain pending."
+    },
+    {
+      "name": "undo-joined-action",
+      "expected": "Reject removal if it would invalidate a joined or dependent action; preserve the entire batch and allow cancel."
+    },
+    {
+      "name": "cancel-after-other-commit",
+      "startingRemaining": 5,
+      "expected": "Clear only own overlay and display latest canonical board; no charge and no stale restore."
+    },
+    {
+      "name": "stale-confirm",
+      "startingRemaining": 5,
+      "expected": "Reject the entire batch; board version and committed allowance do not change."
+    },
+    {
+      "name": "lost-confirm-response",
+      "expected": "Unknown until the original identity and command ID resolve. Retrying the identical payload cannot charge twice; a changed payload conflicts."
+    },
+    {
+      "name": "admitted-before-utc-close",
+      "admittedAt": "2026-11-07T23:59:59Z",
+      "closedAt": "2026-11-08T00:00:00Z",
+      "committedAt": "2026-11-08T00:00:01Z",
+      "expected": "The admitted command may commit to the old puzzle; resolve its original ID against that puzzle."
+    },
+    {
+      "name": "unadmitted-at-utc-close",
+      "closedAt": "2026-11-08T00:00:00Z",
+      "expected": "Clear the old preview without committed charge; missing new content is unavailable."
+    },
+    {
+      "name": "move-and-rotate-correct-assembled-group",
+      "startingRemaining": 5,
+      "expected": "Before completion, moving or rotating the connected group introduces one counted action; preview does not change canonical final-position flags or progress. Confirm recomputes final-position flags; completion behavior remains under review."
+    }
+  ]
+}

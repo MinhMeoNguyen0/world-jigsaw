@@ -5,12 +5,15 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 
 ## Repository layout
 
-| Path               | Contents                                          |
-| ------------------ | ------------------------------------------------- |
-| `apps/web`         | Web client: Vite, React, TypeScript, React Router |
-| `services/backend` | Java Spring Boot backend                          |
-| `docs`             | Product and engineering plan                      |
-| `.github`          | CI workflows and Dependabot configuration         |
+| Path                 | Contents                                          |
+| -------------------- | ------------------------------------------------- |
+| `apps/web`           | Web client: Vite, React, TypeScript, React Router |
+| `services/backend`   | Java Spring Boot backend                          |
+| `packages/contracts` | Versioned shared schemas, fixtures and types      |
+| `docs`               | Product and engineering plan                      |
+| `.github`            | CI workflows and Dependabot configuration         |
+
+The [shared v1 contract](packages/contracts/README.md) describes the integration baseline; the schemas do not implement a running multiplayer service.
 
 ## Local setup
 
@@ -43,7 +46,7 @@ pull request and on pushes to `main`.
 | `pnpm typecheck`    | TypeScript type check (strict mode)                     |
 | `pnpm lint`         | ESLint                                                  |
 | `pnpm format:check` | Prettier check (`pnpm format` rewrites files)           |
-| `pnpm test`         | Unit tests (Vitest)                                     |
+| `pnpm test`         | Shared contract and web unit tests                      |
 | `pnpm build`        | Production build of the web app                         |
 | `pnpm test:e2e`     | Builds the web app, then runs the Playwright smoke test |
 | `pnpm check`        | All of the above, in CI order                           |

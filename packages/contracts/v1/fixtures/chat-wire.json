@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "post": {
+    "schemaVersion": 1,
+    "messageId": "00000000-0000-4000-8000-000000000700",
+    "text": "hello"
+  },
+  "accepted": {
+    "schemaVersion": 1,
+    "messageId": "00000000-0000-4000-8000-000000000700"
+  },
+  "sse": {
+    "schemaVersion": 1,
+    "messageId": "00000000-0000-4000-8000-000000000700",
+    "displayName": "Mira",
+    "sentAt": "2026-11-08T00:00:01Z",
+    "text": "hello"
+  },
+  "httpErrors": [
+    {
+      "status": 404,
+      "envelope": {
+        "schemaVersion": 1,
+        "error": {
+          "code": "NOT_FOUND",
+          "message": "Not found",
+          "requestId": "00000000-0000-4000-8000-000000000701",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "status": 405,
+      "envelope": {
+        "schemaVersion": 1,
+        "error": {
+          "code": "METHOD_NOT_ALLOWED",
+          "message": "Method not allowed",
+          "requestId": "00000000-0000-4000-8000-000000000702",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

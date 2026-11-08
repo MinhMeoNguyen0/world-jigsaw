@@ -1,12 +1,15 @@
 # WORLD JIGSAW — Complete Product and Engineering Blueprint
 
 **Version:** 3.0  
-**Status:** Implementation-ready design specification (proposed, not an existing product)  
+**Status:** Earlier proposed design, not an existing product
+
 **Core concept:** One world, one daily destination, one shared jigsaw puzzle, five accepted moves per anonymous contributor, and a global countdown.
+
+For the current integration baseline, see the [shared v1 contract](../packages/contracts/README.md). This earlier plan contains superseded proposals, including immediate move commits, chat history, and example API and WebSocket messages; it is not the wire contract.
 
 ---
 
-## 0. Executive summary and non-negotiable decisions
+## 0. Executive summary and proposed decisions
 
 World Jigsaw is a browser-based, collaborative daily jigsaw puzzle. At a server-defined time (initially **00:00 UTC**), the platform reveals exactly one curated photograph of a city or landmark. Every visitor worldwide sees the **same puzzle instance**, the same global progress, and the same deadline. Anonymous players contribute up to **five accepted drag-and-drop moves per daily puzzle**. Other players' meaningful actions become visible through live puzzle movement, an activity ticker below the board, a global activity dashboard, and chat.
 

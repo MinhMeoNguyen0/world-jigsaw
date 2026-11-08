@@ -1,0 +1,27 @@
+{
+  "name": "@world-jigsaw/contracts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./v1/index.d.ts",
+      "default": "./v1/validate.js"
+    },
+    "./v1/schema.json": "./v1/schema.json"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-types.js",
+    "test": "node scripts/generate-types.js --check && node --test test/*.test.js",
+    "typecheck": "tsc6 -p tsconfig.json"
+  },
+  "dependencies": {
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "15.0.4",
+    "prettier": "3.9.10",
+    "typescript": "npm:@typescript/typescript6@6.0.2"
+  }
+}
