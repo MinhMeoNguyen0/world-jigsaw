@@ -102,6 +102,8 @@ public final class ChatServer implements AutoCloseable {
   }
 
   private void handle(HttpExchange exchange) throws IOException {
+    // Early responses can leave the request body unread, so it cannot be reused.
+    exchange.getResponseHeaders().set("Connection", "close");
     try {
       if (!localRequest(exchange)) {
         error(exchange, 403, "FORBIDDEN");
@@ -273,6 +275,7 @@ public final class ChatServer implements AutoCloseable {
       }
     }
     if (status == 202) {
+      e.getResponseHeaders().remove("Connection");
       json(e, status, Map.of("schemaVersion", 1, "messageId", command));
     } else {
       error(e, status, status == 401 ? "UNAUTHENTICATED" : "CHAT_UNAVAILABLE");
