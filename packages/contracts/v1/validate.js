@@ -14,6 +14,8 @@ export function validate(type, value) {
   if (type === 'Allowance' && value.used + value.remaining !== value.limit)
     errors.push('allowance must add up to limit')
   if (type === 'Confirm') {
+    if (value.actions.filter((action) => action.kind !== 'sort').length > 5)
+      errors.push('more than five counted actions')
     const ids = new Set(value.actions.map((action) => action.actionId))
     if (ids.size !== value.actions.length) errors.push('duplicate action ID')
     for (const action of value.actions) {
@@ -54,6 +56,13 @@ export function validate(type, value) {
       value.definition.definitionVersion !== value.snapshot.definitionVersion)
   )
     errors.push('inconsistent current game')
+  if (type === 'ChatAssertionClaims') {
+    if (value.exp <= value.iat || value.exp - value.iat > 300)
+      errors.push('invalid assertion lifetime')
+    if (value.displayName.length > 128) errors.push('display name exceeds UTF-16 limit')
+  }
+  if (['Session', 'ChatMessage'].includes(type) && value.displayName.length > 128)
+    errors.push('display name exceeds UTF-16 limit')
   if (type === 'CommandResult') {
     if (value.allowance !== null && !validate('Allowance', value.allowance).valid)
       errors.push('invalid allowance')
@@ -90,8 +99,18 @@ export function validateBoard(definition, snapshot) {
     definition.definitionVersion !== snapshot.definitionVersion
   )
     fail('snapshot definition identity mismatch')
-  const { min, max } = definition.bounds
-  if (min.x >= max.x || min.y >= max.y) fail('invalid definition bounds')
+  for (const rect of [definition.imageBounds, definition.playSurface, definition.workspace]) {
+    if (rect.min.x >= rect.max.x || rect.min.y >= rect.max.y) fail('invalid definition bounds')
+  }
+  for (const rect of [definition.imageBounds, definition.playSurface]) {
+    if (
+      rect.min.x < definition.workspace.min.x ||
+      rect.min.y < definition.workspace.min.y ||
+      rect.max.x > definition.workspace.max.x ||
+      rect.max.y > definition.workspace.max.y
+    )
+      fail('bounds outside workspace')
+  }
   const pieces = new Map()
   for (const piece of definition.pieces) {
     if (pieces.has(piece.pieceId)) fail('duplicate piece ID')
@@ -123,8 +142,6 @@ export function validateBoard(definition, snapshot) {
   for (const group of snapshot.groups) {
     if (groups.has(group.groupId)) fail('duplicate group ID')
     groups.add(group.groupId)
-    if (!definition.allowedRotations.includes(group.transform.rotation))
-      fail('rotation not allowed')
     for (const id of group.pieceIds) {
       if (!pieces.has(id)) fail('unknown piece in board')
       if (seen.has(id)) fail('piece appears in multiple groups')
@@ -198,4 +215,21 @@ export function applyPreview(state, event) {
     sequence: event.sequence,
     actions: { ...next.actions, [event.action.actionId]: event.action },
   }
+}
+
+/** Half-open play-surface classification in puzzle coordinates. */
+export function isInsideSurface(point, surface) {
+  return (
+    point.x >= surface.min.x &&
+    point.x < surface.max.x &&
+    point.y >= surface.min.y &&
+    point.y < surface.max.y
+  )
+}
+
+/** Distinct pieces in connected groups in a validated canonical snapshot. */
+export function progressPieceCount(snapshot) {
+  return snapshot.groups
+    .filter((group) => group.pieceIds.length > 1)
+    .reduce((total, group) => total + group.pieceIds.length, 0)
 }

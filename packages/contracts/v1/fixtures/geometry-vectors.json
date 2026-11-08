@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "units": "thousandths of puzzle-space unit; angles are millidegrees clockwise with x right and y down",
+  "surface": {
+    "bounds": {
+      "min": {
+        "x": 0,
+        "y": 0
+      },
+      "max": {
+        "x": 100000,
+        "y": 100000
+      }
+    },
+    "samples": [
+      {
+        "point": {
+          "x": -2000,
+          "y": 50000
+        },
+        "inside": false
+      },
+      {
+        "point": {
+          "x": -1000,
+          "y": 50000
+        },
+        "inside": false
+      },
+      {
+        "point": {
+          "x": 0,
+          "y": 50000
+        },
+        "inside": true
+      },
+      {
+        "point": {
+          "x": 99999,
+          "y": 99999
+        },
+        "inside": true
+      },
+      {
+        "point": {
+          "x": 100000,
+          "y": 50000
+        },
+        "inside": false
+      },
+      {
+        "point": {
+          "x": 0,
+          "y": 100000
+        },
+        "inside": false
+      }
+    ]
+  },
+  "rotation": {
+    "center": {
+      "x": 20000,
+      "y": 30000
+    },
+    "translation": {
+      "x": 10000,
+      "y": 30000
+    },
+    "deltaMillidegrees": 90000,
+    "expectedTranslation": {
+      "x": 20000,
+      "y": 20000
+    },
+    "wrapExamples": [
+      {
+        "input": 360000,
+        "normalized": 0
+      },
+      {
+        "input": -1,
+        "normalized": 359999
+      }
+    ]
+  },
+  "reversedCubic": {
+    "start": {
+      "x": 10000,
+      "y": 0
+    },
+    "forward": {
+      "kind": "cubic",
+      "control1": {
+        "x": 13000,
+        "y": 3000
+      },
+      "control2": {
+        "x": 13000,
+        "y": 7000
+      },
+      "to": {
+        "x": 10000,
+        "y": 10000
+      }
+    },
+    "reverseStart": {
+      "x": 10000,
+      "y": 10000
+    },
+    "reverse": {
+      "kind": "cubic",
+      "control1": {
+        "x": 13000,
+        "y": 7000
+      },
+      "control2": {
+        "x": 13000,
+        "y": 3000
+      },
+      "to": {
+        "x": 10000,
+        "y": 0
+      }
+    }
+  },
+  "collision": {
+    "status": "latest provisional frontend approximation supersedes earlier 8; not an authoritative penetration rule",
+    "frontendSamplesPerCubic": 16,
+    "frontendAllowedOverlapWorldUnits": 18,
+    "frontendReferencePieceWidthWorldUnits": 100
+  },
+  "connectedProgress": {
+    "connectedGroupSizes": [12, 3],
+    "loosePieceCount": 45,
+    "expectedConnected": 15,
+    "total": 60
+  }
+}

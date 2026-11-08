@@ -1,12 +1,23 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { applyBoardChanged, applyPreview, validate, validateBoard } from '../v1/validate.js'
+import {
+  applyBoardChanged,
+  applyPreview,
+  isInsideSurface,
+  progressPieceCount,
+  validate,
+  validateBoard,
+} from '../v1/validate.js'
 
 const fixture = JSON.parse(
   readFileSync(new URL('../v1/fixtures/board-and-batch.json', import.meta.url)),
 )
 const chat = JSON.parse(readFileSync(new URL('../v1/fixtures/chat-text.json', import.meta.url)))
+const geometry = JSON.parse(
+  readFileSync(new URL('../v1/fixtures/geometry-vectors.json', import.meta.url)),
+)
+const wire = JSON.parse(readFileSync(new URL('../v1/fixtures/chat-wire.json', import.meta.url)))
 const copy = structuredClone
 const { definition, snapshot, confirm, preview } = fixture
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
@@ -34,7 +45,7 @@ test('wire compatibility rejects unknown versions, extra fields and unsafe revis
   assert.throws(() => validate('MissingType', {}), /Unknown contract/)
 })
 
-test('unique identity, definition version, adjacency and allowed rotation are enforced', () => {
+test('unique identity, definition version, adjacency and angle bounds are enforced', () => {
   const duplicate = copy(snapshot)
   duplicate.groups[1].pieceIds.push(duplicate.groups[0].pieceIds[0])
   assert.equal(validateBoard(definition, duplicate).valid, false)
@@ -47,7 +58,9 @@ test('unique identity, definition version, adjacency and allowed rotation are en
   bad.pieces[0].edges[1].neighborEdgeId = 'top'
   assert.equal(validateBoard(bad, snapshot).valid, false)
   const rotation = copy(snapshot)
-  rotation.groups[0].transform.rotation = 90
+  rotation.groups[0].transform.rotation = 31500
+  assert.equal(validateBoard(definition, rotation).valid, true)
+  rotation.groups[0].transform.rotation = 360000
   assert.equal(validateBoard(definition, rotation).valid, false)
 })
 
@@ -212,6 +225,111 @@ test('subscription and lifecycle envelopes cannot mix puzzles or claim unavailab
       puzzleId: id(100),
       available: false,
     }).valid,
+    false,
+  )
+})
+
+test('half-open play-surface vectors distinguish free table sorting and entry', () => {
+  for (const sample of geometry.surface.samples)
+    assert.equal(isInsideSurface(sample.point, geometry.surface.bounds), sample.inside)
+})
+
+test('batch can contain free sorts alongside at most five counted actions', () => {
+  const example = confirm.actions[0]
+  const sorts = Array.from({ length: 8 }, (_, i) => ({
+    ...example,
+    actionId: id(1000 + i),
+    kind: 'sort',
+  }))
+  assert.equal(validate('Confirm', { ...confirm, actions: sorts }).valid, true)
+  const counted = Array.from({ length: 5 }, (_, i) => ({ ...example, actionId: id(1100 + i) }))
+  assert.equal(validate('Confirm', { ...confirm, actions: [...sorts, ...counted] }).valid, true)
+  assert.equal(
+    validate('Confirm', {
+      ...confirm,
+      actions: [...sorts, ...counted, { ...example, actionId: id(1200) }],
+    }).valid,
+    false,
+  )
+})
+
+test('connected progress counts groups regardless of final position', () => {
+  assert.equal(progressPieceCount(snapshot), 2)
+  const correctSingleton = copy(snapshot)
+  correctSingleton.groups[1].finalPosition = true
+  assert.equal(progressPieceCount(correctSingleton), 2)
+  const { connectedGroupSizes, loosePieceCount, expectedConnected, total } =
+    geometry.connectedProgress
+  let index = 0
+  const groups = [...connectedGroupSizes, ...Array(loosePieceCount).fill(1)].map((size) => ({
+    ...snapshot.groups[0],
+    groupId: id(2000 + index),
+    pieceIds: Array.from({ length: size }, () => id(3000 + index++)),
+    finalPosition: false,
+  }))
+  assert.equal(index, total)
+  assert.equal(progressPieceCount({ ...snapshot, groups }), expectedConnected)
+})
+
+test('rotation and cubic vectors fit the wire contract', () => {
+  const { center, translation, expectedTranslation } = geometry.rotation
+  assert.deepEqual(
+    { x: center.x - (translation.y - center.y), y: center.y + (translation.x - center.x) },
+    expectedTranslation,
+  )
+  const edge = {
+    edgeId: 'east',
+    neighborPieceId: id(2),
+    neighborEdgeId: 'west',
+    start: geometry.reversedCubic.start,
+    segments: [geometry.reversedCubic.forward],
+  }
+  assert.equal(validate('Edge', edge).valid, true)
+  assert.deepEqual(geometry.reversedCubic.forward.control1, geometry.reversedCubic.reverse.control2)
+  assert.deepEqual(geometry.reversedCubic.forward.control2, geometry.reversedCubic.reverse.control1)
+  assert.deepEqual(geometry.reversedCubic.start, geometry.reversedCubic.reverse.to)
+})
+
+test('chat POST, SSE and byte fixtures express independent bounds and errors', () => {
+  assert.equal(validate('ChatSend', wire.post).valid, true)
+  assert.equal(validate('ChatAccepted', wire.accepted).valid, true)
+  assert.equal(validate('ChatMessage', wire.sse).valid, true)
+  assert.equal(validate('ChatMessage', { ...wire.sse, type: 'message' }).valid, false)
+  for (const sample of wire.textByteCases) {
+    assert.equal(Buffer.byteLength(sample.input, 'utf8'), sample.utf8Bytes)
+    assert.equal(sample.utf8Bytes <= 1024, sample.withinByteLimit)
+  }
+  for (const sample of wire.bodyByteCases) {
+    assert.deepEqual(JSON.parse(sample.body), wire.post)
+    assert.equal(Buffer.byteLength(sample.body, 'utf8'), sample.utf8Bytes)
+    assert.equal(sample.utf8Bytes <= 4096, sample.withinByteLimit)
+  }
+  for (const sample of wire.httpErrors) {
+    assert.equal(validate('ErrorResponse', sample.envelope).valid, true)
+    assert.equal(sample.envelope.error.retryable, false)
+    assert.equal(
+      sample.envelope.error.code,
+      sample.status === 404 ? 'NOT_FOUND' : 'METHOD_NOT_ALLOWED',
+    )
+  }
+})
+
+test('identity assertion claims allow multi-codepoint display names and bound lifetime', () => {
+  const claims = {
+    schemaVersion: 1,
+    iss: 'private-game',
+    sub: id(3),
+    aud: 'world-jigsaw-chat',
+    iat: 1000,
+    exp: 1300,
+    jti: id(4),
+    displayName: '👨‍👩‍👧‍👦'.repeat(10),
+  }
+  assert.equal(validate('ChatAssertionClaims', claims).valid, true)
+  assert.equal(validate('ChatAssertionClaims', { ...claims, exp: 1301 }).valid, false)
+  assert.equal(validate('ChatAssertionClaims', { ...claims, aud: 'game' }).valid, false)
+  assert.equal(
+    validate('ChatAssertionClaims', { ...claims, displayName: '😀'.repeat(65) }).valid,
     false,
   )
 })

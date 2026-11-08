@@ -3,23 +3,81 @@
   "note": "Behavioral vectors for engine and integration implementations; these are not evidence that a service exists.",
   "scenarios": [
     {
+      "name": "outer-sort-and-entry",
+      "startingRemaining": 5,
+      "steps": [
+        {
+          "operation": "sort loose piece outside surface",
+          "pending": 0,
+          "remaining": 5
+        },
+        {
+          "operation": "enter surface with same action ID",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "return unjoined piece outside",
+          "pending": 0,
+          "remaining": 5
+        },
+        {
+          "operation": "confirm sort only",
+          "pending": 0,
+          "remaining": 5
+        }
+      ]
+    },
+    {
       "name": "adjust-piece-and-move-connected-group",
       "startingRemaining": 5,
       "steps": [
-        { "operation": "introduce piece P1 as A1", "pending": 1, "remaining": 5 },
-        { "operation": "adjust A1", "pending": 1, "remaining": 5 },
-        { "operation": "introduce connected group G1 as A2", "pending": 2, "remaining": 5 },
-        { "operation": "confirm A1 and A2", "pending": 0, "remaining": 3 }
+        {
+          "operation": "introduce piece P1 as A1",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "adjust A1",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "introduce connected group G1 as A2",
+          "pending": 2,
+          "remaining": 5
+        },
+        {
+          "operation": "confirm A1 and A2",
+          "pending": 0,
+          "remaining": 3
+        }
       ]
     },
     {
       "name": "join-two-pending-actions",
       "startingRemaining": 5,
       "steps": [
-        { "operation": "introduce P1 as A1", "pending": 1, "remaining": 5 },
-        { "operation": "introduce P2 as A2", "pending": 2, "remaining": 5 },
-        { "operation": "join and adjust A1 and A2", "pending": 2, "remaining": 5 },
-        { "operation": "confirm A1 and A2", "pending": 0, "remaining": 3 }
+        {
+          "operation": "introduce P1 as A1",
+          "pending": 1,
+          "remaining": 5
+        },
+        {
+          "operation": "introduce P2 as A2",
+          "pending": 2,
+          "remaining": 5
+        },
+        {
+          "operation": "join and adjust A1 and A2",
+          "pending": 2,
+          "remaining": 5
+        },
+        {
+          "operation": "confirm A1 and A2",
+          "pending": 0,
+          "remaining": 3
+        }
       ]
     },
     {
@@ -47,6 +105,11 @@
       "name": "unadmitted-at-utc-close",
       "closedAt": "2026-11-08T00:00:00Z",
       "expected": "Clear the old preview without committed charge; missing new content is unavailable."
+    },
+    {
+      "name": "move-and-rotate-correct-assembled-group",
+      "startingRemaining": 5,
+      "expected": "Before completion, moving or rotating the connected group introduces one counted action; preview does not change canonical final-position flags or progress. Confirm recomputes final-position flags; completion behavior remains under review."
     }
   ]
 }

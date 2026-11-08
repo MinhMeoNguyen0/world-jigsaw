@@ -61,5 +61,26 @@
     "normalized": "hi\nthere",
     "clusters": 8,
     "valid": false
+  },
+  {
+    "name": "leading-tab",
+    "input": "\thi",
+    "normalized": "hi",
+    "clusters": 2,
+    "valid": false
+  },
+  {
+    "name": "trailing-newline",
+    "input": "hi\n",
+    "normalized": "hi",
+    "clusters": 2,
+    "valid": false
+  },
+  {
+    "name": "forty-combining",
+    "input": "éééééééééééééééééééééééééééééééééééééééé",
+    "normalized": "éééééééééééééééééééééééééééééééééééééééé",
+    "clusters": 40,
+    "valid": true
   }
 ]

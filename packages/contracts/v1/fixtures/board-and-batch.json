@@ -4,17 +4,6 @@
     "puzzleId": "00000000-0000-4000-8000-000000000100",
     "definitionVersion": 1,
     "image": "fixture://three-squares",
-    "bounds": {
-      "min": {
-        "x": 0,
-        "y": 0
-      },
-      "max": {
-        "x": 3000,
-        "y": 1000
-      }
-    },
-    "allowedRotations": [0],
     "pieces": [
       {
         "pieceId": "00000000-0000-4000-8000-000000000001",
@@ -27,14 +16,17 @@
             "edgeId": "top",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 0,
+              "y": 0
+            },
+            "segments": [
               {
-                "x": 0,
-                "y": 0
-              },
-              {
-                "x": 1000,
-                "y": 0
+                "kind": "line",
+                "to": {
+                  "x": 1000,
+                  "y": 0
+                }
               }
             ]
           },
@@ -42,14 +34,17 @@
             "edgeId": "right",
             "neighborPieceId": "00000000-0000-4000-8000-000000000002",
             "neighborEdgeId": "left",
-            "path": [
+            "start": {
+              "x": 1000,
+              "y": 0
+            },
+            "segments": [
               {
-                "x": 1000,
-                "y": 0
-              },
-              {
-                "x": 1000,
-                "y": 1000
+                "kind": "line",
+                "to": {
+                  "x": 1000,
+                  "y": 1000
+                }
               }
             ]
           },
@@ -57,14 +52,17 @@
             "edgeId": "bottom",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 1000,
+              "y": 1000
+            },
+            "segments": [
               {
-                "x": 1000,
-                "y": 1000
-              },
-              {
-                "x": 0,
-                "y": 1000
+                "kind": "line",
+                "to": {
+                  "x": 0,
+                  "y": 1000
+                }
               }
             ]
           },
@@ -72,18 +70,25 @@
             "edgeId": "left",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 0,
+              "y": 1000
+            },
+            "segments": [
               {
-                "x": 0,
-                "y": 1000
-              },
-              {
-                "x": 0,
-                "y": 0
+                "kind": "line",
+                "to": {
+                  "x": 0,
+                  "y": 0
+                }
               }
             ]
           }
-        ]
+        ],
+        "referencePoint": {
+          "x": 500,
+          "y": 500
+        }
       },
       {
         "pieceId": "00000000-0000-4000-8000-000000000002",
@@ -96,14 +101,17 @@
             "edgeId": "top",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 0,
+              "y": 0
+            },
+            "segments": [
               {
-                "x": 0,
-                "y": 0
-              },
-              {
-                "x": 1000,
-                "y": 0
+                "kind": "line",
+                "to": {
+                  "x": 1000,
+                  "y": 0
+                }
               }
             ]
           },
@@ -111,14 +119,17 @@
             "edgeId": "right",
             "neighborPieceId": "00000000-0000-4000-8000-000000000003",
             "neighborEdgeId": "left",
-            "path": [
+            "start": {
+              "x": 1000,
+              "y": 0
+            },
+            "segments": [
               {
-                "x": 1000,
-                "y": 0
-              },
-              {
-                "x": 1000,
-                "y": 1000
+                "kind": "line",
+                "to": {
+                  "x": 1000,
+                  "y": 1000
+                }
               }
             ]
           },
@@ -126,14 +137,17 @@
             "edgeId": "bottom",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 1000,
+              "y": 1000
+            },
+            "segments": [
               {
-                "x": 1000,
-                "y": 1000
-              },
-              {
-                "x": 0,
-                "y": 1000
+                "kind": "line",
+                "to": {
+                  "x": 0,
+                  "y": 1000
+                }
               }
             ]
           },
@@ -141,18 +155,25 @@
             "edgeId": "left",
             "neighborPieceId": "00000000-0000-4000-8000-000000000001",
             "neighborEdgeId": "right",
-            "path": [
+            "start": {
+              "x": 0,
+              "y": 1000
+            },
+            "segments": [
               {
-                "x": 0,
-                "y": 1000
-              },
-              {
-                "x": 0,
-                "y": 0
+                "kind": "line",
+                "to": {
+                  "x": 0,
+                  "y": 0
+                }
               }
             ]
           }
-        ]
+        ],
+        "referencePoint": {
+          "x": 500,
+          "y": 500
+        }
       },
       {
         "pieceId": "00000000-0000-4000-8000-000000000003",
@@ -165,14 +186,17 @@
             "edgeId": "top",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 0,
+              "y": 0
+            },
+            "segments": [
               {
-                "x": 0,
-                "y": 0
-              },
-              {
-                "x": 1000,
-                "y": 0
+                "kind": "line",
+                "to": {
+                  "x": 1000,
+                  "y": 0
+                }
               }
             ]
           },
@@ -180,14 +204,17 @@
             "edgeId": "right",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 1000,
+              "y": 0
+            },
+            "segments": [
               {
-                "x": 1000,
-                "y": 0
-              },
-              {
-                "x": 1000,
-                "y": 1000
+                "kind": "line",
+                "to": {
+                  "x": 1000,
+                  "y": 1000
+                }
               }
             ]
           },
@@ -195,14 +222,17 @@
             "edgeId": "bottom",
             "neighborPieceId": null,
             "neighborEdgeId": null,
-            "path": [
+            "start": {
+              "x": 1000,
+              "y": 1000
+            },
+            "segments": [
               {
-                "x": 1000,
-                "y": 1000
-              },
-              {
-                "x": 0,
-                "y": 1000
+                "kind": "line",
+                "to": {
+                  "x": 0,
+                  "y": 1000
+                }
               }
             ]
           },
@@ -210,21 +240,65 @@
             "edgeId": "left",
             "neighborPieceId": "00000000-0000-4000-8000-000000000002",
             "neighborEdgeId": "right",
-            "path": [
+            "start": {
+              "x": 0,
+              "y": 1000
+            },
+            "segments": [
               {
-                "x": 0,
-                "y": 1000
-              },
-              {
-                "x": 0,
-                "y": 0
+                "kind": "line",
+                "to": {
+                  "x": 0,
+                  "y": 0
+                }
               }
             ]
           }
-        ]
+        ],
+        "referencePoint": {
+          "x": 500,
+          "y": 500
+        }
       }
     ],
-    "checksum": "sha256:73a0c04f539ae17f4a86efda97a2bbfc971adc6f1a1b8f1c7e843af26b618172"
+    "imageBounds": {
+      "min": {
+        "x": 0,
+        "y": 0
+      },
+      "max": {
+        "x": 3000,
+        "y": 1000
+      }
+    },
+    "playSurface": {
+      "min": {
+        "x": -500,
+        "y": -500
+      },
+      "max": {
+        "x": 3500,
+        "y": 1500
+      }
+    },
+    "workspace": {
+      "min": {
+        "x": -10000,
+        "y": -10000
+      },
+      "max": {
+        "x": 10000,
+        "y": 10000
+      }
+    },
+    "shape": {
+      "generatorVersion": "fixture-squares-v1",
+      "seed": "fixture",
+      "tabDepthPermille": 100,
+      "tabWidthPermille": 340,
+      "edgeWavePermille": 60
+    },
+    "checksum": "sha256:96796f3a2cae384979a11674b01f34124df43803f328109a4a7dec05729f0d99"
   },
   "snapshot": {
     "schemaVersion": 1,
@@ -244,9 +318,9 @@
             "x": -1000,
             "y": 2000
           },
-          "rotation": 0
+          "rotation": 31500
         },
-        "anchored": false
+        "finalPosition": false
       },
       {
         "groupId": "00000000-0000-4000-8000-000000000202",
@@ -257,9 +331,9 @@
             "x": 3000,
             "y": -2000
           },
-          "rotation": 0
+          "rotation": 15000
         },
-        "anchored": false
+        "finalPosition": false
       }
     ]
   },

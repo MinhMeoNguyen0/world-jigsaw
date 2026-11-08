@@ -26,3 +26,8 @@ export interface PreviewState {
   actions: Record<string, import('./types.js').Action>
 }
 export function applyPreview(state: PreviewState | null, event: unknown): PreviewState | null
+export function isInsideSurface(
+  point: import('./types.js').Point,
+  surface: import('./types.js').Rect,
+): boolean
+export function progressPieceCount(snapshot: import('./types.js').Snapshot): number

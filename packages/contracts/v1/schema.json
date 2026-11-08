@@ -39,15 +39,6 @@
     },
     {
       "$ref": "#/$defs/SocketError"
-    },
-    {
-      "$ref": "#/$defs/ChatSend"
-    },
-    {
-      "$ref": "#/$defs/ChatMessage"
-    },
-    {
-      "$ref": "#/$defs/ChatAccepted"
     }
   ],
   "$defs": {
@@ -75,7 +66,9 @@
           "$ref": "#/$defs/Point"
         },
         "rotation": {
-          "enum": [0, 90, 180, 270]
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 359999
         }
       },
       "required": ["translation", "rotation"],
@@ -112,16 +105,19 @@
             }
           ]
         },
-        "path": {
+        "start": {
+          "$ref": "#/$defs/Point"
+        },
+        "segments": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Point"
+            "$ref": "#/$defs/ContourSegment"
           },
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 256
         }
       },
-      "required": ["edgeId", "neighborPieceId", "neighborEdgeId", "path"],
+      "required": ["edgeId", "neighborPieceId", "neighborEdgeId", "start", "segments"],
       "additionalProperties": false
     },
     "Piece": {
@@ -141,9 +137,12 @@
           },
           "minItems": 3,
           "maxItems": 16
+        },
+        "referencePoint": {
+          "$ref": "#/$defs/Point"
         }
       },
-      "required": ["pieceId", "solvedPosition", "edges"],
+      "required": ["pieceId", "solvedPosition", "edges", "referencePoint"],
       "additionalProperties": false
     },
     "Definition": {
@@ -170,28 +169,6 @@
           "minLength": 1,
           "maxLength": 2048
         },
-        "bounds": {
-          "type": "object",
-          "properties": {
-            "min": {
-              "$ref": "#/$defs/Point"
-            },
-            "max": {
-              "$ref": "#/$defs/Point"
-            }
-          },
-          "required": ["min", "max"],
-          "additionalProperties": false
-        },
-        "allowedRotations": {
-          "type": "array",
-          "items": {
-            "enum": [0, 90, 180, 270]
-          },
-          "minItems": 1,
-          "maxItems": 4,
-          "uniqueItems": true
-        },
         "pieces": {
           "type": "array",
           "items": {
@@ -199,6 +176,18 @@
           },
           "minItems": 1,
           "maxItems": 80
+        },
+        "imageBounds": {
+          "$ref": "#/$defs/Rect"
+        },
+        "playSurface": {
+          "$ref": "#/$defs/Rect"
+        },
+        "workspace": {
+          "$ref": "#/$defs/Rect"
+        },
+        "shape": {
+          "$ref": "#/$defs/ShapeParameters"
         }
       },
       "required": [
@@ -207,9 +196,11 @@
         "definitionVersion",
         "checksum",
         "image",
-        "bounds",
-        "allowedRotations",
-        "pieces"
+        "imageBounds",
+        "playSurface",
+        "pieces",
+        "workspace",
+        "shape"
       ],
       "additionalProperties": false
     },
@@ -238,11 +229,11 @@
         "transform": {
           "$ref": "#/$defs/Transform"
         },
-        "anchored": {
+        "finalPosition": {
           "type": "boolean"
         }
       },
-      "required": ["groupId", "revision", "pieceIds", "transform", "anchored"],
+      "required": ["groupId", "revision", "pieceIds", "transform", "finalPosition"],
       "additionalProperties": false
     },
     "Allowance": {
@@ -321,7 +312,7 @@
           "format": "uuid"
         },
         "kind": {
-          "enum": ["piece", "group"]
+          "enum": ["sort", "piece", "group"]
         },
         "targetId": {
           "type": "string",
@@ -388,7 +379,12 @@
             "COMMAND_CONFLICT",
             "RESULT_EXPIRED",
             "RATE_LIMITED",
-            "INTERNAL_ERROR"
+            "INTERNAL_ERROR",
+            "MESSAGE_CONFLICT",
+            "CHAT_UNAVAILABLE",
+            "MESSAGE_TOO_LARGE",
+            "NOT_FOUND",
+            "METHOD_NOT_ALLOWED"
           ]
         },
         "message": {
@@ -398,7 +394,8 @@
         },
         "requestId": {
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         },
         "retryable": {
           "type": "boolean"
@@ -923,7 +920,7 @@
             "$ref": "#/$defs/Action"
           },
           "minItems": 1,
-          "maxItems": 5
+          "maxItems": 80
         }
       },
       "required": [
@@ -1116,7 +1113,7 @@
             "format": "uuid"
           },
           "minItems": 1,
-          "maxItems": 5,
+          "maxItems": 80,
           "uniqueItems": true
         }
       },
@@ -1252,7 +1249,7 @@
         "displayName": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 40
+          "maxLength": 128
         },
         "expiresAt": {
           "type": "string",
@@ -1272,7 +1269,7 @@
         "assertion": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 4096
+          "maxLength": 2048
         },
         "expiresAt": {
           "type": "string",
@@ -1296,7 +1293,8 @@
         },
         "sub": {
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         },
         "aud": {
           "const": "world-jigsaw-chat"
@@ -1313,10 +1311,16 @@
         },
         "jti": {
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         }
       },
-      "required": ["schemaVersion", "iss", "sub", "aud", "iat", "exp", "jti"],
+      "required": ["schemaVersion", "iss", "sub", "aud", "iat", "exp", "jti", "displayName"],
       "additionalProperties": false
     },
     "ChatSend": {
@@ -1325,12 +1329,10 @@
         "schemaVersion": {
           "const": 1
         },
-        "type": {
-          "const": "chat.send"
-        },
         "messageId": {
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         },
         "text": {
           "type": "string",
@@ -1338,7 +1340,7 @@
           "maxLength": 1024
         }
       },
-      "required": ["schemaVersion", "type", "messageId", "text"],
+      "required": ["schemaVersion", "messageId", "text"],
       "additionalProperties": false
     },
     "ChatMessage": {
@@ -1347,25 +1349,28 @@
         "schemaVersion": {
           "const": 1
         },
-        "type": {
-          "const": "chat.message"
-        },
         "messageId": {
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         },
         "displayName": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 40
+          "maxLength": 128
         },
         "text": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1024
+          "maxLength": 4096
+        },
+        "sentAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
         }
       },
-      "required": ["schemaVersion", "type", "messageId", "displayName", "text"],
+      "required": ["schemaVersion", "messageId", "displayName", "text", "sentAt"],
       "additionalProperties": false
     },
     "ChatAccepted": {
@@ -1374,16 +1379,101 @@
         "schemaVersion": {
           "const": 1
         },
-        "type": {
-          "const": "chat.accepted"
-        },
         "messageId": {
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         }
       },
-      "required": ["schemaVersion", "type", "messageId"],
+      "required": ["schemaVersion", "messageId"],
       "additionalProperties": false
+    },
+    "Rect": {
+      "type": "object",
+      "properties": {
+        "min": {
+          "$ref": "#/$defs/Point"
+        },
+        "max": {
+          "$ref": "#/$defs/Point"
+        }
+      },
+      "required": ["min", "max"],
+      "additionalProperties": false
+    },
+    "ShapeParameters": {
+      "type": "object",
+      "properties": {
+        "generatorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "seed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tabDepthPermille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "tabWidthPermille": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "edgeWavePermille": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "generatorVersion",
+        "seed",
+        "tabDepthPermille",
+        "tabWidthPermille",
+        "edgeWavePermille"
+      ],
+      "additionalProperties": false
+    },
+    "ContourSegment": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "line"
+            },
+            "to": {
+              "$ref": "#/$defs/Point"
+            }
+          },
+          "required": ["kind", "to"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "cubic"
+            },
+            "control1": {
+              "$ref": "#/$defs/Point"
+            },
+            "control2": {
+              "$ref": "#/$defs/Point"
+            },
+            "to": {
+              "$ref": "#/$defs/Point"
+            }
+          },
+          "required": ["kind", "control1", "control2", "to"],
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }
