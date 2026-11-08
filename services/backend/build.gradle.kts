@@ -32,7 +32,15 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
+    testImplementation("org.java-websocket:Java-WebSocket:1.6.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.register<JavaExec>("previewDemo") {
+    group = "verification"
+    description = "Run the private loopback preview transport demo"
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass = "com.worldjigsaw.game.PreviewDemoServer"
 }
 
 tasks.withType<Test> {
