@@ -33,12 +33,21 @@ class TestSocket {
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
     this.sent.push(JSON.parse(data as string))
   }
-  close() { this.onopen = null }
-  open() { this.onopen?.call(this as unknown as WebSocket, new Event('open')) }
-  emit(value: unknown) {
-    this.onmessage?.call(this as unknown as WebSocket, new MessageEvent('message', { data: JSON.stringify(value) }))
+  close() {
+    this.onopen = null
   }
-  drop() { this.onclose?.call(this as unknown as WebSocket, new Event('close') as CloseEvent) }
+  open() {
+    this.onopen?.call(this as unknown as WebSocket, new Event('open'))
+  }
+  emit(value: unknown) {
+    this.onmessage?.call(
+      this as unknown as WebSocket,
+      new MessageEvent('message', { data: JSON.stringify(value) }),
+    )
+  }
+  drop() {
+    this.onclose?.call(this as unknown as WebSocket, new Event('close') as CloseEvent)
+  }
 }
 
 function harness() {
@@ -55,41 +64,81 @@ function harness() {
       return commandReply
     }
     if (path === '/api/v1/game/current' && currentUnavailable)
-      return Promise.resolve(new Response(JSON.stringify({ schemaVersion: 1, error: { code: 'PUZZLE_UNAVAILABLE', message: 'No current puzzle', requestId: '00000000-0000-4000-8000-000000000099', retryable: true } }), { status: 503 }))
-    const value = path === '/api/v1/session'
-      ? { schemaVersion: 1, displayName: 'Player', expiresAt: '2026-11-09T00:00:00Z' }
-      : path === '/api/v1/game/current' ? game : null
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'PUZZLE_UNAVAILABLE',
+              message: 'No current puzzle',
+              requestId: '00000000-0000-4000-8000-000000000099',
+              retryable: true,
+            },
+          }),
+          { status: 503 },
+        ),
+      )
+    const value =
+      path === '/api/v1/session'
+        ? { schemaVersion: 1, displayName: 'Player', expiresAt: '2026-11-09T00:00:00Z' }
+        : path === '/api/v1/game/current'
+          ? game
+          : null
     if (!value) throw new Error(`Unexpected request ${path}`)
     return Promise.resolve(new Response(JSON.stringify(value)))
   })
   const deps: LiveGameDependencies = {
     fetch: fetcher,
-    socket: () => { const socket = new TestSocket(); sockets.push(socket); return socket },
+    socket: () => {
+      const socket = new TestSocket()
+      sockets.push(socket)
+      return socket
+    },
     origin: 'http://localhost:8080',
     id: () => '00000000-0000-4000-8000-000000000001',
   }
   const client = new LiveGame(deps)
   async function start() {
     await client.connect()
-    const socket = sockets.at(-1)!
+    const socket = sockets.at(-1)
+    if (!socket) throw new Error('Game socket was not created')
     socket.open()
     return socket
   }
   function subscribe(socket: TestSocket, snapshot = current.snapshot) {
-    socket.emit({ schemaVersion: 1, type: 'subscribed', snapshot, watermark: snapshot.boardVersion, previews: [] })
+    socket.emit({
+      schemaVersion: 1,
+      type: 'subscribed',
+      snapshot,
+      watermark: snapshot.boardVersion,
+      previews: [],
+    })
   }
   return {
-    client, sockets, calls, start, subscribe,
-    setGame: (value: CurrentGame) => { game = value },
-    setCurrentUnavailable: (value: boolean) => { currentUnavailable = value },
-    setCommandReply: (value: Promise<Response>) => { commandReply = value },
+    client,
+    sockets,
+    calls,
+    start,
+    subscribe,
+    setGame: (value: CurrentGame) => {
+      game = value
+    },
+    setCurrentUnavailable: (value: boolean) => {
+      currentUnavailable = value
+    },
+    setCommandReply: (value: Promise<Response>) => {
+      commandReply = value
+    },
   }
 }
 
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason: unknown) => void
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
   return { promise, resolve, reject }
 }
 
@@ -101,19 +150,26 @@ describe('live game adapter', () => {
   it.each([
     ['begin', null, turn],
     ['cancel', turn, null],
-    ['undo', turn, { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 }],
-  ])('keeps the handoff unready when another tab can %s without a board change', async (_operation, before, after) => {
-    const h = harness()
-    h.setGame({ ...current, ownTurn: before })
-    const socket = await h.start()
-    h.setGame({ ...current, ownTurn: after })
-    h.subscribe(socket)
-    expect(h.client.getState().connection).toBe('resyncing')
-    expect(h.client.getState().issue).toContain('identity state')
-    await expect(h.client.begin()).rejects.toThrow('not synchronized')
-    await expect(h.client.confirm()).rejects.toThrow('not synchronized')
-    expect(socket.sent).toHaveLength(1)
-  })
+    [
+      'undo',
+      turn,
+      { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 },
+    ],
+  ])(
+    'keeps the handoff unready when another tab can %s without a board change',
+    async (_operation, before, after) => {
+      const h = harness()
+      h.setGame({ ...current, ownTurn: before })
+      const socket = await h.start()
+      h.setGame({ ...current, ownTurn: after })
+      h.subscribe(socket)
+      expect(h.client.getState().connection).toBe('resyncing')
+      expect(h.client.getState().issue).toContain('identity state')
+      await expect(h.client.begin()).rejects.toThrow('not synchronized')
+      await expect(h.client.confirm()).rejects.toThrow('not synchronized')
+      expect(socket.sent).toHaveLength(1)
+    },
+  )
 
   it('does not start a session when a listener disconnects while connecting', async () => {
     const h = harness()
@@ -131,7 +187,10 @@ describe('live game adapter', () => {
     const socket = await h.start()
     h.subscribe(socket)
     h.client.subscribe((state) => {
-      if (state.game?.snapshot.boardVersion === fixture.confirmedSnapshot.boardVersion && state.connection !== 'disconnected')
+      if (
+        state.game?.snapshot.boardVersion === fixture.confirmedSnapshot.boardVersion &&
+        state.connection !== 'disconnected'
+      )
         h.client.disconnect()
     })
     const calls = [...h.calls]
@@ -148,13 +207,18 @@ describe('live game adapter', () => {
     h.subscribe(socket)
     let replaced = false
     h.client.subscribe((state) => {
-      if (!replaced && state.game?.snapshot.boardVersion === fixture.confirmedSnapshot.boardVersion) {
+      if (
+        !replaced &&
+        state.game?.snapshot.boardVersion === fixture.confirmedSnapshot.boardVersion
+      ) {
         replaced = true
         void h.client.connect()
       }
     })
     socket.emit(fixture.boardChanged)
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     expect(h.calls.filter((path) => path === '/api/v1/session')).toHaveLength(2)
   })
 
@@ -163,18 +227,27 @@ describe('live game adapter', () => {
     const socket = await h.start()
     h.subscribe(socket)
     socket.emit(fixture.boardChanged)
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     expect(h.calls.filter((path) => path === '/api/v1/session')).toHaveLength(2)
   })
 
   it('does not publish ready with an advanced board and stale allowance', async () => {
     const h = harness()
     const socket = await h.start()
-    h.setGame({ ...current, snapshot: fixture.confirmedSnapshot as CurrentGame['snapshot'], allowance: { limit: 5, used: 1, remaining: 4 } })
+    h.setGame({
+      ...current,
+      snapshot: fixture.confirmedSnapshot as CurrentGame['snapshot'],
+      allowance: { limit: 5, used: 1, remaining: 4 },
+    })
     h.subscribe(socket, fixture.confirmedSnapshot as CurrentGame['snapshot'])
     expect(h.client.getState().connection).not.toBe('ready')
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
-    const next = h.sockets[1]!
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    const next = h.sockets[1]
+    if (!next) throw new Error('Game socket was not created')
     next.open()
     h.subscribe(next, fixture.confirmedSnapshot as CurrentGame['snapshot'])
     expect(h.client.getState().game?.allowance?.used).toBe(1)
@@ -184,19 +257,24 @@ describe('live game adapter', () => {
   it.each([
     ['unavailable', null, false, '2026-11-09'],
     ['different puzzle', '00000000-0000-4000-8000-000000000101', true, '2026-11-09'],
-  ] as const)('clears the old game immediately on a %s rollover', async (_name, nextId, available, day) => {
-    const h = harness()
-    const socket = await h.start()
-    h.subscribe(socket)
-    h.client.restorePendingConfirm(fixture.confirm as Confirm)
-    h.setCurrentUnavailable(true)
-    socket.emit({ schemaVersion: 1, type: 'puzzleChanged', puzzleId: nextId, available, day })
-    expect(h.client.getState().game).toBeNull()
-    expect(h.client.getState().previews).toEqual({})
-    expect(h.client.getState().pendingConfirm).toEqual(fixture.confirm)
-    await vi.waitFor(() => expect(h.client.getState().connection).toBe('disconnected'))
-    expect(h.client.getState().game).toBeNull()
-  })
+  ] as const)(
+    'clears the old game immediately on a %s rollover',
+    async (_name, nextId, available, day) => {
+      const h = harness()
+      const socket = await h.start()
+      h.subscribe(socket)
+      h.client.restorePendingConfirm(fixture.confirm as Confirm)
+      h.setCurrentUnavailable(true)
+      socket.emit({ schemaVersion: 1, type: 'puzzleChanged', puzzleId: nextId, available, day })
+      expect(h.client.getState().game).toBeNull()
+      expect(h.client.getState().previews).toEqual({})
+      expect(h.client.getState().pendingConfirm).toEqual(fixture.confirm)
+      await vi.waitFor(() => {
+        expect(h.client.getState().connection).toBe('disconnected')
+      })
+      expect(h.client.getState().game).toBeNull()
+    },
+  )
 
   it('clears the old game when reconnect reports no current puzzle', async () => {
     const h = harness()
@@ -210,58 +288,88 @@ describe('live game adapter', () => {
   it('keeps the current board when a same-puzzle event triggers a refresh', async () => {
     const h = harness()
     const socket = await h.start()
-    socket.emit({ schemaVersion: 1, type: 'puzzleChanged', puzzleId, available: true, day: current.day })
+    socket.emit({
+      schemaVersion: 1,
+      type: 'puzzleChanged',
+      puzzleId,
+      available: true,
+      day: current.day,
+    })
     expect(h.client.getState().game?.snapshot).toEqual(current.snapshot)
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
   })
 
   it('clears the board on a stream puzzle-unavailable error', async () => {
     const h = harness()
     const socket = await h.start()
-    socket.emit({ schemaVersion: 1, type: 'error', error: { code: 'PUZZLE_UNAVAILABLE', message: 'No current puzzle', requestId: '00000000-0000-4000-8000-000000000099', retryable: true } })
+    socket.emit({
+      schemaVersion: 1,
+      type: 'error',
+      error: {
+        code: 'PUZZLE_UNAVAILABLE',
+        message: 'No current puzzle',
+        requestId: '00000000-0000-4000-8000-000000000099',
+        retryable: true,
+      },
+    })
     expect(h.client.getState().game).toBeNull()
   })
 
-  it.each(['new command', 'new connection'] as const)('keeps the new confirmation busy after an old request settles: %s', async (scenario) => {
-    const h = harness()
-    const commandA = fixture.confirm as Confirm
-    const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
-    h.client.restorePendingConfirm(commandA)
-    const first = deferred<Response>()
-    h.setCommandReply(first.promise)
-    const old = h.client.confirm()
-    await expect(h.client.confirm()).rejects.toThrow('already in progress')
-    if (scenario === 'new command') {
-      h.setCommandReply(Promise.resolve(confirmed()))
-      await h.client.resolveConfirm()
-      h.client.restorePendingConfirm(commandB)
-    } else h.client.disconnect()
-    const second = deferred<Response>()
-    h.setCommandReply(second.promise)
-    const active = h.client.confirm()
-    first.resolve(confirmed())
-    if (scenario === 'new connection') await expect(old).rejects.toThrow('Connection changed')
-    else await old
-    await expect(h.client.confirm()).rejects.toThrow('already in progress')
-    second.resolve(new Response(JSON.stringify({ ...fixture.commandResult, commandId: scenario === 'new command' ? commandB.commandId : commandA.commandId })))
-    await active
-    expect(h.client.getState().pendingConfirm).toBeNull()
-  })
+  it.each(['new command', 'new connection'] as const)(
+    'keeps the new confirmation busy after an old request settles: %s',
+    async (scenario) => {
+      const h = harness()
+      const commandA = fixture.confirm as Confirm
+      const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
+      h.client.restorePendingConfirm(commandA)
+      const first = deferred<Response>()
+      h.setCommandReply(first.promise)
+      const old = h.client.confirm()
+      await expect(h.client.confirm()).rejects.toThrow('already in progress')
+      if (scenario === 'new command') {
+        h.setCommandReply(Promise.resolve(confirmed()))
+        await h.client.resolveConfirm()
+        h.client.restorePendingConfirm(commandB)
+      } else h.client.disconnect()
+      const second = deferred<Response>()
+      h.setCommandReply(second.promise)
+      const active = h.client.confirm()
+      first.resolve(confirmed())
+      if (scenario === 'new connection') await expect(old).rejects.toThrow('Connection changed')
+      else await old
+      await expect(h.client.confirm()).rejects.toThrow('already in progress')
+      second.resolve(
+        new Response(
+          JSON.stringify({
+            ...fixture.commandResult,
+            commandId: scenario === 'new command' ? commandB.commandId : commandA.commandId,
+          }),
+        ),
+      )
+      await active
+      expect(h.client.getState().pendingConfirm).toBeNull()
+    },
+  )
 
-  it.each(['confirm', 'lookup'] as const)('ignores a delayed %s result after disconnect', async (operation) => {
-    const h = harness()
-    await h.start()
-    h.client.restorePendingConfirm(fixture.confirm as Confirm)
-    const response = deferred<Response>()
-    h.setCommandReply(response.promise)
-    const pending = operation === 'confirm' ? h.client.confirm() : h.client.resolveConfirm()
-    h.client.disconnect()
-    const state = h.client.getState()
-    response.resolve(confirmed())
-    await expect(pending).rejects.toThrow('Connection changed')
-    expect(h.client.getState()).toEqual(state)
-    expect(h.sockets).toHaveLength(1)
-  })
+  it.each(['confirm', 'lookup'] as const)(
+    'ignores a delayed %s result after disconnect',
+    async (operation) => {
+      const h = harness()
+      await h.start()
+      h.client.restorePendingConfirm(fixture.confirm as Confirm)
+      const response = deferred<Response>()
+      h.setCommandReply(response.promise)
+      const pending = operation === 'confirm' ? h.client.confirm() : h.client.resolveConfirm()
+      h.client.disconnect()
+      const state = h.client.getState()
+      response.resolve(confirmed())
+      await expect(pending).rejects.toThrow('Connection changed')
+      expect(h.client.getState()).toEqual(state)
+      expect(h.sockets).toHaveLength(1)
+    },
+  )
 
   it('does not let a delayed failed confirmation overwrite a newer connection', async () => {
     const h = harness()
@@ -298,36 +406,45 @@ describe('live game adapter', () => {
     ['confirm', 'confirmed'],
     ['confirm', 'unknown'],
     ['confirm', 'failure'],
-  ] as const)('preserves a newer retained command after a stale %s %s response', async (operation, outcome) => {
-    const h = harness()
-    const commandA = fixture.confirm as Confirm
-    const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
-    h.client.restorePendingConfirm(commandA)
-    const delayed = deferred<Response>()
-    h.setCommandReply(delayed.promise)
-    const stale = operation === 'confirm' ? h.client.confirm() : h.client.resolveConfirm()
-    h.setCommandReply(Promise.resolve(confirmed()))
-    await h.client.resolveConfirm()
-    h.client.restorePendingConfirm(commandB)
-    const state = h.client.getState()
-    if (outcome === 'failure') {
-      delayed.reject(new TypeError('lost response'))
-      await expect(stale).rejects.toThrow('lost response')
-    } else {
-      delayed.resolve(outcome === 'confirmed' ? confirmed() : new Response(JSON.stringify({
-        schemaVersion: 1,
-        puzzleId,
-        commandId: commandA.commandId,
-        outcome: 'unknown',
-        boardVersion: null,
-        allowance: null,
-        error: null,
-      })))
-      await stale
-    }
-    expect(h.client.getState()).toEqual(state)
-    expect(h.client.getState().pendingConfirm).toEqual(commandB)
-  })
+  ] as const)(
+    'preserves a newer retained command after a stale %s %s response',
+    async (operation, outcome) => {
+      const h = harness()
+      const commandA = fixture.confirm as Confirm
+      const commandB = { ...commandA, commandId: '00000000-0000-4000-8000-000000000501' }
+      h.client.restorePendingConfirm(commandA)
+      const delayed = deferred<Response>()
+      h.setCommandReply(delayed.promise)
+      const stale = operation === 'confirm' ? h.client.confirm() : h.client.resolveConfirm()
+      h.setCommandReply(Promise.resolve(confirmed()))
+      await h.client.resolveConfirm()
+      h.client.restorePendingConfirm(commandB)
+      const state = h.client.getState()
+      if (outcome === 'failure') {
+        delayed.reject(new TypeError('lost response'))
+        await expect(stale).rejects.toThrow('lost response')
+      } else {
+        delayed.resolve(
+          outcome === 'confirmed'
+            ? confirmed()
+            : new Response(
+                JSON.stringify({
+                  schemaVersion: 1,
+                  puzzleId,
+                  commandId: commandA.commandId,
+                  outcome: 'unknown',
+                  boardVersion: null,
+                  allowance: null,
+                  error: null,
+                }),
+              ),
+        )
+        await stale
+      }
+      expect(h.client.getState()).toEqual(state)
+      expect(h.client.getState().pendingConfirm).toEqual(commandB)
+    },
+  )
 
   it('preserves a command restored by a listener during confirmation resolution', async () => {
     const h = harness()

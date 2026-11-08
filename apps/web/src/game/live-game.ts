@@ -47,13 +47,15 @@ const defaults = (): LiveGameDependencies => ({
 
 const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 class GameRequestError extends Error {
-  constructor(
-    message: string,
-    readonly definitive: boolean,
-    readonly code: string,
-    readonly path: string,
-  ) {
+  readonly definitive: boolean
+  readonly code: string
+  readonly path: string
+
+  constructor(message: string, definitive: boolean, code: string, path: string) {
     super(message)
+    this.definitive = definitive
+    this.code = code
+    this.path = path
   }
 }
 // The schema name determines the corresponding return type at the call site.
@@ -168,7 +170,10 @@ export class LiveGame {
       await verifyGame(game)
       if (epoch !== this.epoch) return
       this.uncertainDraft = Boolean(game.ownTurn)
-      if (this.beginRequest && (game.ownTurn || !sameId(this.beginRequest.puzzleId, game.snapshot.puzzleId)))
+      if (
+        this.beginRequest &&
+        (game.ownTurn || !sameId(this.beginRequest.puzzleId, game.snapshot.puzzleId))
+      )
         this.beginRequest = null
       if (this.cancelRequest && !sameId(this.cancelRequest.puzzleId, game.snapshot.puzzleId))
         this.cancelRequest = null
@@ -217,7 +222,9 @@ export class LiveGame {
         this.publish({
           connection: 'disconnected',
           issue: String(error),
-          ...(error instanceof GameRequestError && error.path === '/api/v1/game/current' && error.code === 'PUZZLE_UNAVAILABLE'
+          ...(error instanceof GameRequestError &&
+          error.path === '/api/v1/game/current' &&
+          error.code === 'PUZZLE_UNAVAILABLE'
             ? { game: null, previews: {} }
             : {}),
         })
@@ -303,7 +310,9 @@ export class LiveGame {
           event.generation >= game.ownTurn.generation
         ) {
           this.uncertainDraft = true
-          this.resync('Turn changed without a correlated receipt; resynchronizing before cancellation.')
+          this.resync(
+            'Turn changed without a correlated receipt; resynchronizing before cancellation.',
+          )
           return
         }
         if (next) this.publish({ previews: { ...this.state.previews, [key]: next } })
@@ -316,7 +325,10 @@ export class LiveGame {
           sameId(this.inFlight.actionId, rejection.actionId)
         ) {
           this.inFlight = null
-          this.publish({ previewPending: false, issue: `${rejection.error.code}: ${rejection.error.message}` })
+          this.publish({
+            previewPending: false,
+            issue: `${rejection.error.code}: ${rejection.error.message}`,
+          })
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
       } else if (type === 'boardChanged') {
         const result = applyBoardChanged(
@@ -340,7 +352,12 @@ export class LiveGame {
       } else if (type === 'resyncRequired' || type === 'puzzleChanged') {
         if (type === 'puzzleChanged') {
           const event = checked<PuzzleChanged>('PuzzleChanged', message)
-          if (!event.available || !event.puzzleId || !sameId(event.puzzleId, game.snapshot.puzzleId) || event.day !== game.day) {
+          if (
+            !event.available ||
+            !event.puzzleId ||
+            !sameId(event.puzzleId, game.snapshot.puzzleId) ||
+            event.day !== game.day
+          ) {
             this.publish({ game: null, previews: {} })
             if (epoch !== this.epoch) return
           }
@@ -445,19 +462,20 @@ export class LiveGame {
       this.cancelRequest
     )
       throw new Error('Draft is not ready for undo')
-    const turn = this.undoRequest ? null : this.turn()
-    this.undoRequest ??= {
-      schemaVersion: 1,
-      puzzleId: turn!.puzzleId,
-      turnId: turn!.turnId,
-      requestId: this.deps.id(),
-      turnRevision: turn!.turnRevision,
-      generation: turn!.generation,
-      actionId,
+    if (!this.undoRequest) {
+      const turn = this.turn()
+      this.undoRequest = {
+        schemaVersion: 1,
+        puzzleId: turn.puzzleId,
+        turnId: turn.turnId,
+        requestId: this.deps.id(),
+        turnRevision: turn.turnRevision,
+        generation: turn.generation,
+        actionId,
+      }
     }
     const payload = this.undoRequest
-    if (!sameId(payload.actionId, actionId))
-      throw new Error('Retry the pending undo first')
+    if (!sameId(payload.actionId, actionId)) throw new Error('Retry the pending undo first')
     const epoch = this.epoch
     let result: UndoResult
     try {
@@ -556,7 +574,6 @@ export class LiveGame {
       throw new Error('Confirmation requires a correlated preview receipt from the service')
     }
     const payload = this.state.pendingConfirm
-    if (!payload) throw new Error('No confirmation payload')
     const epoch = this.epoch
     if (this.confirmBusy?.payload === payload && this.confirmBusy.epoch === epoch)
       throw new Error('Confirmation already in progress')
@@ -572,7 +589,11 @@ export class LiveGame {
       this.requireEpoch(epoch)
       return this.acceptResult(result, payload, epoch, unresolvedCommand)
     } catch (error) {
-      if (epoch === this.epoch && this.state.pendingConfirm === payload && this.state.unresolvedCommand === unresolvedCommand)
+      if (
+        epoch === this.epoch &&
+        this.state.pendingConfirm === payload &&
+        this.state.unresolvedCommand === unresolvedCommand
+      )
         this.publish({ issue: `Confirmation outcome unknown: ${String(error)}` })
       throw error
     } finally {
@@ -610,11 +631,19 @@ export class LiveGame {
       return result
     if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
       this.publish({ unresolvedCommand: null })
-      if (epoch === this.epoch && this.state.unresolvedCommand === null && this.state.pendingConfirm === pendingConfirm && this.state.connection !== 'disconnected') this.resync(
-        result.outcome === 'rejected'
-          ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
-          : 'Confirmation confirmed; synchronizing the latest board.',
+      if (
+        epoch === this.epoch &&
+        // publish invokes listeners synchronously; they may replace the command.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        this.state.unresolvedCommand === null &&
+        this.state.pendingConfirm === pendingConfirm &&
+        this.state.connection !== 'disconnected'
       )
+        this.resync(
+          result.outcome === 'rejected'
+            ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
+            : 'Confirmation confirmed; synchronizing the latest board.',
+        )
     } else this.publish({ issue: `Confirmation ${result.outcome}; resolve it before editing.` })
     return result
   }
@@ -647,11 +676,19 @@ export class LiveGame {
             ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
             : null,
       })
-      if (epoch === this.epoch && this.state.pendingConfirm === null && this.state.unresolvedCommand === unresolvedCommand && this.state.connection !== 'disconnected') this.resync(
-        result.outcome === 'rejected'
-          ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
-          : 'Confirmation confirmed; synchronizing the latest board.',
+      if (
+        epoch === this.epoch &&
+        // publish invokes listeners synchronously; they may replace the command.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        this.state.pendingConfirm === null &&
+        this.state.unresolvedCommand === unresolvedCommand &&
+        this.state.connection !== 'disconnected'
       )
+        this.resync(
+          result.outcome === 'rejected'
+            ? `${result.error?.code ?? 'REJECTED'}: ${result.error?.message ?? 'Confirmation rejected'}`
+            : 'Confirmation confirmed; synchronizing the latest board.',
+        )
     } else
       this.publish({
         issue: `Confirmation ${result.outcome}; retain the command ID and resolve it before editing.`,
