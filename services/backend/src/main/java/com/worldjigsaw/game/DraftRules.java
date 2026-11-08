@@ -204,6 +204,10 @@ class DraftRules {
     return canAttach(draft, group(draft, uuid(movingId)), group(draft, uuid(targetId)));
   }
 
+  JsonNode groupTransform(Draft draft, String groupId) {
+    return group(draft, uuid(groupId)).group.path("transform");
+  }
+
   record JoinCharge(String id, Boolean charged) {}
 
   record JoinState(Set<String> sources, String firstAction, JsonNode transform, List<JoinCharge> charges) {}

@@ -149,6 +149,18 @@ class TurnLeaseRegistryTest {
   }
 
   @Test
+  void repeatedPinRequiresFreshLiveAdmission() {
+    var turn = registry.open(puzzle, a, close);
+    UUID command = UUID.randomUUID();
+    registry.pinConfirm(a, turn.turn(), 0, command, now.get());
+    now.set(turn.expiresAt());
+    assertThatThrownBy(() -> registry.pinConfirm(a, turn.turn(), 0, command, now.get()))
+        .isInstanceOf(TurnLeaseRegistry.LeaseError.class);
+    assertThat(registry.confirming(a, turn.turn(), 0)).isEqualTo(command);
+    assertThat(registry.unpinConfirm(a, turn.turn(), 0, command)).isEmpty();
+  }
+
+  @Test
   void undeliveredClearOverflowRequiresResynchronization() {
     for (int i = 0; i < 1025; i++) {
       var turn = registry.open(puzzle, a, close);

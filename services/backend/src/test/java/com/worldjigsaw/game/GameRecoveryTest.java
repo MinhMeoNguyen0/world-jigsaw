@@ -31,6 +31,8 @@ class GameRecoveryTest {
   private final AtomicBoolean loseReply = new AtomicBoolean();
   private final AtomicBoolean unavailable = new AtomicBoolean();
   private final AtomicBoolean commit = new AtomicBoolean(true);
+  private final java.util.concurrent.atomic.AtomicReference<Instant> now =
+      new java.util.concurrent.atomic.AtomicReference<>(Instant.parse("2026-11-07T12:00:00Z"));
   private GameCoordinator game;
   private GameIdentityLedger identities;
   private ConfirmationJournal journal;
@@ -67,7 +69,11 @@ class GameRecoveryTest {
     JdbcTemplate jdbc = mock(JdbcTemplate.class);
     when(jdbc.queryForList(anyString(), any(UUID.class), any(UUID.class)))
         .thenReturn(List.of(Map.of("board_version", 0L, "used", 0)));
-    clock = Clock.fixed(Instant.parse("2026-11-07T12:00:00Z"), ZoneOffset.UTC);
+    clock = new Clock() {
+      @Override public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+      @Override public Clock withZone(java.time.ZoneId zone) { return Clock.fixed(instant(), zone); }
+      @Override public Instant instant() { return now.get(); }
+    };
     leases = new TurnLeaseRegistry(clock);
     game = new GameCoordinator(boards, new DraftRules(mock(BoardValidator.class)), leases,
         identities, journal, jdbc, clock, mock(GameWriterGuard.class));
@@ -192,6 +198,42 @@ class GameRecoveryTest {
       return mapper.createObjectNode().put("outcome", "confirmed");
     }).when(journal).confirm(any(), any(), any(), any(), any(), any());
     assertThat(game.confirm(subject, confirm).path("outcome").asText()).isEqualTo("confirmed");
+  }
+
+  @Test
+  void retryAfterUnknownOutcomeCannotCommitAnExpiredTurn() {
+    var turn = game.begin(subject, puzzle);
+    game.preview(subject, turn.turnId(), 0, 1, action(UUID.randomUUID(), snapshot.path("groups").get(0)));
+    JsonNode frame = game.drainEvents().values().getLast().path("action");
+    UUID command = UUID.randomUUID();
+    ObjectNode confirm = mapper.createObjectNode().put("puzzleId", puzzle.toString())
+        .put("turnId", turn.turnId().toString()).put("commandId", command.toString())
+        .put("turnRevision", 0).put("generation", 0);
+    confirm.putArray("actions").add(frame);
+    when(journal.lookup(subject, puzzle, command, confirm))
+        .thenReturn(null).thenThrow(new IllegalStateException("unavailable")).thenReturn(null);
+    doAnswer(call -> {
+      java.util.function.Consumer<Instant> admitted = call.getArgument(5);
+      admitted.accept(clock.instant());
+      throw new IllegalStateException("rolled back");
+    }).when(journal).confirm(any(), any(), any(), any(), any(), any());
+    doAnswer(call -> {
+      ConfirmationJournal.Planner planner = call.getArgument(4);
+      try {
+        planner.apply(null, null, 0);
+        throw new AssertionError("expired turn must be rejected");
+      } catch (ConfirmationJournal.Rejected rejected) {
+        ObjectNode result = mapper.createObjectNode().put("outcome", "rejected");
+        result.putObject("error").put("code", rejected.code);
+        return result;
+      }
+    }).when(journal).confirm(any(), any(), any(), any(), any());
+    assertThatThrownBy(() -> game.confirm(subject, confirm)).hasMessageContaining("unknown");
+    now.set(now.get().plusSeconds(31));
+    assertThat(game.confirm(subject, confirm).path("error").path("code").asText()).isEqualTo("TURN_CLOSED");
+    org.mockito.Mockito.verify(journal, org.mockito.Mockito.times(1))
+        .confirm(any(), any(), any(), any(), any(), any());
+    assertThat(game.subscribe(puzzle).previews()).isEmpty();
   }
 
   private ObjectNode payload(UUID turn, UUID request) {

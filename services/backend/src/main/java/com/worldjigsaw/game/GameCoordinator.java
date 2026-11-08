@@ -265,7 +265,8 @@ class GameCoordinator {
       List<String> order =
           targets.isEmpty()
               ? List.of()
-              : attachmentOrder(candidate, moving, targets, turn, current, new HashSet<>());
+              : attachmentOrder(candidate, moving, targets, turn, current, new HashSet<>(),
+                  LocalGeometry.snapToleranceUpperBound(turn.definition));
       if (order == null) throw error("INVALID_ACTION", "Cannot join selected groups");
       String currentGroup = moving;
       for (String target : order) {
@@ -303,7 +304,7 @@ class GameCoordinator {
 
   private List<String> attachmentOrder(
       DraftRules.Draft draft, String moving, List<String> remaining, Turn turn, JsonNode current,
-      Set<DraftRules.JoinState> visited) {
+      Set<DraftRules.JoinState> visited, double maxTolerance) {
     DraftRules.JoinState state = rules.joinState(draft, moving);
     if (!visited.add(state)) return null;
     if (visited.size() > MAX_JOIN_STATES)
@@ -318,6 +319,7 @@ class GameCoordinator {
         return null;
       }
     }
+    if (!remainingTransformsConnected(draft, remaining, maxTolerance)) return null;
     for (String target : remaining) {
       if (!rules.canAttach(draft, moving, target)) continue;
       String merged = UUID.randomUUID().toString();
@@ -329,13 +331,35 @@ class GameCoordinator {
       }
       List<String> rest = new ArrayList<>(remaining);
       rest.remove(target);
-      List<String> order = attachmentOrder(next, merged, rest, turn, current, visited);
+      List<String> order = attachmentOrder(next, merged, rest, turn, current, visited, maxTolerance);
       if (order != null) {
         order.addFirst(target);
         return order;
       }
     }
     return null;
+  }
+
+  private boolean remainingTransformsConnected(
+      DraftRules.Draft draft, List<String> remaining, double maxTolerance) {
+    List<JsonNode> transforms = remaining.stream().map(id -> rules.groupTransform(draft, id)).toList();
+    Set<Integer> reached = new HashSet<>();
+    List<Integer> pending = new ArrayList<>(List.of(0));
+    reached.add(0);
+    for (int i = 0; i < pending.size(); i++) {
+      JsonNode from = transforms.get(pending.get(i));
+      for (int j = 0; j < transforms.size(); j++) {
+        if (reached.contains(j)) continue;
+        JsonNode to = transforms.get(j);
+        if (from.path("rotation").intValue() != to.path("rotation").intValue()) continue;
+        double dx = (double) from.path("translation").path("x").longValue()
+            - to.path("translation").path("x").longValue();
+        double dy = (double) from.path("translation").path("y").longValue()
+            - to.path("translation").path("y").longValue();
+        if (Math.hypot(dx, dy) <= maxTolerance && reached.add(j)) pending.add(j);
+      }
+    }
+    return reached.size() == remaining.size();
   }
 
   private boolean connectedSelection(List<DraftRules.GroupView> selected, JsonNode definition) {
@@ -523,6 +547,11 @@ class GameCoordinator {
     }
     drainLeaseClears();
     long generation = payload.path("generation").longValue();
+    Turn pending = turns.get(turnId);
+    if (pending != null && pending.subject.equals(subject) && pending.puzzle.equals(puzzle)
+        && pending.generation == generation
+        && command.equals(leases.confirming(subject, turnId, generation)))
+      unpinConfirm(pending, command);
     if (!turns.containsKey(turnId) && identities.ownsTurn(subject, puzzle, turnId)) {
       // Resolve expired/restarted turns against the original puzzle under its board lock.
       return journal.confirm(

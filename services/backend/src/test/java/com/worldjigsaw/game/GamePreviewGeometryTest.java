@@ -22,6 +22,64 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class GamePreviewGeometryTest {
   @Test
+  void joinsGridWhenEarlyChoiceWouldStrandAnOffsetGroup() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode board = mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());
+    JsonNode squares = mapper.readTree(Path.of("../../packages/contracts/v1/fixtures/local-geometry-v1.json").toFile());
+    for (int rotation : new int[] {0, 90000, 180000, 270000}) {
+      ObjectNode definition = board.path("definition").deepCopy();
+      ObjectNode snapshot = board.path("snapshot").deepCopy();
+      ArrayNode pieces = definition.putArray("pieces"), groups = snapshot.putArray("groups");
+      UUID[] pieceIds = new UUID[16], groupIds = new UUID[16];
+      int nextGroup = 3;
+      for (int i = 0; i < 16; i++) {
+        pieceIds[i] = UUID.randomUUID();
+        int groupNumber = i == 0 ? 16 : i == 1 ? 1 : i == 4 ? 2 : nextGroup++;
+        groupIds[i] = UUID.fromString(String.format("00000000-0000-4000-8000-%012d", groupNumber));
+        ObjectNode piece = squares.path("pieces").get(0).deepCopy();
+        piece.put("pieceId", pieceIds[i].toString());
+        ((ObjectNode) piece.path("solvedPosition")).put("x", (i % 4) * 100000).put("y", (i / 4) * 100000);
+        for (JsonNode edge : piece.path("edges"))
+          ((ObjectNode) edge).putNull("neighborPieceId").putNull("neighborEdgeId");
+        pieces.add(piece);
+        ObjectNode group = groups.addObject().put("groupId", groupIds[i].toString()).put("revision", 0);
+        group.putArray("pieceIds").add(pieceIds[i].toString());
+        ObjectNode transform = group.putObject("transform");
+        transform.putObject("translation").put("x", i == 0 || i == 1 ? 0 : i == 4 ? 5000 : -5000).put("y", 0);
+        transform.put("rotation", rotation);
+        group.put("finalPosition", false);
+      }
+      for (int i = 0; i < 16; i++) {
+        if (i % 4 != 3) link(pieces, i, 1, i + 1, 3);
+        if (i < 12) link(pieces, i, 2, i + 4, 0);
+      }
+      GameBoards boards = mock(GameBoards.class);
+      when(boards.currentFor(org.mockito.ArgumentMatchers.nullable(UUID.class))).thenReturn(Map.of(
+          "definition", mapper.convertValue(definition, Map.class),
+          "snapshot", mapper.convertValue(snapshot, Map.class),
+          "allowance", Map.of("remaining", 5), "endsAt", "2026-11-08T00:00:00Z"));
+      GameIdentityLedger identities = mock(GameIdentityLedger.class);
+      when(identities.reserveTurn(any(), any())).thenAnswer(call -> UUID.randomUUID());
+      when(identities.reserveGroup(any())).thenAnswer(call -> UUID.randomUUID());
+      Clock clock = Clock.fixed(Instant.parse("2026-11-07T12:00:00Z"), ZoneOffset.UTC);
+      GameCoordinator game = new GameCoordinator(boards, new DraftRules(mock(BoardValidator.class)),
+          new TurnLeaseRegistry(clock), identities, mock(ConfirmationJournal.class),
+          mock(JdbcTemplate.class), clock, mock(GameWriterGuard.class));
+      UUID subject = UUID.randomUUID(), puzzle = UUID.fromString(snapshot.path("puzzleId").asText());
+      var turn = game.begin(subject, puzzle);
+      var action = new PreviewGeneration.Action(UUID.randomUUID(), "piece", pieceIds[0],
+          List.of(pieceIds), java.util.Arrays.stream(groupIds)
+              .map(id -> new PreviewGeneration.BaseRevision(id, 0)).toList(),
+          new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), rotation));
+      var previews = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+          java.time.Duration.ofSeconds(10), () -> game.preview(subject, turn.turnId(), 0, 1, action).previews());
+      assertThat(previews).hasSize(1);
+      assertThat(previews.getFirst().action().affectedPieceIds()).containsExactlyInAnyOrder(pieceIds);
+      assertThat(previews.getFirst().action().intendedTransform().rotation()).isEqualTo(rotation);
+    }
+  }
+
+  @Test
   void disconnectedSelectionIsRejectedWithoutEnumeratingJoinOrders() throws Exception {
     ObjectMapper mapper = new ObjectMapper();
     JsonNode board = mapper.readTree(Path.of("../../packages/generator/fixtures/sample-80.json").toFile());

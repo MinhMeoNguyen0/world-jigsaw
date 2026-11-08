@@ -264,12 +264,12 @@ class TurnLeaseRegistry {
         || turn.generation != generation
         || (turn.confirming != null && !turn.confirming.equals(commandId)))
       throw error("TURN_CLOSED", "Turn is closed or fenced");
-    if (turn.confirming != null) return info(turn);
     if (commandId == null
         || admittedAt == null
         || !admittedAt.isBefore(turn.expiresAt)
         || !admittedAt.isBefore(turn.closesAt))
       throw error("TURN_CLOSED", "Turn was not live at admission");
+    if (turn.confirming != null) return info(turn);
     List<PreviewGeneration.Preview> active = turn.previews.snapshot();
     if (turn.lastSequence > MAX_SAFE - 2L * active.size())
       throw error("INVALID_ACTION", "Preview sequence exhausted");

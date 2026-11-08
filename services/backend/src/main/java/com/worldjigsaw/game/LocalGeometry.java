@@ -67,6 +67,15 @@ final class LocalGeometry {
 
   private LocalGeometry() {}
 
+  static double snapToleranceUpperBound(JsonNode definition) {
+    double maxScale = 0;
+    for (JsonNode piece : definition.path("pieces")) {
+      var envelope = polygon(piece, new Transform(0, 0, 0)).getEnvelopeInternal();
+      maxScale = Math.max(maxScale, Math.min(envelope.getWidth(), envelope.getHeight()));
+    }
+    return Math.floor(maxScale / 20.0);
+  }
+
   /**
    * Tests the complete proposed board, including collisions between simultaneous changes. The
    * caller must separately validate board membership, workspace, revisions and the game rules.
