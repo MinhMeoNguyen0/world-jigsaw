@@ -1,0 +1,278 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import type { Definition, Snapshot, Transform } from '@world-jigsaw/contracts'
+import {
+  attach,
+  begin,
+  cancel,
+  confirm,
+  move,
+  pendingCount,
+  preview,
+  rotateAround,
+  RuleError,
+  transformPoint,
+  undo,
+} from '../src/index.ts'
+
+const load = (path: string) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'))
+const allowance = { limit: 5 as const, used: 0, remaining: 5 }
+const solved: Transform = { translation: { x: 0, y: 0 }, rotation: 0 }
+const action = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+const rejects = (fn: () => unknown, code: string) =>
+  assert.throws(fn, (e: unknown) => e instanceof RuleError && e.code === code)
+const fixtures = ['review-60.json', 'sample-80.json']
+for (const name of fixtures)
+  test(`${name}: entry, quota, confirmation and cancellation`, () => {
+    const { definition, snapshot } = load(`../../generator/fixtures/${name}`) as {
+      definition: Definition
+      snapshot: Snapshot
+    }
+    const initial = begin(definition, snapshot, allowance)
+    let d = initial
+    const outside = snapshot.groups.filter((g) => {
+      const p = definition.pieces.find((p) => p.pieceId === g.pieceIds[0])!
+      const r = transformPoint(
+        { x: p.solvedPosition.x + p.referencePoint.x, y: p.solvedPosition.y + p.referencePoint.y },
+        g.transform,
+      )
+      return (
+        r.x < definition.playSurface.min.x ||
+        r.x >= definition.playSurface.max.x ||
+        r.y < definition.playSurface.min.y ||
+        r.y >= definition.playSurface.max.y
+      )
+    })
+    assert.ok(outside.length >= 6)
+    for (let i = 0; i < 5; i++) d = move(d, outside[i].groupId, action(i + 1), solved)
+    assert.equal(pendingCount(d), 5)
+    rejects(() => move(d, outside[5].groupId, action(6), solved), 'QUOTA_EXCEEDED')
+    d = move(d, outside[0].groupId, action(1), { ...solved, translation: { x: 100, y: 0 } })
+    assert.equal(pendingCount(d), 5)
+    assert.equal(preview(d).length, 5)
+    assert.deepEqual(initial.base, snapshot)
+    const result = confirm(d, snapshot, allowance)
+    assert.equal(result.charged, 5)
+    assert.equal(result.allowance.remaining, 0)
+    assert.equal(result.snapshot.boardVersion, snapshot.boardVersion + 1)
+    assert.deepEqual(cancel(d, snapshot), snapshot)
+    rejects(() => confirm(d, snapshot, { limit: 5, used: 1, remaining: 4 }), 'QUOTA_EXCEEDED')
+  })
+
+test('portable rotation vectors include arbitrary-angle correction', () => {
+  const vectors = load('../vectors/behavior.json')
+  for (const v of vectors.rotation)
+    assert.deepEqual(
+      rotateAround({ translation: v.translation, rotation: v.rotation }, v.pivot, v.delta),
+      v.expected,
+    )
+})
+
+test('attachment, independent action charges, group movement and undo', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const p = definition.pieces[0],
+    neighborId = p.edges.find((e) => e.neighborPieceId)!.neighborPieceId!
+  const g1 = snapshot.groups.find((g) => g.pieceIds.includes(p.pieceId))!,
+    g2 = snapshot.groups.find((g) => g.pieceIds.includes(neighborId))!
+  let d = begin(definition, snapshot, allowance)
+  d = move(d, g1.groupId, action(1), solved)
+  d = move(d, g2.groupId, action(2), solved)
+  assert.equal(pendingCount(d), 2)
+  const before = d
+  d = attach(d, g1.groupId, g2.groupId, action(99), 0, 0)
+  assert.equal(pendingCount(d), 2)
+  rejects(() => undo(d, action(1)), 'INVALID_ACTION')
+  assert.equal(pendingCount(before), 2)
+  d = move(d, action(99), action(1), { rotation: 0, translation: { x: 100, y: 100 } })
+  const result = confirm(d, snapshot, allowance)
+  assert.equal(result.charged, 2)
+  const merged = result.snapshot.groups.find((g) => g.groupId === action(99))!
+  assert.equal(merged.pieceIds.length, 2)
+  let next = begin(definition, result.snapshot, allowance)
+  next = move(next, merged.groupId, action(3), { rotation: 0, translation: { x: 200, y: 100 } })
+  assert.equal(pendingCount(next), 1)
+  assert.equal(confirm(next, result.snapshot, allowance).charged, 1)
+})
+
+test('undo, stale touched group and unrelated changes', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  let d = begin(definition, snapshot, allowance)
+  d = move(d, snapshot.groups[0].groupId, action(1), solved)
+  d = move(d, snapshot.groups[1].groupId, action(2), solved)
+  d = undo(d, action(1))
+  assert.equal(d.generation, 1)
+  assert.equal(preview(d).length, 1)
+  const latest = structuredClone(snapshot)
+  latest.boardVersion++
+  latest.groups[0].revision++
+  assert.equal(
+    confirm(d, latest, allowance).snapshot.groups.find(
+      (g) => g.groupId === latest.groups[0].groupId,
+    )!.revision,
+    latest.groups[0].revision,
+  )
+  assert.deepEqual(cancel(d, latest), latest)
+  latest.groups[1].revision++
+  rejects(() => confirm(d, latest, allowance), 'STALE_REVISION')
+})
+
+test('invalid snap rejects non-neighbors and distant or rotated neighbors', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const first = snapshot.groups[0],
+    p = definition.pieces.find((p) => p.pieceId === first.pieceIds[0])!
+  const neighbor = snapshot.groups.find((g) =>
+    p.edges.some((e) => e.neighborPieceId === g.pieceIds[0]),
+  )!
+  const nonneighbor = snapshot.groups.find(
+    (g) =>
+      g !== first && g !== neighbor && !p.edges.some((e) => e.neighborPieceId === g.pieceIds[0]),
+  )!
+  let d = begin(definition, snapshot, allowance)
+  d = move(d, first.groupId, action(1), solved)
+  rejects(
+    () => attach(d, first.groupId, nonneighbor.groupId, action(99), 1000000000, 180000),
+    'INVALID_ACTION',
+  )
+  rejects(() => attach(d, first.groupId, neighbor.groupId, action(99), 0, 0), 'INVALID_ACTION')
+})
+
+test('outer sorting is free, entry is remembered, return demotes, and unchanged costs zero', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const g = snapshot.groups[0]
+  const t = structuredClone(g.transform)
+  t.translation.x += 1
+  let d = move(begin(definition, snapshot, allowance), g.groupId, action(1), t)
+  assert.equal(pendingCount(d), 0)
+  assert.equal(confirm(d, snapshot, allowance).charged, 0)
+  d = move(d, g.groupId, action(1), solved)
+  assert.equal(pendingCount(d), 1)
+  d = move(d, g.groupId, action(1), t)
+  assert.equal(pendingCount(d), 0)
+  d = move(d, g.groupId, action(1), g.transform)
+  const result = confirm(d, snapshot, allowance)
+  assert.equal(result.charged, 0)
+  assert.equal(result.snapshot.boardVersion, snapshot.boardVersion)
+  const latest = structuredClone(snapshot)
+  latest.boardVersion++
+  latest.groups[0].revision++
+  rejects(() => confirm(d, latest, allowance), 'STALE_REVISION')
+})
+
+test('rejects disconnected groups and mismatched reciprocal geometry', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const invalid = structuredClone(snapshot)
+  invalid.groups[0].pieceIds.push(invalid.groups[79].pieceIds[0])
+  invalid.groups.pop()
+  rejects(() => begin(definition, invalid, allowance), 'INVALID_ACTION')
+  const malformed = structuredClone(definition)
+  const edge = malformed.pieces[0].edges.find((e) => e.neighborPieceId)!
+  edge.segments[0].to.x++
+  rejects(() => begin(malformed, snapshot, allowance), 'INVALID_ACTION')
+})
+
+for (const name of fixtures)
+  test(`${name}: all seeded orientations can be corrected and assembled`, () => {
+    const { definition, snapshot: initial } = load(`../../generator/fixtures/${name}`) as {
+      definition: Definition
+      snapshot: Snapshot
+    }
+    let snapshot = initial
+    const root = snapshot.groups[0]
+    let draft = begin(definition, snapshot, allowance)
+    const corrected = rotateAround(root.transform, { x: 0, y: 0 }, -root.transform.rotation)
+    assert.equal(corrected.rotation, 0)
+    const rootPiece = definition.pieces.find((p) => p.pieceId === root.pieceIds[0])!
+    const rootPivot = transformPoint(
+      {
+        x: rootPiece.solvedPosition.x + rootPiece.referencePoint.x,
+        y: rootPiece.solvedPosition.y + rootPiece.referencePoint.y,
+      },
+      root.transform,
+    )
+    draft = move(
+      draft,
+      root.groupId,
+      action(1000),
+      rotateAround(root.transform, rootPivot, -root.transform.rotation),
+    )
+    draft = move(draft, root.groupId, action(1000), solved)
+    snapshot = confirm(draft, snapshot, allowance).snapshot
+    let assembledId = root.groupId
+    for (let i = 1; i < definition.pieces.length; i++) {
+      const assembled = snapshot.groups.find((g) => g.groupId === assembledId)!
+      const next = snapshot.groups.find(
+        (g) =>
+          g.groupId !== assembledId &&
+          g.pieceIds.some((id) =>
+            definition.pieces
+              .find((p) => p.pieceId === id)!
+              .edges.some(
+                (e) => e.neighborPieceId && assembled.pieceIds.includes(e.neighborPieceId),
+              ),
+          ),
+      )!
+      assert.ok(next, 'there is an adjacent unassembled group')
+      assert.equal(
+        rotateAround(next.transform, { x: 0, y: 0 }, -next.transform.rotation).rotation,
+        0,
+      )
+      draft = begin(definition, snapshot, allowance) // a fresh player's allowance for each confirmed turn
+      const nextPiece = definition.pieces.find((p) => p.pieceId === next.pieceIds[0])!
+      const pivot = transformPoint(
+        {
+          x: nextPiece.solvedPosition.x + nextPiece.referencePoint.x,
+          y: nextPiece.solvedPosition.y + nextPiece.referencePoint.y,
+        },
+        next.transform,
+      )
+      draft = move(
+        draft,
+        next.groupId,
+        action(2000 + i),
+        rotateAround(next.transform, pivot, -next.transform.rotation),
+      )
+      draft = move(draft, next.groupId, action(2000 + i), solved)
+      const mergedId = action(3000 + i)
+      draft = attach(draft, next.groupId, assembledId, mergedId, 0, 0)
+      const result = confirm(draft, snapshot, allowance)
+      assert.equal(result.charged, 1)
+      snapshot = result.snapshot
+      assembledId = mergedId
+    }
+    assert.equal(snapshot.groups.length, 1)
+    assert.equal(snapshot.groups[0].pieceIds.length, definition.pieces.length)
+    assert.equal(snapshot.groups[0].finalPosition, true)
+  })
+
+test('snap tolerance is inclusive and selects the target transform exactly', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const p = definition.pieces[0],
+    a = snapshot.groups.find((g) => g.pieceIds.includes(p.pieceId))!
+  const neighbor = p.edges.find((e) => e.neighborPieceId)!.neighborPieceId!
+  const b = snapshot.groups.find((g) => g.pieceIds.includes(neighbor))!
+  let d = begin(definition, snapshot, allowance)
+  d = move(d, b.groupId, action(2), solved)
+  d = move(d, a.groupId, action(1), { rotation: 0, translation: { x: 1000, y: 0 } })
+  rejects(() => attach(d, a.groupId, b.groupId, action(99), 999, 0), 'INVALID_ACTION')
+  const joined = attach(d, a.groupId, b.groupId, action(99), 1000, 0)
+  assert.deepEqual(preview(joined)[0].transform, solved)
+})

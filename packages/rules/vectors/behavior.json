@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "units": "integer thousandths and clockwise millidegrees; rounding is floor(value + 0.5)",
+  "rotation": [
+    {
+      "translation": {
+        "x": 10000,
+        "y": 30000
+      },
+      "rotation": 0,
+      "pivot": {
+        "x": 20000,
+        "y": 30000
+      },
+      "delta": 90000,
+      "expected": {
+        "translation": {
+          "x": 20000,
+          "y": 20000
+        },
+        "rotation": 90000
+      }
+    },
+    {
+      "translation": {
+        "x": 0,
+        "y": 0
+      },
+      "rotation": 12345,
+      "pivot": {
+        "x": 0,
+        "y": 0
+      },
+      "delta": -12345,
+      "expected": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      }
+    }
+  ],
+  "accounting": [
+    {
+      "events": [
+        "outer sort",
+        "enter",
+        "adjust",
+        "enter another",
+        "attach",
+        "adjust group",
+        "confirm"
+      ],
+      "pending": [0, 1, 1, 2, 2, 2, 0],
+      "remaining": [5, 5, 5, 5, 5, 5, 3]
+    },
+    {
+      "events": ["enter", "return outside", "confirm"],
+      "pending": [1, 0, 0],
+      "remaining": [5, 5, 5]
+    },
+    {
+      "events": ["move confirmed connected group", "adjust group", "confirm"],
+      "pending": [1, 1, 0],
+      "remaining": [5, 5, 4]
+    }
+  ],
+  "conflicts": [
+    "changed touched revision rejects confirm with no charge",
+    "changed unrelated group survives confirm and cancel",
+    "joined action undo rejects without changes",
+    "sixth counted action rejects while five remain adjustable"
+  ],
+  "snap": [
+    {
+      "movingTransform": {
+        "translation": {
+          "x": 1000,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "referenceInSolvedSpace": {
+        "x": 60000,
+        "y": 50000
+      },
+      "distanceTolerance": 999,
+      "angleTolerance": 0,
+      "adjacent": true,
+      "accepted": false
+    },
+    {
+      "movingTransform": {
+        "translation": {
+          "x": 1000,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "referenceInSolvedSpace": {
+        "x": 60000,
+        "y": 50000
+      },
+      "distanceTolerance": 1000,
+      "angleTolerance": 0,
+      "adjacent": true,
+      "accepted": true,
+      "resultTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      }
+    },
+    {
+      "movingTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "targetTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0
+      },
+      "referenceInSolvedSpace": {
+        "x": 60000,
+        "y": 50000
+      },
+      "distanceTolerance": 1000,
+      "angleTolerance": 0,
+      "adjacent": false,
+      "accepted": false
+    }
+  ]
+}
