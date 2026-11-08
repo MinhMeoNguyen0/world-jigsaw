@@ -116,8 +116,12 @@ class TurnLeaseRegistryTest {
     assertThat(registry.heartbeat(a, turn.turn(), 0).expiresAt())
         .isEqualTo(Instant.parse("2026-11-07T23:59:50Z"));
     registry.pinConfirm(a, turn.turn(), 0, command, now.get());
+    var pinned = registry.previews(puzzle).getFirst();
     now.set(Instant.parse("2026-11-08T00:01:00Z"));
     assertThat(registry.previews(puzzle)).hasSize(1);
+    now.set(Instant.parse("2026-11-08T01:00:00Z"));
+    assertThat(pinned.expiresAt()).isAfter(now.get());
+    assertThat(registry.previews(puzzle).getFirst().expiresAt()).isEqualTo(pinned.expiresAt());
     assertThat(registry.confirming(a, turn.turn(), 0)).isEqualTo(command);
     assertThatThrownBy(() -> registry.clear(a, turn.turn(), 0, "canceled"))
         .isInstanceOf(TurnLeaseRegistry.LeaseError.class);

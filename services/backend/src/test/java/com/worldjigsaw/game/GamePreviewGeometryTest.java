@@ -53,6 +53,23 @@ class GamePreviewGeometryTest {
         if (i % 4 != 3) link(pieces, i, 1, i + 1, 3);
         if (i < 12) link(pieces, i, 2, i + 4, 0);
       }
+      UUID unrelatedPiece = UUID.randomUUID();
+      ObjectNode larger = squares.path("pieces").get(0).deepCopy();
+      larger.put("pieceId", unrelatedPiece.toString());
+      ((ObjectNode) larger.path("solvedPosition")).put("x", 800000).put("y", 800000);
+      ((ObjectNode) larger.path("referencePoint")).put("x", 100000).put("y", 100000);
+      for (JsonNode edge : larger.path("edges")) {
+        ((ObjectNode) edge).putNull("neighborPieceId").putNull("neighborEdgeId");
+        scalePoint((ObjectNode) edge.path("start"));
+        for (JsonNode segment : edge.path("segments")) scalePoint((ObjectNode) segment.path("to"));
+      }
+      pieces.add(larger);
+      ObjectNode unrelated = groups.addObject().put("groupId", UUID.randomUUID().toString()).put("revision", 0);
+      unrelated.putArray("pieceIds").add(unrelatedPiece.toString());
+      ObjectNode unrelatedTransform = unrelated.putObject("transform");
+      unrelatedTransform.putObject("translation").put("x", 0).put("y", 0);
+      unrelatedTransform.put("rotation", rotation);
+      unrelated.put("finalPosition", false);
       GameBoards boards = mock(GameBoards.class);
       when(boards.currentFor(org.mockito.ArgumentMatchers.nullable(UUID.class))).thenReturn(Map.of(
           "definition", mapper.convertValue(definition, Map.class),
@@ -77,6 +94,11 @@ class GamePreviewGeometryTest {
       assertThat(previews.getFirst().action().affectedPieceIds()).containsExactlyInAnyOrder(pieceIds);
       assertThat(previews.getFirst().action().intendedTransform().rotation()).isEqualTo(rotation);
     }
+  }
+
+  private void scalePoint(ObjectNode point) {
+    point.put("x", point.path("x").longValue() * 2);
+    point.put("y", point.path("y").longValue() * 2);
   }
 
   @Test

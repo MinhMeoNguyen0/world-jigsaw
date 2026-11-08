@@ -208,8 +208,9 @@ class ConfirmationJournal {
   }
 
   /** Returns a retained result or null; a different canonical payload yields a conflict result. */
-  @Transactional(readOnly = true)
+  @Transactional(timeout = 30)
   public JsonNode lookup(UUID subject, UUID puzzle, UUID command, JsonNode payload) {
+    jdbc.queryForList("SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE", subject);
     List<Map<String, Object>> rows =
         jdbc.queryForList(
             "SELECT canonical_payload, result::text AS result FROM game_commands WHERE subject_id = ? AND command_id = ?",
@@ -231,8 +232,9 @@ class ConfirmationJournal {
     return json((String) rows.getFirst().get("result"));
   }
 
-  @Transactional(readOnly = true)
+  @Transactional(timeout = 30)
   public JsonNode find(UUID subject, UUID command) {
+    jdbc.queryForList("SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE", subject);
     List<String> rows =
         jdbc.query(
             "SELECT result::text FROM game_commands WHERE subject_id = ? AND command_id = ?",
@@ -242,8 +244,9 @@ class ConfirmationJournal {
     return rows.isEmpty() ? null : json(rows.getFirst());
   }
 
-  @Transactional(readOnly = true)
+  @Transactional(timeout = 30)
   public JsonNode confirmedForTurn(UUID subject, UUID turn) {
+    jdbc.queryForList("SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE", subject);
     List<String> rows =
         jdbc.query(
             "SELECT result::text FROM game_commands WHERE subject_id = ? AND lower(canonical_payload::jsonb->>'turnId') = ? AND result->>'outcome' = 'confirmed' LIMIT 1",

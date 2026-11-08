@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 @Component
 class TurnLeaseRegistry {
   private static final Duration LEASE = Duration.ofSeconds(30);
+  private static final Instant PINNED_PREVIEW_EXPIRY = Instant.parse("9999-12-31T23:59:59Z");
   private static final int MAX_TURNS = 100;
   private static final int MAX_GROUPS = 80;
   private static final int MAX_ACTIONS = 80;
@@ -55,7 +56,6 @@ class TurnLeaseRegistry {
     long generation;
     long lastSequence = -1;
     UUID confirming;
-    Instant confirmationPreviewExpiry;
     Instant expiresAt;
     PreviewGeneration previews;
     final Map<UUID, PreviewGeneration.Action> actions = new LinkedHashMap<>();
@@ -273,12 +273,10 @@ class TurnLeaseRegistry {
     List<PreviewGeneration.Preview> active = turn.previews.snapshot();
     if (turn.lastSequence > MAX_SAFE - 2L * active.size())
       throw error("INVALID_ACTION", "Preview sequence exhausted");
-    Instant pinExpiry = admittedAt.plus(Duration.ofMinutes(2));
     for (PreviewGeneration.Preview preview : active) {
-      if (!turn.previews.publish(++turn.lastSequence, preview.action(), pinExpiry))
+      if (!turn.previews.publish(++turn.lastSequence, preview.action(), PINNED_PREVIEW_EXPIRY))
         throw new IllegalStateException("Preview sequence invariant");
     }
-    turn.confirmationPreviewExpiry = pinExpiry;
     turn.confirming = commandId;
     return info(turn);
   }
@@ -310,7 +308,6 @@ class TurnLeaseRegistry {
         || turn.generation != generation
         || !commandId.equals(turn.confirming)) throw error("TURN_CLOSED", "Unknown confirmation");
     turn.confirming = null;
-    turn.confirmationPreviewExpiry = null;
     sweep();
     if (!turns.containsKey(turnId)) return List.of();
     for (PreviewGeneration.Preview preview : turn.previews.snapshot()) {
@@ -341,7 +338,7 @@ class TurnLeaseRegistry {
       if (turn.puzzle.equals(puzzle))
         for (var preview : turn.previews.snapshot()) {
           Instant displayedExpiry =
-              turn.confirming == null ? turn.expiresAt : turn.confirmationPreviewExpiry;
+              turn.confirming == null ? turn.expiresAt : PINNED_PREVIEW_EXPIRY;
           result.add(
               new PreviewGeneration.Preview(
                   preview.puzzleId(),

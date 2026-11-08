@@ -67,9 +67,10 @@ final class LocalGeometry {
 
   private LocalGeometry() {}
 
-  static double snapToleranceUpperBound(JsonNode definition) {
+  static double snapToleranceUpperBound(JsonNode definition, Set<UUID> selected) {
     double maxScale = 0;
     for (JsonNode piece : definition.path("pieces")) {
+      if (!selected.contains(BoardValidator.id(piece, "pieceId"))) continue;
       var envelope = polygon(piece, new Transform(0, 0, 0)).getEnvelopeInternal();
       maxScale = Math.max(maxScale, Math.min(envelope.getWidth(), envelope.getHeight()));
     }

@@ -266,7 +266,7 @@ class GameCoordinator {
           targets.isEmpty()
               ? List.of()
               : attachmentOrder(candidate, moving, targets, turn, current, new HashSet<>(),
-                  LocalGeometry.snapToleranceUpperBound(turn.definition));
+                  LocalGeometry.snapToleranceUpperBound(turn.definition, actualPieces));
       if (order == null) throw error("INVALID_ACTION", "Cannot join selected groups");
       String currentGroup = moving;
       for (String target : order) {

@@ -90,8 +90,9 @@ class GameIdentityLedger {
     return new Receipt(false, json(result.toString()));
   }
 
-  @Transactional(readOnly = true)
+  @Transactional(timeout = 30)
   public Receipt lookup(UUID subject, UUID requestId, String kind, JsonNode payload) {
+    jdbc.queryForList("SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE", subject);
     List<Map<String, Object>> rows =
         jdbc.queryForList(
             "SELECT request_kind, canonical_payload, result::text AS result FROM game_requests WHERE subject_id = ? AND request_id = ?",
