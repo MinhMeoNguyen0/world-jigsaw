@@ -11,7 +11,8 @@ import type {
 } from '@world-jigsaw/contracts'
 
 // All operations return new values. No transport, leases, clock, or persistence is implied.
-export type RuleCode = 'INVALID_ACTION' | 'STALE_REVISION' | 'QUOTA_EXCEEDED'
+export type RuleCode =
+  'INVALID_ACTION' | 'STALE_REVISION' | 'QUOTA_EXCEEDED' | 'UNSUPPORTED_LEGACY_ORIENTATION'
 export class RuleError extends Error {
   readonly code: RuleCode
   constructor(code: RuleCode, message: string) {
@@ -58,6 +59,11 @@ export function transformPoint(p: Point, t: Transform): Point {
   return { x: round(r.x + t.translation.x), y: round(r.y + t.translation.y) }
 }
 export function rotateAround(t: Transform, pivot: Point, delta: number): Transform {
+  if (integer(t.rotation) && t.rotation >= 0 && t.rotation < 360000 && t.rotation % 90000 !== 0)
+    return fail(
+      'UNSUPPORTED_LEGACY_ORIENTATION',
+      'Legacy orientations are not supported for interaction',
+    )
   if (
     !validTransform(t) ||
     !integer(delta) ||
@@ -79,6 +85,10 @@ const equalTransform = (a: Transform, b: Transform) =>
   a.rotation === b.rotation &&
   a.translation.x === b.translation.x &&
   a.translation.y === b.translation.y
+const checkOrientation = (snapshot: Snapshot) => {
+  if (snapshot.groups.some((g) => g.transform.rotation % 90000 !== 0))
+    fail('UNSUPPORTED_LEGACY_ORIENTATION', 'Legacy orientations are not supported for interaction')
+}
 const inside = (p: Point, rect: Definition['playSurface']) =>
   p.x >= rect.min.x && p.x < rect.max.x && p.y >= rect.min.y && p.y < rect.max.y
 const piece = (d: Draft, id: string) =>
@@ -111,6 +121,37 @@ const counted = (d: Draft, a: PendingAction) => {
     inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface) ||
     a.entered
   )
+}
+const chargeJoinedMovement = (d: Draft, moving: DraftGroup, to: Transform, actionIds: string[]) => {
+  const from = moving.group.transform
+  if (equalTransform(from, to)) return
+  const actions = d.actions.filter((a) => actionIds.some((id) => same(id, a.id)))
+  for (const action of actions) {
+    if (!moving.actions.some((id) => same(id, action.id)) || action.joinedCharge) continue
+    const src = original(d, action.source)
+    if (
+      src.pieceIds.length === 1 &&
+      !inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface) &&
+      !inside(reference(d, src.pieceIds[0], from), d.definition.playSurface) &&
+      inside(reference(d, src.pieceIds[0], to), d.definition.playSurface)
+    )
+      action.joinedCharge = true
+  }
+  if (
+    !actions.some((a) => a.joinedCharge) &&
+    moving.sources.some((id) => {
+      const src = original(d, id)
+      return (
+        src.pieceIds.length > 1 ||
+        src.pieceIds.some(
+          (pieceId) =>
+            inside(reference(d, pieceId, from), d.definition.playSurface) ||
+            inside(reference(d, pieceId, to), d.definition.playSurface),
+        )
+      )
+    })
+  )
+    d.actions.find((a) => same(a.id, moving.actions[0]))!.joinedCharge = true
 }
 export const pendingCount = (d: Draft) => d.actions.filter((a) => counted(d, a)).length
 const checkQuota = (d: Draft) => {
@@ -176,9 +217,7 @@ function validGeometry(definition: Definition, snapshot: Snapshot): boolean {
   return true
 }
 const validBoard = (definition: Definition, snapshot: Snapshot) =>
-  validateBoard(definition, snapshot).valid &&
-  snapshot.groups.every((g) => validTransform(g.transform)) &&
-  validGeometry(definition, snapshot)
+  validateBoard(definition, snapshot).valid && validGeometry(definition, snapshot)
 const sameGroup = (a: Group, b: Group) =>
   same(a.groupId, b.groupId) &&
   a.revision === b.revision &&
@@ -214,6 +253,7 @@ export function begin(definition: Definition, snapshot: Snapshot, allowance: All
 }
 /** Start an action on a canonical group, or adjust an existing draft group with its action ID. */
 export function move(draft: Draft, groupId: string, actionId: string, transform: Transform): Draft {
+  checkOrientation(draft.base)
   const d = copy(draft),
     g = findGroup(d, groupId)
   if (!uuid(actionId) || !validTransform(transform))
@@ -228,8 +268,9 @@ export function move(draft: Draft, groupId: string, actionId: string, transform:
     d.actions.push(action)
     g.actions.push(actionId)
   }
+  checkWorkspace(d, { ...g.group, transform })
+  if (g.sources.length > 1) chargeJoinedMovement(d, g, transform, g.actions)
   g.group.transform = copy(transform)
-  checkWorkspace(d, g.group)
   const src = original(d, action.source)
   if (
     g.sources.length === 1 &&
@@ -250,6 +291,7 @@ export function attach(
   distance: number,
   angle: number,
 ): Draft {
+  checkOrientation(draft.base)
   const d = copy(draft),
     moving = findGroup(d, movingId),
     target = findGroup(d, targetId)
@@ -288,6 +330,7 @@ export function attach(
   for (const action of d.actions)
     if ([...moving.actions, ...target.actions].some((id) => same(id, action.id)))
       action.joinedCharge = counted(d, action)
+  chargeJoinedMovement(d, moving, target.group.transform, [...moving.actions, ...target.actions])
   d.groups = d.groups.filter((g) => g !== moving && g !== target)
   d.groups.push({
     group,
@@ -298,6 +341,7 @@ export function attach(
   return d
 }
 export function undo(draft: Draft, actionId: string): Draft {
+  checkOrientation(draft.base)
   const d = copy(draft),
     action = d.actions.find((a) => same(a.id, actionId)) ?? fail('INVALID_ACTION', 'Unknown action')
   const g = d.groups.find((g) => g.actions.some((id) => same(id, action.id)))!
@@ -329,6 +373,8 @@ export function confirm(
     allowance.used + allowance.remaining !== 5
   )
     return fail('INVALID_ACTION', 'Invalid latest board or allowance')
+  checkOrientation(d.base)
+  checkOrientation(latest)
   if (latest.boardVersion < d.base.boardVersion)
     return fail('STALE_REVISION', 'Latest board is older than draft')
   const touched = d.groups.filter((g) => g.actions.length > 0)

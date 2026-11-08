@@ -70,22 +70,83 @@ test('portable rotation vectors cover quarter turns in both directions', () => {
     )
 })
 
-test('settled snapshots and player rotations reject other angles', () => {
+test('legacy boards remain inspectable and cannot be mutated', () => {
   const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
     definition: Definition
     snapshot: Snapshot
   }
-  const invalid = structuredClone(snapshot)
-  invalid.groups[0].transform.rotation = 12345
-  rejects(() => begin(definition, invalid, allowance), 'INVALID_ACTION')
-  const d = begin(definition, snapshot, allowance)
-  rejects(() => confirm(d, invalid, allowance), 'INVALID_ACTION')
+  const legacy = structuredClone(snapshot)
+  legacy.groups[0].transform.rotation = 12345
+  const bytes = JSON.stringify(legacy)
+  const old = begin(definition, legacy, allowance)
+  assert.equal(JSON.stringify(old.base), bytes)
+  assert.deepEqual(preview(old), [])
+  assert.equal(JSON.stringify(cancel(old, legacy)), bytes)
   rejects(
-    () => move(d, snapshot.groups[0].groupId, action(1), invalid.groups[0].transform),
+    () => move(old, legacy.groups[0].groupId, action(1), solved),
+    'UNSUPPORTED_LEGACY_ORIENTATION',
+  )
+  rejects(
+    () => attach(old, legacy.groups[0].groupId, legacy.groups[1].groupId, action(99), 0, 0),
+    'UNSUPPORTED_LEGACY_ORIENTATION',
+  )
+  rejects(() => undo(old, action(1)), 'UNSUPPORTED_LEGACY_ORIENTATION')
+  rejects(() => confirm(old, legacy, allowance), 'UNSUPPORTED_LEGACY_ORIENTATION')
+  const d = begin(definition, snapshot, allowance)
+  rejects(() => confirm(d, legacy, allowance), 'UNSUPPORTED_LEGACY_ORIENTATION')
+  rejects(
+    () => move(d, snapshot.groups[0].groupId, action(1), legacy.groups[0].transform),
     'INVALID_ACTION',
   )
   rejects(() => rotateAround(solved, { x: 0, y: 0 }, 12345), 'INVALID_ACTION')
-  rejects(() => rotateAround(invalid.groups[0].transform, { x: 0, y: 0 }, 90000), 'INVALID_ACTION')
+  rejects(
+    () => rotateAround(legacy.groups[0].transform, { x: 0, y: 0 }, 90000),
+    'UNSUPPORTED_LEGACY_ORIENTATION',
+  )
+  assert.equal(JSON.stringify(legacy), bytes)
+})
+
+test('moving an unpaid joined group costs one move and respects quota', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/review-60.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const a = snapshot.groups[0],
+    b = snapshot.groups[1]
+  const zero = { limit: 5 as const, used: 5, remaining: 0 }
+  let draft = move(begin(definition, snapshot, zero), a.groupId, action(1), solved)
+  draft = attach(draft, a.groupId, b.groupId, action(99), 0, 0)
+  assert.equal(pendingCount(draft), 0)
+  const shifted = { rotation: 0, translation: { x: 100, y: 0 } }
+  rejects(() => move(draft, action(99), action(1), shifted), 'QUOTA_EXCEEDED')
+  assert.equal(confirm(draft, snapshot, zero).charged, 0)
+  let paid = move(begin(definition, snapshot, allowance), a.groupId, action(1), solved)
+  paid = move(paid, b.groupId, action(2), solved)
+  paid = attach(paid, a.groupId, b.groupId, action(99), 0, 0)
+  paid = move(paid, action(99), action(2), shifted)
+  assert.equal(pendingCount(paid), 1)
+  paid = move(paid, action(99), action(1), solved)
+  assert.equal(confirm(paid, snapshot, allowance).charged, 1)
+  const connected = confirm(draft, snapshot, zero).snapshot
+  let group = move(begin(definition, connected, zero), action(99), action(3), solved)
+  group = attach(group, action(99), snapshot.groups[2].groupId, action(100), 0, 0)
+  rejects(() => move(group, action(100), action(3), shifted), 'QUOTA_EXCEEDED')
+})
+
+test('an outer sort entering after a join is charged and keeps that charge', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const a = snapshot.groups[0],
+    b = snapshot.groups[1]
+  let draft = move(begin(definition, snapshot, allowance), a.groupId, action(1), a.transform)
+  draft = attach(draft, a.groupId, b.groupId, action(99), 10000000, 180000)
+  assert.equal(pendingCount(draft), 0)
+  draft = move(draft, action(99), action(1), solved)
+  assert.equal(pendingCount(draft), 1)
+  draft = move(draft, action(99), action(1), b.transform)
+  assert.equal(confirm(draft, snapshot, allowance).charged, 1)
 })
 
 test('joining preserves free actions in either role and through another join', () => {
@@ -146,9 +207,35 @@ test('joining a free outer sort with an entered neighbor keeps one charge', () =
       10000000,
       0,
     )
-    assert.equal(pendingCount(d), 1)
-    assert.equal(confirm(d, snapshot, allowance).charged, 1)
+    assert.equal(pendingCount(d), freeMoves ? 2 : 1)
+    assert.equal(confirm(d, snapshot, allowance).charged, freeMoves ? 2 : 1)
+    if (!freeMoves) {
+      d = move(d, action(99), action(2), solved)
+      assert.equal(pendingCount(d), 2)
+      assert.equal(confirm(d, snapshot, allowance).charged, 2)
+    }
   }
+})
+
+test('a snap that brings a free outer piece in respects quota', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/review-60.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const outside = snapshot.groups[3],
+    target = snapshot.groups[2],
+    p = definition.pieces[3]
+  const sort: Transform = {
+    rotation: 0,
+    translation: { x: -p.solvedPosition.x - p.referencePoint.x - 10000, y: 0 },
+  }
+  const zero = { limit: 5 as const, used: 5, remaining: 0 }
+  const draft = move(begin(definition, snapshot, zero), outside.groupId, action(1), sort)
+  rejects(
+    () => attach(draft, outside.groupId, target.groupId, action(99), 10000000, 0),
+    'QUOTA_EXCEEDED',
+  )
+  assert.equal(pendingCount(draft), 0)
 })
 
 test('attachment, independent action charges, group movement and undo', () => {

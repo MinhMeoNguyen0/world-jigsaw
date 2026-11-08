@@ -55,9 +55,14 @@
       "remaining": [5, 5, 5, 4]
     },
     {
-      "events": ["outer sort", "enter neighbor", "attach", "confirm"],
+      "events": ["outer sort", "enter neighbor", "attach to outer sort", "confirm"],
       "pending": [0, 1, 1, 0],
       "remaining": [5, 5, 5, 4]
+    },
+    {
+      "events": ["outer sort", "enter neighbor", "snap outer sort inside", "confirm"],
+      "pending": [0, 1, 2, 0],
+      "remaining": [5, 5, 5, 3]
     },
     {
       "events": [
