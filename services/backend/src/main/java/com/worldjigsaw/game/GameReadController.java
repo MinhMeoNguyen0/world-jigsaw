@@ -21,14 +21,6 @@ class GameReadController {
     return boards.current();
   }
 
-  @GetMapping("/api/v1/game/snapshot")
-  ResponseEntity<Object> snapshot() {
-    Map<String, Object> current = boards.current();
-    return ResponseEntity.ok()
-        .header("X-Server-Time", current.get("serverTime").toString())
-        .body(current.get("snapshot"));
-  }
-
   @ExceptionHandler(PuzzleUnavailable.class)
   ResponseEntity<Map<String, Object>> unavailable() {
     return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

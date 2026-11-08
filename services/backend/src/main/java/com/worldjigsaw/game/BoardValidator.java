@@ -46,7 +46,8 @@ public class BoardValidator {
     require(snapshotSchema.validate(snapshot).isEmpty(), "invalid snapshot shape");
     require(id(definition, "puzzleId").equals(id(snapshot, "puzzleId")), "puzzle mismatch");
     require(
-        definition.path("definitionVersion").equals(snapshot.path("definitionVersion")),
+        definition.path("definitionVersion").longValue()
+            == snapshot.path("definitionVersion").longValue(),
         "version mismatch");
     verifyChecksum(definition);
     JsonNode workspace = definition.path("workspace");
@@ -72,7 +73,7 @@ public class BoardValidator {
         JsonNode next = contours.get((i + 1) % contours.size());
         JsonNode segments = edge.path("segments");
         require(
-            segments.get(segments.size() - 1).path("to").equals(next.path("start")),
+            samePoint(segments.get(segments.size() - 1).path("to"), next.path("start")),
             "piece contour is not closed");
       }
       for (JsonNode edge : piece.path("edges")) {
@@ -129,6 +130,11 @@ public class BoardValidator {
               || !samePoint(x.path("control2"), a, y.path("control1"), b))) return false;
     }
     return true;
+  }
+
+  private static boolean samePoint(JsonNode x, JsonNode y) {
+    return x.path("x").longValue() == y.path("x").longValue()
+        && x.path("y").longValue() == y.path("y").longValue();
   }
 
   private static boolean samePoint(JsonNode x, JsonNode a, JsonNode y, JsonNode b) {

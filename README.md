@@ -126,10 +126,9 @@ membership. It commits the definition and canonical board together. It does not 
 collision or game rules; generated content needs further validation before production use.
 
 `GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
-UTC close time. `GET /api/v1/game/snapshot` returns that snapshot and an `X-Server-Time` header.
-If today's puzzle has not been imported, both return a structured `PUZZLE_UNAVAILABLE` (503),
+UTC close time. If today's puzzle has not been imported, it returns a structured `PUZZLE_UNAVAILABLE` (503),
 not a previous day's board. Reads use a repeatable-read transaction. Allowance and own turn are null
-until an authenticated game application supplies them. These endpoints do not implement preview,
+until an authenticated game application supplies them. This endpoint does not implement preview,
 confirmation, authentication, or multiplayer commands.
 
 The writer integration must lock the `game_boards` row for the puzzle before admitting a Confirm,

@@ -40,7 +40,7 @@ BEGIN
         OR EXISTS (SELECT 1 FROM game_boards b JOIN puzzles p ON p.id = b.puzzle_id
             WHERE b.puzzle_id = board_id AND (b.closes_at <> ((p.puzzle_day + 1)::timestamp AT TIME ZONE 'UTC')
                 OR b.definition->>'puzzleId' IS NULL OR (b.definition->>'puzzleId')::uuid <> board_id
-                OR (b.definition->>'definitionVersion')::bigint <> b.definition_version))
+                OR (b.definition->>'definitionVersion')::numeric <> b.definition_version))
         OR EXISTS (SELECT 1 FROM game_boards b CROSS JOIN LATERAL jsonb_array_elements(b.definition->'pieces') d
             WHERE b.puzzle_id = board_id AND NOT EXISTS (SELECT 1 FROM game_pieces p
                 WHERE p.puzzle_id = board_id AND p.piece_id = (d->>'pieceId')::uuid))
