@@ -192,5 +192,11 @@ class ChatEarlyResponseTest {
     String status = reader.readLine();
     assertNotNull(status);
     assertTrue(status.startsWith("HTTP/1.1 " + expected + " "), status);
+    boolean closesConnection = false;
+    String header;
+    while ((header = reader.readLine()) != null && !header.isEmpty()) {
+      if (header.equalsIgnoreCase("Connection: close")) closesConnection = true;
+    }
+    assertTrue(closesConnection, "An early response must advertise connection closure");
   }
 }

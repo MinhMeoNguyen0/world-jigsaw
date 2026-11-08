@@ -172,6 +172,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@world-jigsaw/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       react:
         specifier: 19.3.1
         version: 19.3.1
