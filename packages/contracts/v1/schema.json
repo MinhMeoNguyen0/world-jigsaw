@@ -1,0 +1,1389 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://world-jigsaw.local/contracts/v1/schema.json",
+  "title": "World Jigsaw v1",
+  "description": "Envelope union; individual data contracts are available in $defs.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Subscribe"
+    },
+    {
+      "$ref": "#/$defs/Subscribed"
+    },
+    {
+      "$ref": "#/$defs/PreviewSubmit"
+    },
+    {
+      "$ref": "#/$defs/Preview"
+    },
+    {
+      "$ref": "#/$defs/PreviewRejected"
+    },
+    {
+      "$ref": "#/$defs/PreviewCleared"
+    },
+    {
+      "$ref": "#/$defs/BoardChanged"
+    },
+    {
+      "$ref": "#/$defs/PuzzleChanged"
+    },
+    {
+      "$ref": "#/$defs/ResyncRequired"
+    },
+    {
+      "$ref": "#/$defs/Heartbeat"
+    },
+    {
+      "$ref": "#/$defs/LeaseRenewed"
+    },
+    {
+      "$ref": "#/$defs/SocketError"
+    },
+    {
+      "$ref": "#/$defs/ChatSend"
+    },
+    {
+      "$ref": "#/$defs/ChatMessage"
+    },
+    {
+      "$ref": "#/$defs/ChatAccepted"
+    }
+  ],
+  "$defs": {
+    "Point": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer",
+          "minimum": -1000000000,
+          "maximum": 1000000000
+        },
+        "y": {
+          "type": "integer",
+          "minimum": -1000000000,
+          "maximum": 1000000000
+        }
+      },
+      "required": ["x", "y"],
+      "additionalProperties": false
+    },
+    "Transform": {
+      "type": "object",
+      "properties": {
+        "translation": {
+          "$ref": "#/$defs/Point"
+        },
+        "rotation": {
+          "enum": [0, 90, 180, 270]
+        }
+      },
+      "required": ["translation", "rotation"],
+      "additionalProperties": false
+    },
+    "Edge": {
+      "type": "object",
+      "properties": {
+        "edgeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "neighborPieceId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "neighborEdgeId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "minItems": 2,
+          "maxItems": 256
+        }
+      },
+      "required": ["edgeId", "neighborPieceId", "neighborEdgeId", "path"],
+      "additionalProperties": false
+    },
+    "Piece": {
+      "type": "object",
+      "properties": {
+        "pieceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "solvedPosition": {
+          "$ref": "#/$defs/Point"
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Edge"
+          },
+          "minItems": 3,
+          "maxItems": 16
+        }
+      },
+      "required": ["pieceId", "solvedPosition", "edges"],
+      "additionalProperties": false
+    },
+    "Definition": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "definitionVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "checksum": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "bounds": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "$ref": "#/$defs/Point"
+            },
+            "max": {
+              "$ref": "#/$defs/Point"
+            }
+          },
+          "required": ["min", "max"],
+          "additionalProperties": false
+        },
+        "allowedRotations": {
+          "type": "array",
+          "items": {
+            "enum": [0, 90, 180, 270]
+          },
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "pieces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Piece"
+          },
+          "minItems": 1,
+          "maxItems": 80
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "definitionVersion",
+        "checksum",
+        "image",
+        "bounds",
+        "allowedRotations",
+        "pieces"
+      ],
+      "additionalProperties": false
+    },
+    "Group": {
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pieceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 1,
+          "maxItems": 80,
+          "uniqueItems": true
+        },
+        "transform": {
+          "$ref": "#/$defs/Transform"
+        },
+        "anchored": {
+          "type": "boolean"
+        }
+      },
+      "required": ["groupId", "revision", "pieceIds", "transform", "anchored"],
+      "additionalProperties": false
+    },
+    "Allowance": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "const": 5
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "remaining": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        }
+      },
+      "required": ["limit", "used", "remaining"],
+      "additionalProperties": false
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "definitionVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "boardVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Group"
+          },
+          "minItems": 1,
+          "maxItems": 80
+        }
+      },
+      "required": ["schemaVersion", "puzzleId", "definitionVersion", "boardVersion", "groups"],
+      "additionalProperties": false
+    },
+    "BaseRevision": {
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["groupId", "revision"],
+      "additionalProperties": false
+    },
+    "Action": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "enum": ["piece", "group"]
+        },
+        "targetId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "affectedPieceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 1,
+          "maxItems": 80,
+          "uniqueItems": true
+        },
+        "baseRevisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BaseRevision"
+          },
+          "minItems": 1,
+          "maxItems": 80
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 0,
+          "maxItems": 80,
+          "uniqueItems": true
+        },
+        "intendedTransform": {
+          "$ref": "#/$defs/Transform"
+        }
+      },
+      "required": [
+        "actionId",
+        "kind",
+        "targetId",
+        "affectedPieceIds",
+        "baseRevisions",
+        "dependsOn",
+        "intendedTransform"
+      ],
+      "additionalProperties": false
+    },
+    "Error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_REQUEST",
+            "UNAUTHENTICATED",
+            "FORBIDDEN",
+            "PUZZLE_UNAVAILABLE",
+            "PUZZLE_CLOSED",
+            "PIECE_BUSY",
+            "STALE_REVISION",
+            "QUOTA_EXCEEDED",
+            "INVALID_ACTION",
+            "TURN_CLOSED",
+            "COMMAND_CONFLICT",
+            "RESULT_EXPIRED",
+            "RATE_LIMITED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": ["code", "message", "requestId", "retryable"],
+      "additionalProperties": false
+    },
+    "Subscribe": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "subscribe"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "afterBoardVersion": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "afterBoardVersion"],
+      "additionalProperties": false
+    },
+    "Subscribed": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "subscribed"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "watermark": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "previews": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Preview"
+          },
+          "minItems": 0,
+          "maxItems": 80
+        }
+      },
+      "required": ["schemaVersion", "type", "snapshot", "watermark", "previews"],
+      "additionalProperties": false
+    },
+    "PreviewSubmit": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "preview.submit"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "action": {
+          "$ref": "#/$defs/Action"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "type",
+        "puzzleId",
+        "turnId",
+        "generation",
+        "sequence",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "Preview": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "preview"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "action": {
+          "$ref": "#/$defs/Action"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "type",
+        "puzzleId",
+        "turnId",
+        "generation",
+        "sequence",
+        "action",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "PreviewRejected": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "preview.rejected"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "error": {
+          "$ref": "#/$defs/Error"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "type",
+        "puzzleId",
+        "turnId",
+        "generation",
+        "sequence",
+        "actionId",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "PreviewCleared": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "previewCleared"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reason": {
+          "enum": ["canceled", "confirmed", "expired", "rollover", "restart", "rejected"]
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "turnId", "generation", "reason"],
+      "additionalProperties": false
+    },
+    "BoardChanged": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "boardChanged"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "boardVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "eventId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "commandId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "removedGroupIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 0,
+          "maxItems": 80,
+          "uniqueItems": true
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Group"
+          },
+          "minItems": 0,
+          "maxItems": 80
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "type",
+        "puzzleId",
+        "boardVersion",
+        "eventId",
+        "commandId",
+        "removedGroupIds",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "PuzzleChanged": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "puzzleChanged"
+        },
+        "day": {
+          "type": "string",
+          "format": "date"
+        },
+        "puzzleId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "available": {
+          "type": "boolean"
+        }
+      },
+      "required": ["schemaVersion", "type", "day", "puzzleId", "available"],
+      "additionalProperties": false
+    },
+    "ResyncRequired": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "resyncRequired"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "reason": {
+          "enum": ["gap", "history_expired", "unsupported_event", "slow_consumer", "restart"]
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "reason"],
+      "additionalProperties": false
+    },
+    "Heartbeat": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "heartbeat"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "turnId", "generation"],
+      "additionalProperties": false
+    },
+    "LeaseRenewed": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "leaseRenewed"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "turnId", "generation", "expiresAt"],
+      "additionalProperties": false
+    },
+    "SocketError": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "error"
+        },
+        "error": {
+          "$ref": "#/$defs/Error"
+        }
+      },
+      "required": ["schemaVersion", "type", "error"],
+      "additionalProperties": false
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "error": {
+          "$ref": "#/$defs/Error"
+        }
+      },
+      "required": ["schemaVersion", "error"],
+      "additionalProperties": false
+    },
+    "BeginTurn": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": ["schemaVersion", "puzzleId", "requestId"],
+      "additionalProperties": false
+    },
+    "Turn": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "boardVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "turnRevision",
+        "generation",
+        "expiresAt",
+        "boardVersion"
+      ],
+      "additionalProperties": false
+    },
+    "Confirm": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "commandId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "commandId",
+        "turnRevision",
+        "generation",
+        "actions"
+      ],
+      "additionalProperties": false
+    },
+    "Cancel": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "requestId",
+        "turnRevision",
+        "generation"
+      ],
+      "additionalProperties": false
+    },
+    "CommandResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "commandId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "enum": ["pending", "unknown", "confirmed", "rejected", "expired"]
+        },
+        "boardVersion": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Allowance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Error"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "commandId",
+        "outcome",
+        "boardVersion",
+        "allowance",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "Undo": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actionId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "requestId",
+        "turnRevision",
+        "generation",
+        "actionId"
+      ],
+      "additionalProperties": false
+    },
+    "UndoResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "removedActionIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "requestId",
+        "turnRevision",
+        "generation",
+        "removedActionIds"
+      ],
+      "additionalProperties": false
+    },
+    "CancelResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "enum": ["canceled", "confirming", "confirmed", "already_canceled"]
+        },
+        "boardVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "allowance": {
+          "$ref": "#/$defs/Allowance"
+        },
+        "commandId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "requestId",
+        "outcome",
+        "boardVersion",
+        "allowance",
+        "commandId"
+      ],
+      "additionalProperties": false
+    },
+    "CurrentGame": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "day": {
+          "type": "string",
+          "format": "date"
+        },
+        "serverTime": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "endsAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "definition": {
+          "$ref": "#/$defs/Definition"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "allowance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Allowance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ownTurn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Turn"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "day",
+        "serverTime",
+        "endsAt",
+        "definition",
+        "snapshot",
+        "allowance",
+        "ownTurn"
+      ],
+      "additionalProperties": false
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": ["schemaVersion", "displayName", "expiresAt"],
+      "additionalProperties": false
+    },
+    "ChatAssertionResponse": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "assertion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      },
+      "required": ["schemaVersion", "assertion", "expiresAt"],
+      "additionalProperties": false
+    },
+    "ChatAssertionClaims": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "iss": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sub": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "aud": {
+          "const": "world-jigsaw-chat"
+        },
+        "iat": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "exp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "jti": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": ["schemaVersion", "iss", "sub", "aud", "iat", "exp", "jti"],
+      "additionalProperties": false
+    },
+    "ChatSend": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "chat.send"
+        },
+        "messageId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": ["schemaVersion", "type", "messageId", "text"],
+      "additionalProperties": false
+    },
+    "ChatMessage": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "chat.message"
+        },
+        "messageId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": ["schemaVersion", "type", "messageId", "displayName", "text"],
+      "additionalProperties": false
+    },
+    "ChatAccepted": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "chat.accepted"
+        },
+        "messageId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": ["schemaVersion", "type", "messageId"],
+      "additionalProperties": false
+    }
+  }
+}

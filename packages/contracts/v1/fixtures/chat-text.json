@@ -1,0 +1,65 @@
+[
+  {
+    "name": "trim",
+    "input": "  hi  ",
+    "normalized": "hi",
+    "clusters": 2,
+    "valid": true
+  },
+  {
+    "name": "combining",
+    "input": "é",
+    "normalized": "é",
+    "clusters": 1,
+    "valid": true
+  },
+  {
+    "name": "emoji family",
+    "input": "👨‍👩‍👧‍👦",
+    "normalized": "👨‍👩‍👧‍👦",
+    "clusters": 1,
+    "valid": true
+  },
+  {
+    "name": "internal space",
+    "input": "a b",
+    "normalized": "a b",
+    "clusters": 3,
+    "valid": true
+  },
+  {
+    "name": "40",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "clusters": 40,
+    "valid": true
+  },
+  {
+    "name": "41",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "clusters": 41,
+    "valid": false
+  },
+  {
+    "name": "empty",
+    "input": "   ",
+    "normalized": "",
+    "clusters": 0,
+    "valid": false
+  },
+  {
+    "name": "tab",
+    "input": "a\tb",
+    "normalized": "a\tb",
+    "clusters": 3,
+    "valid": false
+  },
+  {
+    "name": "newline",
+    "input": "hi\nthere",
+    "normalized": "hi\nthere",
+    "clusters": 8,
+    "valid": false
+  }
+]

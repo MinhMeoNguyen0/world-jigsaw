@@ -1,0 +1,354 @@
+{
+  "definition": {
+    "schemaVersion": 1,
+    "puzzleId": "00000000-0000-4000-8000-000000000100",
+    "definitionVersion": 1,
+    "image": "fixture://three-squares",
+    "bounds": {
+      "min": {
+        "x": 0,
+        "y": 0
+      },
+      "max": {
+        "x": 3000,
+        "y": 1000
+      }
+    },
+    "allowedRotations": [0],
+    "pieces": [
+      {
+        "pieceId": "00000000-0000-4000-8000-000000000001",
+        "solvedPosition": {
+          "x": 0,
+          "y": 0
+        },
+        "edges": [
+          {
+            "edgeId": "top",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 0,
+                "y": 0
+              },
+              {
+                "x": 1000,
+                "y": 0
+              }
+            ]
+          },
+          {
+            "edgeId": "right",
+            "neighborPieceId": "00000000-0000-4000-8000-000000000002",
+            "neighborEdgeId": "left",
+            "path": [
+              {
+                "x": 1000,
+                "y": 0
+              },
+              {
+                "x": 1000,
+                "y": 1000
+              }
+            ]
+          },
+          {
+            "edgeId": "bottom",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 1000,
+                "y": 1000
+              },
+              {
+                "x": 0,
+                "y": 1000
+              }
+            ]
+          },
+          {
+            "edgeId": "left",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 0,
+                "y": 1000
+              },
+              {
+                "x": 0,
+                "y": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "pieceId": "00000000-0000-4000-8000-000000000002",
+        "solvedPosition": {
+          "x": 1000,
+          "y": 0
+        },
+        "edges": [
+          {
+            "edgeId": "top",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 0,
+                "y": 0
+              },
+              {
+                "x": 1000,
+                "y": 0
+              }
+            ]
+          },
+          {
+            "edgeId": "right",
+            "neighborPieceId": "00000000-0000-4000-8000-000000000003",
+            "neighborEdgeId": "left",
+            "path": [
+              {
+                "x": 1000,
+                "y": 0
+              },
+              {
+                "x": 1000,
+                "y": 1000
+              }
+            ]
+          },
+          {
+            "edgeId": "bottom",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 1000,
+                "y": 1000
+              },
+              {
+                "x": 0,
+                "y": 1000
+              }
+            ]
+          },
+          {
+            "edgeId": "left",
+            "neighborPieceId": "00000000-0000-4000-8000-000000000001",
+            "neighborEdgeId": "right",
+            "path": [
+              {
+                "x": 0,
+                "y": 1000
+              },
+              {
+                "x": 0,
+                "y": 0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "pieceId": "00000000-0000-4000-8000-000000000003",
+        "solvedPosition": {
+          "x": 2000,
+          "y": 0
+        },
+        "edges": [
+          {
+            "edgeId": "top",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 0,
+                "y": 0
+              },
+              {
+                "x": 1000,
+                "y": 0
+              }
+            ]
+          },
+          {
+            "edgeId": "right",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 1000,
+                "y": 0
+              },
+              {
+                "x": 1000,
+                "y": 1000
+              }
+            ]
+          },
+          {
+            "edgeId": "bottom",
+            "neighborPieceId": null,
+            "neighborEdgeId": null,
+            "path": [
+              {
+                "x": 1000,
+                "y": 1000
+              },
+              {
+                "x": 0,
+                "y": 1000
+              }
+            ]
+          },
+          {
+            "edgeId": "left",
+            "neighborPieceId": "00000000-0000-4000-8000-000000000002",
+            "neighborEdgeId": "right",
+            "path": [
+              {
+                "x": 0,
+                "y": 1000
+              },
+              {
+                "x": 0,
+                "y": 0
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "checksum": "sha256:73a0c04f539ae17f4a86efda97a2bbfc971adc6f1a1b8f1c7e843af26b618172"
+  },
+  "snapshot": {
+    "schemaVersion": 1,
+    "puzzleId": "00000000-0000-4000-8000-000000000100",
+    "definitionVersion": 1,
+    "boardVersion": 7,
+    "groups": [
+      {
+        "groupId": "00000000-0000-4000-8000-000000000201",
+        "revision": 2,
+        "pieceIds": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002"
+        ],
+        "transform": {
+          "translation": {
+            "x": -1000,
+            "y": 2000
+          },
+          "rotation": 0
+        },
+        "anchored": false
+      },
+      {
+        "groupId": "00000000-0000-4000-8000-000000000202",
+        "revision": 3,
+        "pieceIds": ["00000000-0000-4000-8000-000000000003"],
+        "transform": {
+          "translation": {
+            "x": 3000,
+            "y": -2000
+          },
+          "rotation": 0
+        },
+        "anchored": false
+      }
+    ]
+  },
+  "confirm": {
+    "schemaVersion": 1,
+    "puzzleId": "00000000-0000-4000-8000-000000000100",
+    "turnId": "00000000-0000-4000-8000-000000000400",
+    "commandId": "00000000-0000-4000-8000-000000000500",
+    "turnRevision": 2,
+    "generation": 1,
+    "actions": [
+      {
+        "actionId": "00000000-0000-4000-8000-000000000301",
+        "kind": "piece",
+        "targetId": "00000000-0000-4000-8000-000000000003",
+        "affectedPieceIds": ["00000000-0000-4000-8000-000000000003"],
+        "baseRevisions": [
+          {
+            "groupId": "00000000-0000-4000-8000-000000000202",
+            "revision": 3
+          }
+        ],
+        "dependsOn": [],
+        "intendedTransform": {
+          "translation": {
+            "x": 1000,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      },
+      {
+        "actionId": "00000000-0000-4000-8000-000000000302",
+        "kind": "group",
+        "targetId": "00000000-0000-4000-8000-000000000201",
+        "affectedPieceIds": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002"
+        ],
+        "baseRevisions": [
+          {
+            "groupId": "00000000-0000-4000-8000-000000000201",
+            "revision": 2
+          }
+        ],
+        "dependsOn": [],
+        "intendedTransform": {
+          "translation": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0
+        }
+      }
+    ]
+  },
+  "preview": {
+    "schemaVersion": 1,
+    "type": "preview",
+    "puzzleId": "00000000-0000-4000-8000-000000000100",
+    "turnId": "00000000-0000-4000-8000-000000000400",
+    "generation": 1,
+    "sequence": 2,
+    "action": {
+      "actionId": "00000000-0000-4000-8000-000000000301",
+      "kind": "piece",
+      "targetId": "00000000-0000-4000-8000-000000000003",
+      "affectedPieceIds": ["00000000-0000-4000-8000-000000000003"],
+      "baseRevisions": [
+        {
+          "groupId": "00000000-0000-4000-8000-000000000202",
+          "revision": 3
+        }
+      ],
+      "dependsOn": [],
+      "intendedTransform": {
+        "translation": {
+          "x": 1000,
+          "y": 0
+        },
+        "rotation": 0
+      }
+    },
+    "expiresAt": "2026-11-07T23:59:59Z"
+  },
+  "expected": {
+    "pending": 2,
+    "beforeRemaining": 5,
+    "afterRemaining": 3,
+    "afterBoardVersion": 8
+  }
+}

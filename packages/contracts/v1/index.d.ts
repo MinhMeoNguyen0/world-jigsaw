@@ -1,0 +1,28 @@
+export * from './types.js'
+export interface ValidationResult {
+  valid: boolean
+  errors: unknown[]
+}
+export function validate(type: string, value: unknown): ValidationResult
+export function validateBoard(definition: unknown, snapshot: unknown): ValidationResult
+export function applyBoardChanged(
+  definition: unknown,
+  snapshot: import('./types.js').Snapshot,
+  event: unknown,
+  seenEvents?: Record<number, string>,
+):
+  | { status: 'resync' | 'duplicate' }
+  | {
+      status: 'applied'
+      snapshot: import('./types.js').Snapshot
+      seenEvents: Record<number, string>
+    }
+export interface PreviewState {
+  puzzleId: string
+  turnId: string
+  generation: number
+  sequence: number
+  closed: boolean
+  actions: Record<string, import('./types.js').Action>
+}
+export function applyPreview(state: PreviewState | null, event: unknown): PreviewState | null

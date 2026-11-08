@@ -10,3 +10,5 @@ docs/PLAN.md
 # Backend-owned files are outside the web formatting scope.
 .github/workflows/backend.yml
 docker-compose.yml
+# Generated Gradle reports are not source.
+services/backend/build/
