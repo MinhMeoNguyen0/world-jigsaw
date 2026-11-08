@@ -26,18 +26,15 @@ class GameCommandController {
   private final LocalSessions sessions;
   private final GameWireValidator wire;
   private final GameCoordinator game;
-  private final ConfirmationJournal journal;
   private final ObjectMapper mapper = new ObjectMapper();
 
   GameCommandController(
       LocalSessions sessions,
       GameWireValidator wire,
-      GameCoordinator game,
-      ConfirmationJournal journal) {
+      GameCoordinator game) {
     this.sessions = sessions;
     this.wire = wire;
     this.game = game;
-    this.journal = journal;
   }
 
   @PostMapping("/api/v1/game/turns")
@@ -79,7 +76,7 @@ class GameCommandController {
       @RequestParam(required = false) UUID puzzleId,
       HttpServletRequest request) {
     UUID subject = subject(request, false);
-    JsonNode known = journal.find(subject, commandId);
+    JsonNode known = game.commandStatus(subject, commandId);
     if (known != null) return response(known);
     if (puzzleId == null) {
       Map<String, Object> current = game.current(subject);

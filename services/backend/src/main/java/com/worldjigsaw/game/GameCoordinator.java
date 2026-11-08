@@ -44,6 +44,8 @@ class GameCoordinator {
 
   private record Subscriber(UUID subject, UUID puzzle, Sink sink) {}
 
+  private record PendingReceipt(UUID request, String kind, JsonNode payload, Runnable apply) {}
+
   record Started(
       UUID puzzle,
       UUID turnId,
@@ -63,6 +65,7 @@ class GameCoordinator {
     final JsonNode definition;
     final Set<UUID> usedActions = new HashSet<>();
     DraftRules.Draft draft;
+    PendingReceipt pendingReceipt;
     long generation, revision, lastClientSequence = -1;
     final long boardVersion;
 
@@ -127,6 +130,7 @@ class GameCoordinator {
   }
 
   synchronized JsonNode begin(UUID subject, JsonNode payload) {
+    drainLeaseClears();
     UUID puzzle = BoardValidator.id(payload, "puzzleId"),
         request = BoardValidator.id(payload, "requestId");
     GameIdentityLedger.Receipt existing = identities.lookup(subject, request, "begin", payload);
@@ -154,6 +158,7 @@ class GameCoordinator {
   }
 
   synchronized Changed preview(UUID subject, JsonNode payload) {
+    drainLeaseClears();
     UUID turnId = BoardValidator.id(payload, "turnId"),
         puzzle = BoardValidator.id(payload, "puzzleId");
     long generation = payload.path("generation").longValue();
@@ -168,6 +173,7 @@ class GameCoordinator {
   }
 
   synchronized TurnLeaseRegistry.Info heartbeat(UUID subject, JsonNode payload) {
+    drainLeaseClears();
     UUID turnId = BoardValidator.id(payload, "turnId"),
         puzzle = BoardValidator.id(payload, "puzzleId");
     long generation = payload.path("generation").longValue();
@@ -253,19 +259,14 @@ class GameCoordinator {
               .filter(id -> !id.equalsIgnoreCase(moving))
               .sorted(String.CASE_INSENSITIVE_ORDER)
               .toList());
+      List<String> order =
+          targets.isEmpty() ? List.of() : attachmentOrder(candidate, moving, targets, turn, current);
+      if (order == null) throw error("INVALID_ACTION", "Cannot join selected groups");
       String currentGroup = moving;
-      while (!targets.isEmpty()) {
-        String target = null;
-        for (String possible : targets)
-          if (rules.canAttach(candidate, currentGroup, possible)) {
-            target = possible;
-            break;
-          }
-        if (target == null) throw error("INVALID_ACTION", "Not adjacent or outside snap tolerance");
+      for (String target : order) {
         String merged = identities.reserveGroup(turn.puzzle).toString();
         candidate = rules.attach(candidate, currentGroup, target, merged);
         currentGroup = merged;
-        targets.remove(target);
       }
       rules.confirm(
           candidate,
@@ -293,6 +294,38 @@ class GameCoordinator {
       drainLeaseClears();
       throw ex;
     }
+  }
+
+  private List<String> attachmentOrder(
+      DraftRules.Draft draft, String moving, List<String> remaining, Turn turn, JsonNode current) {
+    if (remaining.isEmpty()) {
+      try {
+        rules.confirm(draft, current.path("snapshot"), current.path("allowance").path("remaining").intValue());
+        if (LocalGeometry.hasForbiddenOverlap(turn.definition, combined(current.path("snapshot"), turn, draft)))
+          return null;
+        return new ArrayList<>();
+      } catch (DraftRules.RuleError invalid) {
+        return null;
+      }
+    }
+    for (String target : remaining) {
+      if (!rules.canAttach(draft, moving, target)) continue;
+      String merged = UUID.randomUUID().toString();
+      DraftRules.Draft next;
+      try {
+        next = rules.attach(draft, moving, target, merged);
+      } catch (DraftRules.RuleError invalid) {
+        continue;
+      }
+      List<String> rest = new ArrayList<>(remaining);
+      rest.remove(target);
+      List<String> order = attachmentOrder(next, merged, rest, turn, current);
+      if (order != null) {
+        order.addFirst(target);
+        return order;
+      }
+    }
+    return null;
   }
 
   synchronized void subscribe(UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink) {
@@ -425,6 +458,7 @@ class GameCoordinator {
 
   /** Returns a durable result only after the transaction has completed. */
   synchronized JsonNode confirm(UUID subject, JsonNode payload) {
+    drainLeaseClears();
     UUID puzzle = BoardValidator.id(payload, "puzzleId"),
         turnId = BoardValidator.id(payload, "turnId"),
         command = BoardValidator.id(payload, "commandId");
@@ -543,6 +577,30 @@ class GameCoordinator {
     return result;
   }
 
+  synchronized JsonNode commandStatus(UUID subject, UUID command) {
+    drainLeaseClears();
+    JsonNode result = journal.find(subject, command);
+    for (Turn turn : List.copyOf(turns.values())) {
+      if (!turn.subject.equals(subject)) continue;
+      UUID processing;
+      try {
+        processing = leases.confirming(subject, turn.id, turn.generation);
+      } catch (TurnLeaseRegistry.LeaseError expired) {
+        drainLeaseClears();
+        continue;
+      }
+      if (!command.equals(processing)) continue;
+      if (result == null) {
+        leases.finishConfirm(subject, turn.id, turn.generation, command, false);
+        drainLeaseClears();
+      } else {
+        if ("confirmed".equals(result.path("outcome").asText())) forceResyncAll("gap");
+        finishConfirmedTurn(turn, command, result, -1);
+      }
+    }
+    return result;
+  }
+
   private void finishConfirmedTurn(Turn turn, UUID command, JsonNode result, long changedVersion) {
     boolean confirmed = "confirmed".equals(result.path("outcome").asText());
     if (confirmed && changedVersion >= 0) {
@@ -597,6 +655,7 @@ class GameCoordinator {
   }
 
   synchronized JsonNode cancel(UUID subject, JsonNode payload) {
+    drainLeaseClears();
     UUID puzzle = BoardValidator.id(payload, "puzzleId"),
         turnId = BoardValidator.id(payload, "turnId"),
         requestId = BoardValidator.id(payload, "requestId");
@@ -662,25 +721,35 @@ class GameCoordinator {
       return result; // Pending is not a permanent receipt.
     Instant acceptedAt = clock.instant();
     if (turn != null && processing == null) leases.info(subject, turnId, turn.generation);
+    UUID pinned = processing;
+    if (turn != null)
+      turn.pendingReceipt = new PendingReceipt(requestId, "cancel", payload.deepCopy(),
+          () -> applyCancel(turn, confirmed, pinned, acceptedAt));
     GameIdentityLedger.Receipt saved =
         identities.record(subject, puzzle, requestId, "cancel", payload, result);
+    if (turn != null) turn.pendingReceipt = null;
     if (saved.conflict())
       throw error("COMMAND_CONFLICT", "Request ID was already used with different content");
-    if (turn != null && confirmed == null) {
-      leases.clearAt(subject, turnId, turn.generation, "canceled", acceptedAt);
-      drainLeaseClears();
-    } else if (turn != null && confirmed != null) {
-      forceResyncAll("gap");
-      if (processing != null) finishConfirmedTurn(turn, processing, confirmed, -1);
-      else {
-        leases.clearAt(subject, turnId, turn.generation, "confirmed", acceptedAt);
-        drainLeaseClears();
-      }
-    }
+    if (turn != null) applyCancel(turn, confirmed, processing, acceptedAt);
     return saved.result();
   }
 
+  private void applyCancel(Turn turn, JsonNode confirmed, UUID processing, Instant acceptedAt) {
+    if (confirmed == null) {
+      leases.clearAt(turn.subject, turn.id, turn.generation, "canceled", acceptedAt);
+      drainLeaseClears();
+    } else {
+      forceResyncAll("gap");
+      if (processing != null) finishConfirmedTurn(turn, processing, confirmed, -1);
+      else {
+        leases.clearAt(turn.subject, turn.id, turn.generation, "confirmed", acceptedAt);
+        drainLeaseClears();
+      }
+    }
+  }
+
   synchronized JsonNode undo(UUID subject, JsonNode payload) {
+    drainLeaseClears();
     UUID puzzle = BoardValidator.id(payload, "puzzleId"),
         turnId = BoardValidator.id(payload, "turnId"),
         requestId = BoardValidator.id(payload, "requestId"),
@@ -725,8 +794,11 @@ class GameCoordinator {
             .put("turnRevision", turn.revision + 1)
             .put("generation", generation + 1)
             .put("actionId", actionId.toString());
+    turn.pendingReceipt = new PendingReceipt(requestId, "undo", payload.deepCopy(),
+        () -> applyUndo(turn, updated, survivors, acceptedAt));
     GameIdentityLedger.Receipt saved =
         identities.record(subject, puzzle, requestId, "undo", payload, result);
+    turn.pendingReceipt = null;
     if (saved.conflict())
       throw error("COMMAND_CONFLICT", "Request ID was already used with different content");
     applyUndo(turn, updated, survivors, acceptedAt);
@@ -858,6 +930,14 @@ class GameCoordinator {
 
   private void drainLeaseClears() {
     writer.check();
+    for (Turn turn : List.copyOf(turns.values())) {
+      PendingReceipt pending = turn.pendingReceipt;
+      if (pending == null) continue;
+      GameIdentityLedger.Receipt receipt =
+          identities.lookup(turn.subject, pending.request(), pending.kind(), pending.payload());
+      turn.pendingReceipt = null;
+      if (receipt != null && !receipt.conflict()) pending.apply().run();
+    }
     TurnLeaseRegistry.ClearBatch batch = leases.drainClears();
     if (batch.resyncRequired()) {
       forceResyncAll("gap");
