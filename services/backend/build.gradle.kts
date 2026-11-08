@@ -18,7 +18,7 @@ repositories {
 }
 
 dependencies {
-    // Spring Boot's BOM pins every library version below.
+    // Spring Boot's BOM pins the Spring and database dependencies below.
     implementation(platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES))
 
     implementation("org.springframework.boot:spring-boot-starter-webmvc")

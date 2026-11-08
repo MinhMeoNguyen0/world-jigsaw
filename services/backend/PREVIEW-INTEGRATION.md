@@ -18,15 +18,16 @@ snapshot, queue or replay events across subscription, and order each accepted pr
 with its broadcast. A `snapshot()` call alone is not an atomic network handoff. Confirm must clear
 the overlay only in coordination with the actual durable outcome; it must not turn a preview into
 a claimed save. The generator, rules engine, database/import/read API, session identity and live
-transport are separate pending work. See `packages/contracts/README.md` for the v1 contract and
+transport are separate pending work. See the [v1 contract](../../packages/contracts/README.md) and
 its unresolved integration constraints.
 
 ## Private transport demo
 
 Run `./gradlew previewDemo` from `services/backend`. It prints an ephemeral WebSocket address bound
 only to `127.0.0.1`. Connect two local non-browser WebSocket clients to that address. On connection
-each receives `active` followed by zero or more `|sequence,action-uuid,x` entries in sequence
-order. Send `preview|sequence|action-uuid|x` to update a piece, or `cancel` to clear the turn.
+each receives the current state: `active` followed by zero or more `|sequence,action-uuid,x`
+entries in sequence order, or `cleared` after cancellation. Send `preview|sequence|action-uuid|x`
+to update a piece, or `cancel` to clear the turn.
 Every client receives the resulting full state; after cancellation the state is `cleared` and late
 frames cannot restore it. Disconnecting and reconnecting sends the current state. The focused
 integration test is `./gradlew test --tests com.worldjigsaw.game.PreviewDemoServerTest`.

@@ -68,7 +68,12 @@ public final class PreviewDemoServer extends WebSocketServer {
         UUID actionId = UUID.fromString(fields[2]);
         long x = Long.parseLong(fields[3]);
         Action action =
-            new Action(actionId, "piece", actionId, List.of(actionId), List.of(),
+            new Action(
+                actionId,
+                "piece",
+                actionId,
+                List.of(actionId),
+                List.of(),
                 new Transform(new Point(x, 0), 0));
         previews.publish(sequence, action, Instant.parse("9999-12-31T23:59:59Z"));
       } catch (IllegalArgumentException exception) {
@@ -86,8 +91,12 @@ public final class PreviewDemoServer extends WebSocketServer {
     }
     StringBuilder result = new StringBuilder("active");
     for (var preview : previews.snapshot()) {
-      result.append('|').append(preview.sequence()).append(',')
-          .append(preview.action().actionId()).append(',')
+      result
+          .append('|')
+          .append(preview.sequence())
+          .append(',')
+          .append(preview.action().actionId())
+          .append(',')
           .append(preview.action().intendedTransform().translation().x());
     }
     return result.toString();
