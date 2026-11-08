@@ -122,12 +122,12 @@ const counted = (d: Draft, a: PendingAction) => {
     a.entered
   )
 }
-const chargeJoinedMovement = (d: Draft, moving: DraftGroup, to: Transform, actionIds: string[]) => {
+const chargeJoinedMovement = (d: Draft, moving: DraftGroup, to: Transform) => {
   const from = moving.group.transform
   if (equalTransform(from, to)) return
-  const actions = d.actions.filter((a) => actionIds.some((id) => same(id, a.id)))
+  const actions = d.actions.filter((a) => moving.actions.some((id) => same(id, a.id)))
   for (const action of actions) {
-    if (!moving.actions.some((id) => same(id, action.id)) || action.joinedCharge) continue
+    if (action.joinedCharge) continue
     const src = original(d, action.source)
     if (
       src.pieceIds.length === 1 &&
@@ -269,7 +269,7 @@ export function move(draft: Draft, groupId: string, actionId: string, transform:
     g.actions.push(actionId)
   }
   checkWorkspace(d, { ...g.group, transform })
-  if (g.sources.length > 1) chargeJoinedMovement(d, g, transform, g.actions)
+  if (g.sources.length > 1) chargeJoinedMovement(d, g, transform)
   g.group.transform = copy(transform)
   const src = original(d, action.source)
   if (
@@ -330,7 +330,7 @@ export function attach(
   for (const action of d.actions)
     if ([...moving.actions, ...target.actions].some((id) => same(id, action.id)))
       action.joinedCharge = counted(d, action)
-  chargeJoinedMovement(d, moving, target.group.transform, [...moving.actions, ...target.actions])
+  chargeJoinedMovement(d, moving, target.group.transform)
   d.groups = d.groups.filter((g) => g !== moving && g !== target)
   d.groups.push({
     group,

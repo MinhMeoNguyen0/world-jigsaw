@@ -133,6 +133,52 @@ test('moving an unpaid joined group costs one move and respects quota', () => {
   rejects(() => move(group, action(100), action(3), shifted), 'QUOTA_EXCEEDED')
 })
 
+test('snapping an independently moved component charges it beside a paid target', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/review-60.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  let setup = move(
+    begin(definition, snapshot, allowance),
+    snapshot.groups[0].groupId,
+    action(10),
+    solved,
+  )
+  setup = attach(setup, snapshot.groups[0].groupId, snapshot.groups[1].groupId, action(90), 0, 0)
+  const connected = confirm(setup, snapshot, allowance).snapshot
+  const scenarios = [
+    { board: snapshot, moving: snapshot.groups[0].groupId, target: snapshot.groups[1].groupId },
+    { board: snapshot, moving: snapshot.groups[1].groupId, target: snapshot.groups[0].groupId },
+    { board: connected, moving: action(90), target: snapshot.groups[2].groupId },
+  ]
+  const transforms: Transform[] = [
+    { rotation: 0, translation: { x: 100, y: 0 } },
+    { rotation: 0, translation: { x: -100, y: 0 } },
+    { rotation: 0, translation: { x: 0, y: 100 } },
+    { rotation: 0, translation: { x: 0, y: -100 } },
+    { rotation: 90000, translation: { x: 400000, y: 0 } },
+  ]
+  const oneMove = { limit: 5 as const, used: 4, remaining: 1 }
+  for (const { board, moving, target } of scenarios) {
+    for (const transform of transforms) {
+      let draft = move(begin(definition, board, oneMove), target, action(1), transform)
+      draft = move(draft, moving, action(2), solved)
+      assert.equal(pendingCount(draft), 1)
+      rejects(() => attach(draft, moving, target, action(99), 10000000, 180000), 'QUOTA_EXCEEDED')
+      assert.equal(pendingCount(draft), 1)
+
+      let paid = move(begin(definition, board, allowance), target, action(1), transform)
+      paid = move(paid, moving, action(2), solved)
+      paid = attach(paid, moving, target, action(99), 10000000, 180000)
+      assert.equal(pendingCount(paid), 2)
+      rejects(() => confirm(paid, board, oneMove), 'QUOTA_EXCEEDED')
+      paid = move(paid, action(99), action(2), solved)
+      assert.equal(pendingCount(paid), 2)
+      assert.equal(confirm(paid, board, allowance).charged, 2)
+    }
+  }
+})
+
 test('an outer sort entering after a join is charged and keeps that charge', () => {
   const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
     definition: Definition

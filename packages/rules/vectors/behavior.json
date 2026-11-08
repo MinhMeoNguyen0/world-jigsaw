@@ -50,6 +50,17 @@
   ],
   "accounting": [
     {
+      "events": [
+        "move placed target",
+        "start stationary neighbor",
+        "snap neighbor",
+        "adjust group",
+        "confirm"
+      ],
+      "pending": [1, 1, 2, 2, 0],
+      "remaining": [5, 5, 5, 5, 3]
+    },
+    {
       "events": ["stationary placed action", "enter neighbor", "attach", "confirm"],
       "pending": [0, 1, 1, 0],
       "remaining": [5, 5, 5, 4]
