@@ -121,7 +121,7 @@ settle, provided its local lock remains valid and no successor has replaced its 
 must resubscribe after recovery. Stop the backend process before starting a replacement; after restart,
 unsaved drafts are lost, while committed Confirm results remain available by command ID.
 
-The socket accepts v1 `subscribe`, `preview.submit`, and `heartbeat` messages and fans out temporary
+The socket accepts v1 `subscribe` or the negotiated `subscribe.v2` handoff, `preview.submit`, and `heartbeat` messages and fans out temporary
 previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a
 turn; its `/confirm`, `/cancel`, and `/undo` routes settle or discard that turn. A confirmed batch,
 its quota charge, board version, event and command result commit together. Cancel reveals the latest

@@ -19,7 +19,16 @@ import org.springframework.stereotype.Component;
 @Component
 class GameWireValidator {
   private static final Set<String> TYPES =
-      Set.of("BeginTurn", "Confirm", "Cancel", "Undo", "Subscribe", "PreviewSubmit", "Heartbeat");
+      Set.of(
+          "BeginTurn",
+          "Confirm",
+          "ConfirmV2",
+          "Cancel",
+          "UndoV2",
+          "Subscribe",
+          "SubscribeV2",
+          "PreviewSubmit",
+          "Heartbeat");
   private static final Set<String> UNIQUE_UUID_ARRAYS =
       Set.of("pieceIds", "affectedPieceIds", "removedGroupIds");
   private final ObjectMapper mapper =

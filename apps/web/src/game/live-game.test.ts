@@ -50,15 +50,29 @@ class TestSocket {
   }
 }
 
+function socketAt(sockets: TestSocket[], index: number) {
+  const socket = sockets[index]
+  if (!socket) throw new Error('Game socket was not created')
+  return socket
+}
+
 function harness() {
   const sockets: TestSocket[] = []
   let game = structuredClone(current)
   let commandReply: Promise<Response> | null = null
+  let undoReply: Promise<Response> | null = null
   let currentUnavailable = false
   const calls: string[] = []
-  const fetcher = vi.fn((input: RequestInfo | URL) => {
+  const undoBodies: unknown[] = []
+  const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     calls.push(path)
+    if (path.endsWith('/undo')) {
+      if (!undoReply) throw new Error('Missing undo response')
+      if (typeof init?.body !== 'string') throw new Error('Missing undo payload')
+      undoBodies.push(JSON.parse(init.body) as unknown)
+      return undoReply
+    }
     if (path.includes('/commands/') || path.endsWith('/confirm')) {
       if (!commandReply) throw new Error('Missing command response')
       return commandReply
@@ -118,6 +132,7 @@ function harness() {
     client,
     sockets,
     calls,
+    undoBodies,
     start,
     subscribe,
     setGame: (value: CurrentGame) => {
@@ -128,6 +143,9 @@ function harness() {
     },
     setCommandReply: (value: Promise<Response>) => {
       commandReply = value
+    },
+    setUndoReply: (value: Promise<Response>) => {
+      undoReply = value
     },
   }
 }
@@ -406,6 +424,7 @@ describe('live game adapter', () => {
     ['confirm', 'confirmed'],
     ['confirm', 'unknown'],
     ['confirm', 'failure'],
+    ['confirm', 'definitive failure'],
   ] as const)(
     'preserves a newer retained command after a stale %s %s response',
     async (operation, outcome) => {
@@ -423,6 +442,22 @@ describe('live game adapter', () => {
       if (outcome === 'failure') {
         delayed.reject(new TypeError('lost response'))
         await expect(stale).rejects.toThrow('lost response')
+      } else if (outcome === 'definitive failure') {
+        delayed.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              error: {
+                code: 'STALE_REVISION',
+                message: 'Draft changed',
+                requestId: commandA.commandId,
+                retryable: false,
+              },
+            }),
+            { status: 409 },
+          ),
+        )
+        await expect(stale).rejects.toThrow('STALE_REVISION')
       } else {
         delayed.resolve(
           outcome === 'confirmed'
@@ -476,4 +511,424 @@ describe('live game adapter', () => {
     expect(h.client.getState().connection).toBe('disconnected')
     expect(h.sockets).toHaveLength(0)
   })
+})
+
+describe('versioned subscription and preview receipts', () => {
+  const action = fixture.confirm.actions[0] as Confirm['actions'][number]
+  const handoff = (actions: Confirm['actions'][number][] = [], draftRevision = 0) => ({
+    schemaVersion: 1,
+    type: 'subscribed.v2',
+    snapshot: current.snapshot,
+    watermark: current.snapshot.boardVersion,
+    previews: [],
+    allowance: current.allowance,
+    ownTurn: turn,
+    actions,
+    nextSequence: draftRevision,
+    draftRevision,
+  })
+  const accepted = (sequence: number, draftRevision: number) => ({
+    schemaVersion: 1,
+    type: 'preview.accepted',
+    puzzleId,
+    turnId: turn.turnId,
+    generation: turn.generation,
+    sequence,
+    actionId: action.actionId,
+    draftRevision,
+    actions: [action],
+  })
+
+  it('confirms only the latest correlated receipt and retains its exact action and revision', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    expect(h.client.getState().connection).toBe('ready')
+    h.client.preview(action)
+    socket.emit(accepted(1, 1))
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    socket.emit(accepted(0, 1))
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    socket.emit(accepted(1, 2))
+    const pending = deferred<Response>()
+    h.setCommandReply(pending.promise)
+    const result = h.client.confirm()
+    expect(h.client.getState().pendingConfirm).toMatchObject({
+      draftRevision: 2,
+      actions: [action],
+      turnRevision: turn.turnRevision,
+    })
+    pending.resolve(
+      new Response(
+        JSON.stringify({
+          ...fixture.commandResult,
+          commandId: h.client.getState().pendingConfirm?.commandId,
+        }),
+      ),
+    )
+    await result
+  })
+
+  it('requires cancellation for a recovered draft and does not trust duplicate handoffs', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff([action], 1))
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    socket.emit(handoff())
+    expect(h.client.getState().connection).not.toBe('ready')
+  })
+
+  it('resynchronizes on a receipt that reveals another tab changed the draft', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 2))
+    expect(h.client.getState().connection).not.toBe('ready')
+    await expect(h.client.confirm()).rejects.toThrow()
+  })
+
+  it('never treats a lost receipt or an old socket as acceptance', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.drop()
+    await h.client.connect()
+    const replacement = h.sockets.at(-1)
+    if (!replacement) throw new Error('Missing replacement socket')
+    replacement.open()
+    replacement.emit(handoff([action], 1))
+    socket.emit(accepted(0, 1))
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
+  })
+
+  it('preserves an acknowledged draft after another player changes the board', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    const changedGroup = fixture.boardChanged.groups[0]
+    const unchangedGroup = current.snapshot.groups[1]
+    if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
+    const [firstPiece, ...otherPieces] = changedGroup.pieceIds
+    if (!firstPiece) throw new Error('Missing fixture piece')
+    const snapshot: CurrentGame['snapshot'] = {
+      ...current.snapshot,
+      boardVersion: fixture.boardChanged.boardVersion,
+      groups: [{ ...changedGroup, pieceIds: [firstPiece, ...otherPieces] }, unchangedGroup],
+    }
+    h.setGame({ ...current, snapshot, ownTurn: turn })
+    socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...handoff([action], 1), snapshot, watermark: snapshot.boardVersion })
+    expect(h.client.getState().issue).toBeNull()
+    const response = deferred<Response>()
+    h.setCommandReply(response.promise)
+    const pending = h.client.confirm()
+    expect(h.client.getState().pendingConfirm).toMatchObject({
+      draftRevision: 1,
+      actions: [action],
+    })
+    response.resolve(
+      new Response(
+        JSON.stringify({
+          ...fixture.commandResult,
+          commandId: h.client.getState().pendingConfirm?.commandId,
+        }),
+      ),
+    )
+    await pending
+  })
+
+  it('preserves acknowledged work after a rejected preview', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.client.preview(action)
+    socket.emit({
+      schemaVersion: 1,
+      type: 'preview.rejected',
+      puzzleId,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 1,
+      actionId: action.actionId,
+      error: {
+        code: 'INVALID_ACTION',
+        message: 'Invalid move',
+        requestId: action.actionId,
+        retryable: false,
+      },
+    })
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 1))
+    h.client.preview(action)
+    expect(next.sent).toHaveLength(2)
+  })
+
+  it('preserves acknowledged work after a rejected confirmation', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.setCommandReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'INVALID_ACTION',
+              message: 'Invalid move',
+              requestId: action.actionId,
+              retryable: false,
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    )
+    await expect(h.client.confirm()).rejects.toThrow('INVALID_ACTION')
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 1))
+    h.client.preview(action)
+    expect(next.sent).toHaveLength(2)
+  })
+
+  it.each(['before handoff', 'after handoff'] as const)(
+    'reconciles a definitive confirmation rejection %s after resynchronization',
+    async (order) => {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      const response = deferred<Response>()
+      h.setCommandReply(response.promise)
+      const pending = h.client.confirm()
+      const changedGroup = fixture.boardChanged.groups[0]
+      const unchangedGroup = current.snapshot.groups[1]
+      if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
+      const [firstPiece, ...otherPieces] = changedGroup.pieceIds
+      if (!firstPiece) throw new Error('Missing fixture piece')
+      const snapshot: CurrentGame['snapshot'] = {
+        ...current.snapshot,
+        boardVersion: fixture.boardChanged.boardVersion,
+        groups: [{ ...changedGroup, pieceIds: [firstPiece, ...otherPieces] }, unchangedGroup],
+      }
+      const recovered = { ...handoff([action], 1), snapshot, watermark: snapshot.boardVersion }
+      h.setGame({ ...current, snapshot, ownTurn: turn })
+      socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(2)
+      })
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      if (order === 'after handoff') next.emit(recovered)
+      response.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'STALE_REVISION',
+              message: 'Draft changed',
+              requestId: action.actionId,
+              retryable: false,
+            },
+          }),
+          { status: 409 },
+        ),
+      )
+      await expect(pending).rejects.toThrow('STALE_REVISION')
+      expect(h.client.getState().pendingConfirm).toBeNull()
+      if (order === 'before handoff') next.emit(recovered)
+      else {
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(3)
+        })
+        const refreshed = socketAt(h.sockets, 2)
+        refreshed.open()
+        refreshed.emit(recovered)
+      }
+      expect(h.client.getState().connection).toBe('ready')
+      h.client.preview(action)
+      expect(h.client.getState().previewPending).toBe(true)
+    },
+  )
+
+  it('retains an unknown confirmation outcome after resynchronization', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    const response = deferred<Response>()
+    h.setCommandReply(response.promise)
+    const pending = h.client.confirm()
+    socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 1))
+    response.reject(new TypeError('connection lost'))
+    await expect(pending).rejects.toThrow('connection lost')
+    expect(h.client.getState().pendingConfirm).not.toBeNull()
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
+  })
+
+  it('resynchronizes after a stale undo without trusting the newer draft', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.setUndoReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            error: {
+              code: 'STALE_REVISION',
+              message: 'Draft changed',
+              requestId: action.actionId,
+              retryable: false,
+            },
+          }),
+          { status: 409 },
+        ),
+      ),
+    )
+    await expect(h.client.undo(action.actionId)).rejects.toThrow('STALE_REVISION')
+    expect(h.undoBodies).toEqual([
+      expect.objectContaining({ draftRevision: 1, actionId: action.actionId }),
+    ])
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([action], 2))
+    expect(h.client.getState().connection).toBe('ready')
+    await expect(h.client.undo(action.actionId)).rejects.toThrow('not ready')
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
+  })
+
+  it.each(['handoff first', 'response first'] as const)(
+    'keeps surviving actions after undo when %s',
+    async (order) => {
+      const h = harness()
+      const second = fixture.confirm.actions[1] as Confirm['actions'][number]
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      h.client.preview(second)
+      socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
+      const response = deferred<Response>()
+      h.setUndoReply(response.promise)
+      const pending = h.client.undo(action.actionId)
+      expect(h.undoBodies).toEqual([
+        expect.objectContaining({ draftRevision: 2, actionId: action.actionId }),
+      ])
+      const newTurn = {
+        ...turn,
+        generation: turn.generation + 1,
+        turnRevision: turn.turnRevision + 1,
+      }
+      const result = new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          puzzleId,
+          turnId: turn.turnId,
+          requestId: '00000000-0000-4000-8000-000000000001',
+          turnRevision: newTurn.turnRevision,
+          generation: newTurn.generation,
+          actionId: action.actionId,
+        }),
+      )
+      h.setGame({ ...current, ownTurn: newTurn })
+      if (order === 'handoff first') {
+        socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
+        socketAt(h.sockets, 1).open()
+        socketAt(h.sockets, 1).emit({ ...handoff([second], 3), ownTurn: newTurn, nextSequence: 0 })
+        response.resolve(result)
+        await pending
+      } else {
+        response.resolve(result)
+        await pending
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
+        socketAt(h.sockets, 1).open()
+        socketAt(h.sockets, 1).emit({ ...handoff([second], 3), ownTurn: newTurn, nextSequence: 0 })
+      }
+      expect(h.client.getState().issue).toBeNull()
+      h.client.preview(second)
+      expect(socketAt(h.sockets, 1).sent).toHaveLength(2)
+    },
+  )
+
+  it.each(['revision', 'actions', 'generation', 'turn revision', 'sequence'] as const)(
+    'blocks a recovered draft when its %s conflicts with acknowledged work',
+    async (conflict) => {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit({
+        ...handoff(
+          [conflict === 'actions' ? { ...action, kind: 'sort' } : action],
+          conflict === 'revision' ? 2 : 1,
+        ),
+        ownTurn: {
+          ...turn,
+          generation: turn.generation + (conflict === 'generation' ? 1 : 0),
+          turnRevision: turn.turnRevision + (conflict === 'turn revision' ? 1 : 0),
+        },
+        nextSequence: conflict === 'sequence' ? 2 : 1,
+      })
+      expect(h.client.getState().connection).toBe('ready')
+      expect(() => {
+        h.client.preview(action)
+      }).toThrow('not ready')
+      await expect(h.client.confirm()).rejects.toThrow('not ready')
+    },
+  )
 })

@@ -124,7 +124,7 @@ class GameCoordinatorTest {
     assertThat(game.subscribe(puzzle).previews()).hasSize(1);
     assertThatThrownBy(() -> game.preview(a, first.turnId(), 0, 3, a0))
         .isInstanceOf(DraftRules.RuleError.class);
-    JsonNode undoB = undoPayload(puzzle, second.turnId(), 0, 0, actionB, UUID.randomUUID());
+    JsonNode undoB = undoPayload(puzzle, second.turnId(), 0, 0, 1, actionB, UUID.randomUUID());
     JsonNode undone = game.undo(b, undoB);
     assertThat(undone.path("generation").longValue()).isEqualTo(1);
     assertThat(game.undo(b, undoB)).isEqualTo(undone);
@@ -155,7 +155,7 @@ class GameCoordinatorTest {
     assertThat(joined.previews().get(1).action().targetId())
         .isEqualTo(joined.previews().get(0).action().targetId());
     assertThatThrownBy(() ->
-            game.undo(b, undoPayload(puzzle, second.turnId(), 1, 1, joinedA, UUID.randomUUID())))
+            game.undo(b, undoPayload(puzzle, second.turnId(), 1, 1, 5, joinedA, UUID.randomUUID())))
         .isInstanceOf(DraftRules.RuleError.class)
         .hasMessageContaining("Joined");
     assertThat(
@@ -400,7 +400,7 @@ class GameCoordinatorTest {
     UUID undoneAction = UUID.randomUUID();
     game.preview(subject, undoTurn.turnId(), 0, 1, action(undoneAction, g0, 0, 0));
     UUID undoId = UUID.randomUUID();
-    JsonNode undo = undoPayload(puzzle, undoTurn.turnId(), 0, 0, undoneAction, undoId);
+    JsonNode undo = undoPayload(puzzle, undoTurn.turnId(), 0, 0, 1, undoneAction, undoId);
     JsonNode undoResult = mapper.createObjectNode().put("generation", 1).put("turnRevision", 1);
     identities.record(subject, puzzle, undoId, "undo", undo, undoResult);
     assertThat(game.undo(subject, undo)).isEqualTo(undoResult);
@@ -478,8 +478,15 @@ class GameCoordinatorTest {
   }
 
   private JsonNode undoPayload(
-      UUID puzzle, UUID turn, long generation, long revision, UUID action, UUID request) {
+      UUID puzzle,
+      UUID turn,
+      long generation,
+      long revision,
+      long draftRevision,
+      UUID action,
+      UUID request) {
     ObjectNode payload = (ObjectNode) cancelPayload(puzzle, turn, generation, revision, request);
+    payload.put("draftRevision", draftRevision);
     payload.put("actionId", action.toString());
     return payload;
   }

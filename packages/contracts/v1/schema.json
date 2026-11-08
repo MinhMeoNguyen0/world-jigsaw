@@ -39,6 +39,15 @@
     },
     {
       "$ref": "#/$defs/SocketError"
+    },
+    {
+      "$ref": "#/$defs/SubscribeV2"
+    },
+    {
+      "$ref": "#/$defs/SubscribedV2"
+    },
+    {
+      "$ref": "#/$defs/PreviewAcceptedV2"
     }
   ],
   "$defs": {
@@ -1063,6 +1072,56 @@
       ],
       "additionalProperties": false
     },
+    "UndoV2": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "draftRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actionId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "requestId",
+        "turnRevision",
+        "generation",
+        "draftRevision",
+        "actionId"
+      ],
+      "additionalProperties": false
+    },
     "UndoResult": {
       "type": "object",
       "properties": {
@@ -1111,13 +1170,18 @@
       "type": "object",
       "if": {
         "properties": {
-          "outcome": { "enum": ["confirming", "confirmed"] }
+          "outcome": {
+            "enum": ["confirming", "confirmed"]
+          }
         },
         "required": ["outcome"]
       },
       "then": {
         "properties": {
-          "commandId": { "type": "string", "format": "uuid" }
+          "commandId": {
+            "type": "string",
+            "format": "uuid"
+          }
         }
       },
       "properties": {
@@ -1462,6 +1526,221 @@
           "additionalProperties": false
         }
       ]
+    },
+    "SubscribeV2": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "subscribe.v2"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "afterBoardVersion": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "afterBoardVersion"],
+      "additionalProperties": false
+    },
+    "SubscribedV2": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "subscribed.v2"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "watermark": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "previews": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Preview"
+          },
+          "minItems": 0
+        },
+        "allowance": {
+          "$ref": "#/$defs/Allowance"
+        },
+        "ownTurn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Turn"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "maxItems": 80
+        },
+        "nextSequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "draftRevision": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "type",
+        "snapshot",
+        "watermark",
+        "previews",
+        "allowance",
+        "ownTurn",
+        "actions",
+        "nextSequence",
+        "draftRevision"
+      ],
+      "additionalProperties": false
+    },
+    "PreviewAcceptedV2": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "const": "preview.accepted"
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actionId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "maxItems": 80
+        },
+        "draftRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "type",
+        "puzzleId",
+        "turnId",
+        "generation",
+        "sequence",
+        "actionId",
+        "draftRevision",
+        "actions"
+      ],
+      "additionalProperties": false
+    },
+    "ConfirmV2": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "commandId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "turnRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "minItems": 1
+        },
+        "draftRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "commandId",
+        "turnRevision",
+        "generation",
+        "actions",
+        "draftRevision"
+      ],
+      "additionalProperties": false
     }
   }
 }
