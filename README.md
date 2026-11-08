@@ -107,3 +107,35 @@ Run formatting checks and tests from `services/backend`:
 The integration tests start their own PostgreSQL container with Testcontainers, so Docker must
 be running for the tests; the Compose database is not needed. Fix formatting with
 `./gradlew spotlessApply`.
+
+### Game board import and reads
+
+The backend owns the game database only. Chat must use a separate database and credentials; the
+backend does not connect to it. A trusted operator can import a JSON document with `definition`
+and `snapshot` fields, assigning its UTC day explicitly. For example, from `services/backend`:
+
+```sh
+./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/contracts/v1/fixtures/board-and-batch.json'
+```
+
+Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing
+board. A matching reserved puzzle identity can be used for its first import. Remove the import arguments on subsequent starts. The fixture is synthetic, not production
+puzzle content. Import verifies the v1 JSON schemas, canonical SHA-256 checksum, definition and
+snapshot identity, bounds, contour continuity, reciprocal edge geometry and complete unique piece
+membership. It commits the definition and canonical board together. It does not verify all geometry,
+collision or game rules; generated content needs further validation before production use.
+
+`GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
+UTC close time. `GET /api/v1/game/snapshot` returns that snapshot and an `X-Server-Time` header.
+If today's puzzle has not been imported, both return a structured `PUZZLE_UNAVAILABLE` (503),
+not a previous day's board. Reads use a repeatable-read transaction. Allowance and own turn are null
+until an authenticated game application supplies them. These endpoints do not implement preview,
+confirmation, authentication, or multiplayer commands.
+
+The writer integration must lock the `game_boards` row for the puzzle before admitting a Confirm,
+then sample the authoritative UTC clock and compare it with `closes_at`. Admission strictly before
+close permits that transaction to finish after midnight; admission at or after close must fail. Keep
+that lock through commit or rollback and perform board, membership, quota, event and command outcome
+updates in the same transaction. Do not restore an old snapshot on cancel. This slice records the
+immutable close time but does not implement admission, lifecycle fencing or Confirm. Future writers
+must use the same board lock when changing canonical state, and must validate geometry and game rules.

@@ -26,7 +26,7 @@ class PuzzleMigrationTest {
   void freshMigrationEnforcesUniqueIdentityAndUtcDay() throws SQLException {
     String schema = schemaName();
     Flyway flyway = flyway(schema, null);
-    assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+    assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
     assertThat(flyway.migrate().migrationsExecuted).isZero();
 
     UUID first = UUID.randomUUID();
@@ -68,7 +68,7 @@ class PuzzleMigrationTest {
     String schema = schemaName();
     assertThat(flyway(schema, "1").migrate().migrationsExecuted).isEqualTo(1);
     Flyway latest = flyway(schema, null);
-    assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+    assertThat(latest.migrate().migrationsExecuted).isEqualTo(2);
 
     UUID id = UUID.randomUUID();
     LocalDate day = LocalDate.of(2026, 11, 8);
@@ -84,6 +84,29 @@ class PuzzleMigrationTest {
         assertThat(result.next()).isTrue();
         assertThat(result.getObject(1, LocalDate.class)).isEqualTo(day);
         assertThat(result.next()).isFalse();
+      }
+    }
+  }
+
+  @Test
+  void upgradesIdentitySchemaWithExistingPuzzle() throws SQLException {
+    String schema = schemaName();
+    assertThat(flyway(schema, "2").migrate().migrationsExecuted).isEqualTo(2);
+    UUID id = UUID.randomUUID();
+    LocalDate day = LocalDate.of(2026, 11, 8);
+    try (Connection connection = connection(schema)) {
+      insert(connection, id, day);
+    }
+    Flyway latest = flyway(schema, null);
+    assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+    assertThat(latest.migrate().migrationsExecuted).isZero();
+    try (Connection connection = connection(schema);
+        PreparedStatement query =
+            connection.prepareStatement("SELECT puzzle_day FROM puzzles WHERE id = ?")) {
+      query.setObject(1, id);
+      try (ResultSet result = query.executeQuery()) {
+        assertThat(result.next()).isTrue();
+        assertThat(result.getObject(1, LocalDate.class)).isEqualTo(day);
       }
     }
   }

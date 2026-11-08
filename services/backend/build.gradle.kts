@@ -26,6 +26,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("com.networknt:json-schema-validator:1.5.6")
+    implementation("io.github.erdtman:java-json-canonicalization:1.1")
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -53,5 +55,11 @@ spotless {
     }
     kotlinGradle {
         ktlint()
+    }
+}
+
+tasks.processResources {
+    from("../../packages/contracts/v1/schema.json") {
+        into("contracts/v1")
     }
 }
