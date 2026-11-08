@@ -333,3 +333,52 @@ test('identity assertion claims allow multi-codepoint display names and bound li
     false,
   )
 })
+
+test('shared batch enters the surface, then commits both canonical groups and clears previews', () => {
+  const piece = definition.pieces[2]
+  const before = snapshot.groups[1].transform
+  const x = piece.solvedPosition.x + piece.referencePoint.x
+  const y = piece.solvedPosition.y + piece.referencePoint.y
+  const radians = (before.rotation / 1000) * (Math.PI / 180)
+  const initialReference = {
+    x: before.translation.x + Math.cos(radians) * x - Math.sin(radians) * y,
+    y: before.translation.y + Math.sin(radians) * x + Math.cos(radians) * y,
+  }
+  assert.equal(isInsideSurface(initialReference, definition.playSurface), false)
+  assert.equal(isInsideSurface(fixture.expected.piece3ReferenceAfter, definition.playSurface), true)
+  assert.deepEqual(
+    {
+      x: x + confirm.actions[0].intendedTransform.translation.x,
+      y: y + confirm.actions[0].intendedTransform.translation.y,
+    },
+    fixture.expected.piece3ReferenceAfter,
+  )
+  const changed = applyBoardChanged(definition, snapshot, fixture.boardChanged)
+  assert.equal(changed.status, 'applied')
+  assert.deepEqual(changed.snapshot, fixture.confirmedSnapshot)
+  assert.equal(validate('CommandResult', fixture.commandResult).valid, true)
+  assert.equal(fixture.commandResult.allowance.remaining, 3)
+  let state = null
+  for (const overlay of fixture.activePreviews) state = applyPreview(state, overlay)
+  assert.equal(Object.keys(state.actions).length, 2)
+  state = applyPreview(state, fixture.previewCleared)
+  assert.deepEqual(state.actions, {})
+  assert.equal(applyPreview(state, fixture.activePreviews[1]).closed, true)
+})
+
+test('later confirmed move merges groups with a fresh ID and one charge', () => {
+  const changed = applyBoardChanged(
+    definition,
+    fixture.confirmedSnapshot,
+    fixture.mergeBoardChanged,
+  )
+  assert.equal(changed.status, 'applied')
+  assert.deepEqual(changed.snapshot, fixture.mergedSnapshot)
+  assert.equal(changed.snapshot.groups.length, 1)
+  assert.equal(progressPieceCount(changed.snapshot), 3)
+  assert.equal(validate('CommandResult', fixture.mergeCommandResult).valid, true)
+  assert.equal(
+    fixture.mergeCommandResult.allowance.remaining,
+    fixture.commandResult.allowance.remaining - 1,
+  )
+})
