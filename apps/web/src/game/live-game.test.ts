@@ -620,14 +620,18 @@ describe('versioned subscription and preview receipts', () => {
     const changedGroup = fixture.boardChanged.groups[0]
     const unchangedGroup = current.snapshot.groups[1]
     if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
-    const snapshot = {
+    const [firstPiece, ...otherPieces] = changedGroup.pieceIds
+    if (!firstPiece) throw new Error('Missing fixture piece')
+    const snapshot: CurrentGame['snapshot'] = {
       ...current.snapshot,
       boardVersion: fixture.boardChanged.boardVersion,
-      groups: [changedGroup, unchangedGroup],
+      groups: [{ ...changedGroup, pieceIds: [firstPiece, ...otherPieces] }, unchangedGroup],
     }
     h.setGame({ ...current, snapshot, ownTurn: turn })
     socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     const next = socketAt(h.sockets, 1)
     next.open()
     next.emit({ ...handoff([action], 1), snapshot, watermark: snapshot.boardVersion })
@@ -672,7 +676,9 @@ describe('versioned subscription and preview receipts', () => {
         retryable: false,
       },
     })
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     const next = socketAt(h.sockets, 1)
     next.open()
     next.emit(handoff([action], 1))
@@ -703,7 +709,9 @@ describe('versioned subscription and preview receipts', () => {
       ),
     )
     await expect(h.client.confirm()).rejects.toThrow('INVALID_ACTION')
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     const next = socketAt(h.sockets, 1)
     next.open()
     next.emit(handoff([action], 1))
@@ -725,15 +733,19 @@ describe('versioned subscription and preview receipts', () => {
       const changedGroup = fixture.boardChanged.groups[0]
       const unchangedGroup = current.snapshot.groups[1]
       if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
-      const snapshot = {
+      const [firstPiece, ...otherPieces] = changedGroup.pieceIds
+      if (!firstPiece) throw new Error('Missing fixture piece')
+      const snapshot: CurrentGame['snapshot'] = {
         ...current.snapshot,
         boardVersion: fixture.boardChanged.boardVersion,
-        groups: [changedGroup, unchangedGroup],
+        groups: [{ ...changedGroup, pieceIds: [firstPiece, ...otherPieces] }, unchangedGroup],
       }
       const recovered = { ...handoff([action], 1), snapshot, watermark: snapshot.boardVersion }
       h.setGame({ ...current, snapshot, ownTurn: turn })
       socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
-      await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(2)
+      })
       const next = socketAt(h.sockets, 1)
       next.open()
       if (order === 'after handoff') next.emit(recovered)
@@ -755,7 +767,9 @@ describe('versioned subscription and preview receipts', () => {
       expect(h.client.getState().pendingConfirm).toBeNull()
       if (order === 'before handoff') next.emit(recovered)
       else {
-        await vi.waitFor(() => expect(h.sockets).toHaveLength(3))
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(3)
+        })
         const refreshed = socketAt(h.sockets, 2)
         refreshed.open()
         refreshed.emit(recovered)
@@ -776,14 +790,18 @@ describe('versioned subscription and preview receipts', () => {
     h.setCommandReply(response.promise)
     const pending = h.client.confirm()
     socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     const next = socketAt(h.sockets, 1)
     next.open()
     next.emit(handoff([action], 1))
     response.reject(new TypeError('connection lost'))
     await expect(pending).rejects.toThrow('connection lost')
     expect(h.client.getState().pendingConfirm).not.toBeNull()
-    expect(() => h.client.preview(action)).toThrow('not ready')
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
   })
 
   it('resynchronizes after a stale undo without trusting the newer draft', async () => {
@@ -812,13 +830,17 @@ describe('versioned subscription and preview receipts', () => {
     expect(h.undoBodies).toEqual([
       expect.objectContaining({ draftRevision: 1, actionId: action.actionId }),
     ])
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     const next = socketAt(h.sockets, 1)
     next.open()
     next.emit(handoff([action], 2))
     expect(h.client.getState().connection).toBe('ready')
     await expect(h.client.undo(action.actionId)).rejects.toThrow('not ready')
-    expect(() => h.client.preview(action)).toThrow('not ready')
+    expect(() => {
+      h.client.preview(action)
+    }).toThrow('not ready')
   })
 
   it.each(['handoff first', 'response first'] as const)(
@@ -857,7 +879,9 @@ describe('versioned subscription and preview receipts', () => {
       h.setGame({ ...current, ownTurn: newTurn })
       if (order === 'handoff first') {
         socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
-        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
         socketAt(h.sockets, 1).open()
         socketAt(h.sockets, 1).emit({ ...handoff([second], 3), ownTurn: newTurn, nextSequence: 0 })
         response.resolve(result)
@@ -865,7 +889,9 @@ describe('versioned subscription and preview receipts', () => {
       } else {
         response.resolve(result)
         await pending
-        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
         socketAt(h.sockets, 1).open()
         socketAt(h.sockets, 1).emit({ ...handoff([second], 3), ownTurn: newTurn, nextSequence: 0 })
       }
@@ -899,7 +925,9 @@ describe('versioned subscription and preview receipts', () => {
         nextSequence: conflict === 'sequence' ? 2 : 1,
       })
       expect(h.client.getState().connection).toBe('ready')
-      expect(() => h.client.preview(action)).toThrow('not ready')
+      expect(() => {
+        h.client.preview(action)
+      }).toThrow('not ready')
       await expect(h.client.confirm()).rejects.toThrow('not ready')
     },
   )

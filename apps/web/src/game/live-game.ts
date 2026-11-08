@@ -35,7 +35,12 @@ export interface LiveGameState {
 }
 
 type Socket = Pick<WebSocket, 'send' | 'close' | 'onopen' | 'onmessage' | 'onclose' | 'onerror'>
-type DraftProof = { turn: Turn; revision: number; nextSequence: number; actions: Action[] }
+interface DraftProof {
+  turn: Turn
+  revision: number
+  nextSequence: number
+  actions: Action[]
+}
 export interface LiveGameDependencies {
   fetch: typeof fetch
   socket: (url: string) => Socket
@@ -356,14 +361,14 @@ export class LiveGame {
         const matches = (candidate: DraftProof | null) =>
           Boolean(
             candidate &&
-              reply.ownTurn &&
-              sameId(candidate.turn.puzzleId, reply.ownTurn.puzzleId) &&
-              sameId(candidate.turn.turnId, reply.ownTurn.turnId) &&
-              candidate.turn.generation === reply.ownTurn.generation &&
-              candidate.turn.turnRevision === reply.ownTurn.turnRevision &&
-              candidate.revision === reply.draftRevision &&
-              candidate.nextSequence === reply.nextSequence &&
-              canonical(candidate.actions) === canonical(reply.actions),
+            reply.ownTurn &&
+            sameId(candidate.turn.puzzleId, reply.ownTurn.puzzleId) &&
+            sameId(candidate.turn.turnId, reply.ownTurn.turnId) &&
+            candidate.turn.generation === reply.ownTurn.generation &&
+            candidate.turn.turnRevision === reply.ownTurn.turnRevision &&
+            candidate.revision === reply.draftRevision &&
+            candidate.nextSequence === reply.nextSequence &&
+            canonical(candidate.actions) === canonical(reply.actions),
           )
         this.uncertainDraft = reply.actions.length > 0 && !matches(proof) && !matches(undoneProof)
         this.draftProof =
