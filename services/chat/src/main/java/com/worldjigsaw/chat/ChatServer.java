@@ -1,9 +1,7 @@
 package com.worldjigsaw.chat;
 
 import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ibm.icu.lang.UCharacter;
 import com.ibm.icu.lang.UProperty;
@@ -12,7 +10,6 @@ import com.ibm.icu.text.Normalizer2;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -35,12 +32,6 @@ public final class ChatServer implements AutoCloseable {
       new ObjectMapper()
           .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-
-  static {
-    JSON.getFactory()
-        .setStreamReadConstraints(
-            StreamReadConstraints.builder().maxStringLength(Integer.MAX_VALUE).build());
-  }
 
   private final IdentityAdapter identityAdapter;
   private final ChatSettings settings;
@@ -69,7 +60,7 @@ public final class ChatServer implements AutoCloseable {
           0,
           TimeUnit.SECONDS,
           new ArrayBlockingQueue<>(64),
-          new ThreadPoolExecutor.CallerRunsPolicy());
+          new ThreadPoolExecutor.AbortPolicy());
 
   ChatServer(int port, IdentityAdapter identityAdapter, ChatSettings settings) throws IOException {
     this.identityAdapter = identityAdapter;
@@ -232,39 +223,15 @@ public final class ChatServer implements AutoCloseable {
   }
 
   private void send(HttpExchange e, IdentityAdapter.Identity identity) throws IOException {
-    JsonNode input;
+    ChatRequest request;
     try {
-      input =
-          JSON.readTree(
-              new InputStreamReader(e.getRequestBody(), StandardCharsets.UTF_8.newDecoder()));
+      request = ChatRequest.read(e.getRequestBody(), settings.maxGraphemes());
     } catch (IOException ex) {
       error(e, 400, "INVALID_REQUEST");
       return;
     }
-    if (input == null
-        || !input.isObject()
-        || input.size() != 3
-        || !input.path("schemaVersion").isInt()
-        || input.path("schemaVersion").intValue() != 1
-        || !input.path("messageId").isTextual()
-        || !input.path("text").isTextual()) {
-      error(e, 400, "INVALID_REQUEST");
-      return;
-    }
-    String command = input.path("messageId").textValue();
-    try {
-      if (!UUID.fromString(command).toString().equals(command))
-        throw new IllegalArgumentException();
-    } catch (IllegalArgumentException ex) {
-      error(e, 400, "INVALID_REQUEST");
-      return;
-    }
-    String original = input.path("text").textValue();
-    String text = normalize(original, settings.maxGraphemes());
-    if (text == null) {
-      error(e, 400, "INVALID_REQUEST");
-      return;
-    }
+    String command = request.messageId();
+    String text = request.text();
     int status;
     synchronized (this) {
       if (System.currentTimeMillis() / 1000 >= identity.expiresAt()) {
@@ -309,7 +276,7 @@ public final class ChatServer implements AutoCloseable {
     return normalize(input, 40);
   }
 
-  private static String normalize(String input, int maxGraphemes) {
+  static String normalize(String input, int maxGraphemes) {
     // Reject malformed UTF-16 and controls even when they occur at the edges.
     for (int i = 0; i < input.length(); ) {
       char c = input.charAt(i);
