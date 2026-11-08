@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import { generate } from '../../generator/src/generator.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import type { Definition, Snapshot, Transform } from '@world-jigsaw/contracts'
@@ -93,9 +94,24 @@ test('attachment, independent action charges, group movement and undo', () => {
   const merged = result.snapshot.groups.find((g) => g.groupId === action(99))!
   assert.equal(merged.pieceIds.length, 2)
   let next = begin(definition, result.snapshot, allowance)
-  next = move(next, merged.groupId, action(3), { rotation: 0, translation: { x: 200, y: 100 } })
+  const pivot = transformPoint(
+    { x: p.solvedPosition.x + p.referencePoint.x, y: p.solvedPosition.y + p.referencePoint.y },
+    merged.transform,
+  )
+  const rotated = rotateAround(merged.transform, pivot, 90000)
+  next = move(next, merged.groupId, action(3), rotated)
   assert.equal(pendingCount(next), 1)
-  assert.equal(confirm(next, result.snapshot, allowance).charged, 1)
+  next = move(next, merged.groupId, action(3), {
+    rotation: rotated.rotation,
+    translation: { x: rotated.translation.x + 100, y: rotated.translation.y },
+  })
+  const moved = confirm(next, result.snapshot, allowance)
+  assert.equal(moved.charged, 1)
+  assert.equal(moved.snapshot.groups.find((g) => g.groupId === merged.groupId)!.pieceIds.length, 2)
+  assert.equal(
+    moved.snapshot.groups.find((g) => g.groupId === merged.groupId)!.transform.rotation,
+    90000,
+  )
 })
 
 test('undo, stale touched group and unrelated changes', () => {
@@ -187,16 +203,21 @@ test('rejects disconnected groups and mismatched reciprocal geometry', () => {
 })
 
 for (const name of fixtures)
-  test(`${name}: all seeded orientations can be corrected and assembled`, () => {
-    const { definition, snapshot: initial } = load(`../../generator/fixtures/${name}`) as {
-      definition: Definition
-      snapshot: Snapshot
-    }
+  test(`${name}: generated quarter turns can be corrected and assembled`, () => {
+    const board = generate({
+      seed: name === 'review-60.json' ? 'review-60' : 'sample-80',
+      columns: 10,
+      rows: name === 'review-60.json' ? 6 : 8,
+      width: 1200000,
+      height: 800000,
+      image: 'fixture://original-landscape',
+      placedPieces: name === 'review-60.json' ? 3 : 0,
+    })
+    assert.deepEqual(board, load(`../../generator/fixtures/${name}`))
+    const { definition, snapshot: initial } = board
     let snapshot = initial
     const root = snapshot.groups[0]
     let draft = begin(definition, snapshot, allowance)
-    const corrected = rotateAround(root.transform, { x: 0, y: 0 }, -root.transform.rotation)
-    assert.equal(corrected.rotation, 0)
     const rootPiece = definition.pieces.find((p) => p.pieceId === root.pieceIds[0])!
     const rootPivot = transformPoint(
       {
@@ -205,12 +226,11 @@ for (const name of fixtures)
       },
       root.transform,
     )
-    draft = move(
-      draft,
-      root.groupId,
-      action(1000),
-      rotateAround(root.transform, rootPivot, -root.transform.rotation),
-    )
+    let rootTransform = root.transform
+    while (rootTransform.rotation !== 0) {
+      rootTransform = rotateAround(rootTransform, rootPivot, 90000)
+      draft = move(draft, root.groupId, action(1000), rootTransform)
+    }
     draft = move(draft, root.groupId, action(1000), solved)
     snapshot = confirm(draft, snapshot, allowance).snapshot
     let assembledId = root.groupId
@@ -228,10 +248,6 @@ for (const name of fixtures)
           ),
       )!
       assert.ok(next, 'there is an adjacent unassembled group')
-      assert.equal(
-        rotateAround(next.transform, { x: 0, y: 0 }, -next.transform.rotation).rotation,
-        0,
-      )
       draft = begin(definition, snapshot, allowance) // a fresh player's allowance for each confirmed turn
       const nextPiece = definition.pieces.find((p) => p.pieceId === next.pieceIds[0])!
       const pivot = transformPoint(
@@ -241,12 +257,11 @@ for (const name of fixtures)
         },
         next.transform,
       )
-      draft = move(
-        draft,
-        next.groupId,
-        action(2000 + i),
-        rotateAround(next.transform, pivot, -next.transform.rotation),
-      )
+      let nextTransform = next.transform
+      while (nextTransform.rotation !== 0) {
+        nextTransform = rotateAround(nextTransform, pivot, 90000)
+        draft = move(draft, next.groupId, action(2000 + i), nextTransform)
+      }
       draft = move(draft, next.groupId, action(2000 + i), solved)
       const mergedId = action(3000 + i)
       draft = attach(draft, next.groupId, assembledId, mergedId, 0, 0)

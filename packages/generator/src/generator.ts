@@ -24,7 +24,7 @@ export interface GeneratedBoard {
   definition: Definition
   snapshot: Snapshot
 }
-const VERSION = 'world-jigsaw-grid-2'
+const VERSION = 'world-jigsaw-grid-3'
 const digest = (s: string) => createHash('sha256').update(s).digest('hex')
 function uuid(s: string): string {
   const h = digest(s).slice(0, 32).split('')
@@ -232,7 +232,7 @@ export function generate(options: Options): GeneratedBoard {
   }
   const definition: Definition = { ...base, checksum: checksum(base) }
   const groups: Group[] = pieces.map((piece, i) => {
-    const angle = parseInt(digest(`${identity}:rotation:${i}`).slice(0, 8), 16) % 360000
+    const angle = (parseInt(digest(`${identity}:rotation:${i}`).slice(0, 8), 16) % 4) * 90000
     const rad = (angle * Math.PI) / 180000
     const ref = add(piece.solvedPosition, piece.referencePoint)
     const target = point(
