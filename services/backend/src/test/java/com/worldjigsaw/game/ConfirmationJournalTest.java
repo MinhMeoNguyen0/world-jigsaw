@@ -414,14 +414,27 @@ class ConfirmationJournalTest {
   private void assertReceiptReadersWaitForSettlement(UUID puzzle, boolean commit) throws Exception {
     UUID subject = UUID.randomUUID(), command = UUID.randomUUID(), turn = UUID.randomUUID();
     jdbc.update("INSERT INTO game_subjects(subject_id) VALUES (?)", subject);
-    JsonNode commandPayload = mapper.createObjectNode().put("puzzleId", puzzle.toString())
-        .put("commandId", command.toString()).put("turnId", turn.toString());
-    String canonicalCommand = new org.erdtman.jcs.JsonCanonicalizer(commandPayload.toString()).getEncodedString();
+    JsonNode commandPayload =
+        mapper
+            .createObjectNode()
+            .put("puzzleId", puzzle.toString())
+            .put("commandId", command.toString())
+            .put("turnId", turn.toString());
+    String canonicalCommand =
+        new org.erdtman.jcs.JsonCanonicalizer(commandPayload.toString()).getEncodedString();
     JsonNode commandResult = mapper.createObjectNode().put("outcome", "confirmed");
     java.util.List<String> kinds = java.util.List.of("begin", "cancel", "undo");
     java.util.List<UUID> requests = kinds.stream().map(ignored -> UUID.randomUUID()).toList();
-    java.util.List<JsonNode> payloads = requests.stream().map(request -> (JsonNode) mapper.createObjectNode()
-        .put("puzzleId", puzzle.toString()).put("turnId", turn.toString()).put("requestId", request.toString())).toList();
+    java.util.List<JsonNode> payloads =
+        requests.stream()
+            .map(request ->
+                (JsonNode)
+                    mapper
+                        .createObjectNode()
+                        .put("puzzleId", puzzle.toString())
+                        .put("turnId", turn.toString())
+                        .put("requestId", request.toString()))
+            .toList();
     java.util.List<String> canonicals = new java.util.ArrayList<>();
     for (JsonNode payload : payloads)
       canonicals.add(new org.erdtman.jcs.JsonCanonicalizer(payload.toString()).getEncodedString());
@@ -429,42 +442,77 @@ class ConfirmationJournalTest {
     var release = new CountDownLatch(1);
     var ready = new CountDownLatch(6);
     try (var pool = Executors.newFixedThreadPool(7)) {
-      var writer = pool.submit(() -> new TransactionTemplate(transactions).execute(status -> {
-        jdbc.queryForObject("SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE", UUID.class, subject);
-        jdbc.update("INSERT INTO game_commands(subject_id, command_id, puzzle_id, canonical_payload, result) VALUES (?, ?, ?, ?, ?::jsonb)",
-            subject, command, puzzle, canonicalCommand, commandResult.toString());
-        for (int i = 0; i < kinds.size(); i++)
-          jdbc.update("INSERT INTO game_requests(subject_id, request_id, puzzle_id, request_kind, canonical_payload, result) VALUES (?, ?, ?, ?, ?, ?::jsonb)",
-              subject, requests.get(i), puzzle, kinds.get(i), canonicals.get(i), commandResult.toString());
-        locked.countDown();
-        try {
-          release.await();
-        } catch (InterruptedException ex) {
-          Thread.currentThread().interrupt();
-          throw new IllegalStateException(ex);
-        }
-        if (!commit) status.setRollbackOnly();
-        return null;
-      }));
+      var writer =
+          pool.submit(() ->
+              new TransactionTemplate(transactions)
+                  .execute(status -> {
+                    jdbc.queryForObject(
+                        "SELECT subject_id FROM game_subjects WHERE subject_id = ? FOR UPDATE",
+                        UUID.class,
+                        subject);
+                    jdbc.update(
+                        "INSERT INTO game_commands(subject_id, command_id, puzzle_id, canonical_payload, result) VALUES (?, ?, ?, ?, ?::jsonb)",
+                        subject,
+                        command,
+                        puzzle,
+                        canonicalCommand,
+                        commandResult.toString());
+                    for (int i = 0; i < kinds.size(); i++)
+                      jdbc.update(
+                          "INSERT INTO game_requests(subject_id, request_id, puzzle_id, request_kind, canonical_payload, result) VALUES (?, ?, ?, ?, ?, ?::jsonb)",
+                          subject,
+                          requests.get(i),
+                          puzzle,
+                          kinds.get(i),
+                          canonicals.get(i),
+                          commandResult.toString());
+                    locked.countDown();
+                    try {
+                      release.await();
+                    } catch (InterruptedException ex) {
+                      Thread.currentThread().interrupt();
+                      throw new IllegalStateException(ex);
+                    }
+                    if (!commit) status.setRollbackOnly();
+                    return null;
+                  }));
       locked.await();
       java.util.List<java.util.concurrent.Future<JsonNode>> readers = new java.util.ArrayList<>();
-      readers.add(pool.submit(() -> { ready.countDown(); return journal.lookup(subject, puzzle, command, commandPayload); }));
-      readers.add(pool.submit(() -> { ready.countDown(); return journal.find(subject, command); }));
-      readers.add(pool.submit(() -> { ready.countDown(); return journal.confirmedForTurn(subject, turn); }));
+      readers.add(
+          pool.submit(() -> {
+            ready.countDown();
+            return journal.lookup(subject, puzzle, command, commandPayload);
+          }));
+      readers.add(
+          pool.submit(() -> {
+            ready.countDown();
+            return journal.find(subject, command);
+          }));
+      readers.add(
+          pool.submit(() -> {
+            ready.countDown();
+            return journal.confirmedForTurn(subject, turn);
+          }));
       for (int i = 0; i < kinds.size(); i++) {
         int index = i;
-        readers.add(pool.submit(() -> {
-          ready.countDown();
-          var receipt = identities.lookup(subject, requests.get(index), kinds.get(index), payloads.get(index));
-          return receipt == null ? null : receipt.result();
-        }));
+        readers.add(
+            pool.submit(() -> {
+              ready.countDown();
+              var receipt =
+                  identities.lookup(
+                      subject, requests.get(index), kinds.get(index), payloads.get(index));
+              return receipt == null ? null : receipt.result();
+            }));
       }
       try {
         assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
         int waiting = 0;
         while (waiting < readers.size() && System.nanoTime() < deadline) {
-          waiting = jdbc.queryForObject("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT subject_id FROM game_subjects%FOR UPDATE%'", Integer.class);
+          waiting =
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT subject_id FROM game_subjects%FOR UPDATE%'",
+                  Integer.class);
           if (waiting < readers.size()) Thread.sleep(20);
         }
         assertThat(waiting).isGreaterThanOrEqualTo(readers.size());
@@ -475,7 +523,8 @@ class ConfirmationJournalTest {
       }
       writer.get(5, java.util.concurrent.TimeUnit.SECONDS);
       for (var reader : readers)
-        assertThat(reader.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(commit ? commandResult : null);
+        assertThat(reader.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            .isEqualTo(commit ? commandResult : null);
     }
   }
 

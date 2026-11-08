@@ -149,7 +149,8 @@ class TurnLeaseRegistryTest {
     assertThat(registry.unpinConfirm(a, turn.turn(), 0, command)).isEmpty();
     assertThat(registry.activeTurns()).doesNotContain(turn.turn());
     assertThat(registry.drainClears().events())
-        .extracting(TurnLeaseRegistry.Cleared::reason).containsExactly("expired");
+        .extracting(TurnLeaseRegistry.Cleared::reason)
+        .containsExactly("expired");
   }
 
   @Test

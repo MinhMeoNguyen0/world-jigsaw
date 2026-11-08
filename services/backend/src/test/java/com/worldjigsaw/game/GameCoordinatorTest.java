@@ -298,42 +298,67 @@ class GameCoordinatorTest {
     UUID subject = UUID.randomUUID(), command = UUID.randomUUID();
     jdbc.update("INSERT INTO game_subjects(subject_id) VALUES (?)", subject);
     var unavailable = new java.util.concurrent.atomic.AtomicBoolean();
-    ConfirmationJournal interrupted = new ConfirmationJournal(jdbc, validator, clock, writer) {
-      @Override
-      public JsonNode lookup(UUID s, UUID p, UUID c, JsonNode payload) {
-        if (unavailable.get()) throw new IllegalStateException("temporary outage");
-        return journal.lookup(s, p, c, payload);
-      }
+    ConfirmationJournal interrupted =
+        new ConfirmationJournal(jdbc, validator, clock, writer) {
+          @Override
+          public JsonNode lookup(UUID s, UUID p, UUID c, JsonNode payload) {
+            if (unavailable.get()) throw new IllegalStateException("temporary outage");
+            return journal.lookup(s, p, c, payload);
+          }
 
-      @Override
-      public JsonNode findForRecovery(UUID s, UUID c) {
-        if (unavailable.get()) throw new IllegalStateException("temporary outage");
-        return journal.findForRecovery(s, c);
-      }
+          @Override
+          public JsonNode findForRecovery(UUID s, UUID c) {
+            if (unavailable.get()) throw new IllegalStateException("temporary outage");
+            return journal.findForRecovery(s, c);
+          }
 
-      @Override
-      public JsonNode confirm(UUID s, UUID p, UUID c, JsonNode payload, Planner planner,
-          java.util.function.Consumer<Instant> admitted) {
-        journal.confirm(s, p, c, payload, planner, admitted);
-        unavailable.set(true);
-        throw new IllegalStateException("lost commit reply");
-      }
-    };
+          @Override
+          public JsonNode confirm(
+              UUID s,
+              UUID p,
+              UUID c,
+              JsonNode payload,
+              Planner planner,
+              java.util.function.Consumer<Instant> admitted) {
+            journal.confirm(s, p, c, payload, planner, admitted);
+            unavailable.set(true);
+            throw new IllegalStateException("lost commit reply");
+          }
+        };
     TurnLeaseRegistry localLeases = new TurnLeaseRegistry(clock);
-    GameCoordinator local = new GameCoordinator(boards, rules, localLeases, identities,
-        interrupted, jdbc, clock, writer);
+    GameCoordinator local =
+        new GameCoordinator(
+            boards, rules, localLeases, identities, interrupted, jdbc, clock, writer);
     java.util.List<JsonNode> received = new java.util.ArrayList<>();
-    local.subscribe(UUID.randomUUID(), subject, puzzle, null, new GameCoordinator.Sink() {
-      @Override public boolean offer(JsonNode message) { received.add(message.deepCopy()); return true; }
-      @Override public void slow() { throw new AssertionError("unexpected slow consumer"); }
-    });
+    local.subscribe(
+        UUID.randomUUID(),
+        subject,
+        puzzle,
+        null,
+        new GameCoordinator.Sink() {
+          @Override
+          public boolean offer(JsonNode message) {
+            received.add(message.deepCopy());
+            return true;
+          }
+
+          @Override
+          public void slow() {
+            throw new AssertionError("unexpected slow consumer");
+          }
+        });
     long before = local.subscribe(puzzle).snapshot().path("boardVersion").longValue();
     var turn = local.begin(subject, puzzle);
     local.preview(subject, turn.turnId(), 0, 1, action(UUID.randomUUID(), group, 0, 0));
     JsonNode frame = local.drainEvents().values().getLast().path("action");
-    ObjectNode payload = mapper.createObjectNode().put("puzzleId", puzzle.toString())
-        .put("turnId", turn.turnId().toString()).put("commandId", command.toString())
-        .put("turnRevision", 0).put("generation", 0);
+    ObjectNode payload =
+        mapper
+            .createObjectNode()
+            .put("puzzleId", puzzle.toString())
+            .put("turnId", turn.turnId().toString())
+            .put("commandId", command.toString())
+            .put("turnRevision", 0)
+            .put("generation", 0);
     payload.putArray("actions").add(frame);
     assertThatThrownBy(() -> local.confirm(subject, payload)).hasMessageContaining("unknown");
     local.disconnected(subject);
@@ -343,7 +368,8 @@ class GameCoordinatorTest {
     local.tick();
     assertThat(localLeases.activeTurns()).doesNotContain(turn.turnId());
     assertThat(received).extracting(e -> e.path("type").asText()).contains("resyncRequired");
-    assertThat(local.subscribe(puzzle).snapshot().path("boardVersion").longValue()).isEqualTo(before + 1);
+    assertThat(local.subscribe(puzzle).snapshot().path("boardVersion").longValue())
+        .isEqualTo(before + 1);
     assertThat(journal.find(subject, command).path("outcome").asText()).isEqualTo("confirmed");
   }
 
@@ -363,7 +389,8 @@ class GameCoordinatorTest {
     identities.record(subject, puzzle, cancelId, "cancel", cancel, cancelResult);
     assertThat(game.cancel(subject, cancel)).isEqualTo(cancelResult);
     assertThat(game.subscribe(puzzle).previews()).isEmpty();
-    assertThatThrownBy(() -> game.preview(subject, canceledTurn.turnId(), 0, 2, action(UUID.randomUUID(), g0, 0, 0)))
+    assertThatThrownBy(() ->
+            game.preview(subject, canceledTurn.turnId(), 0, 2, action(UUID.randomUUID(), g0, 0, 0)))
         .isInstanceOf(DraftRules.RuleError.class);
 
     var undoTurn = game.begin(subject, puzzle);
@@ -376,7 +403,8 @@ class GameCoordinatorTest {
     assertThat(game.undo(subject, undo)).isEqualTo(undoResult);
     assertThat(game.undo(subject, undo)).isEqualTo(undoResult);
     assertThat(game.subscribe(puzzle).previews()).isEmpty();
-    assertThatThrownBy(() -> game.preview(subject, undoTurn.turnId(), 0, 2, action(UUID.randomUUID(), g0, 0, 0)))
+    assertThatThrownBy(() ->
+            game.preview(subject, undoTurn.turnId(), 0, 2, action(UUID.randomUUID(), g0, 0, 0)))
         .isInstanceOf(DraftRules.RuleError.class);
     game.cancel(subject, cancelPayload(puzzle, undoTurn.turnId(), 1, 1, UUID.randomUUID()));
 
@@ -384,10 +412,15 @@ class GameCoordinatorTest {
     game.preview(subject, confirmedTurn.turnId(), 0, 1, action(UUID.randomUUID(), g0, 0, 0));
     UUID confirmedCommand = UUID.randomUUID(), confirmedCancelId = UUID.randomUUID();
     leases.pinConfirm(subject, confirmedTurn.turnId(), 0, confirmedCommand, clock.instant());
-    JsonNode confirmedCancel = cancelPayload(puzzle, confirmedTurn.turnId(), 0, 0, confirmedCancelId);
-    JsonNode confirmedResult = mapper.createObjectNode().put("outcome", "confirmed")
-        .put("commandId", confirmedCommand.toString());
-    identities.record(subject, puzzle, confirmedCancelId, "cancel", confirmedCancel, confirmedResult);
+    JsonNode confirmedCancel =
+        cancelPayload(puzzle, confirmedTurn.turnId(), 0, 0, confirmedCancelId);
+    JsonNode confirmedResult =
+        mapper
+            .createObjectNode()
+            .put("outcome", "confirmed")
+            .put("commandId", confirmedCommand.toString());
+    identities.record(
+        subject, puzzle, confirmedCancelId, "cancel", confirmedCancel, confirmedResult);
     assertThat(game.cancel(subject, confirmedCancel)).isEqualTo(confirmedResult);
     assertThat(game.subscribe(puzzle).previews()).isEmpty();
 
@@ -396,20 +429,33 @@ class GameCoordinatorTest {
       UUID action = UUID.randomUUID();
       game.preview(subject, turn.turnId(), 0, 1, action(UUID.randomUUID(), g1, 0, 0));
       game.preview(subject, turn.turnId(), 0, 2, action(UUID.randomUUID(), g2, 0, 0));
-      var bad = new PreviewGeneration.Action(action, "piece", piece(g0),
-          List.of(piece(g0), piece(g1), piece(g2), piece(g3)),
-          List.of(base(g0), base(g1), base(g2), base(g3)),
-          new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), 0));
+      var bad =
+          new PreviewGeneration.Action(
+              action,
+              "piece",
+              piece(g0),
+              List.of(piece(g0), piece(g1), piece(g2), piece(g3)),
+              List.of(base(g0), base(g1), base(g2), base(g3)),
+              new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), 0));
       assertThatThrownBy(() -> game.preview(subject, turn.turnId(), 0, 3, bad))
           .isInstanceOf(DraftRules.RuleError.class);
       assertThat(game.subscribe(puzzle).previews()).hasSize(2);
-      var joined = new PreviewGeneration.Action(action, "piece", piece(g0),
-          reverse ? List.of(piece(g0), piece(g2), piece(g1)) : List.of(piece(g0), piece(g1), piece(g2)),
-          reverse ? List.of(base(g0), base(g2), base(g1)) : List.of(base(g0), base(g1), base(g2)),
-          new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), 0));
+      var joined =
+          new PreviewGeneration.Action(
+              action,
+              "piece",
+              piece(g0),
+              reverse
+                  ? List.of(piece(g0), piece(g2), piece(g1))
+                  : List.of(piece(g0), piece(g1), piece(g2)),
+              reverse
+                  ? List.of(base(g0), base(g2), base(g1))
+                  : List.of(base(g0), base(g1), base(g2)),
+              new PreviewGeneration.Transform(new PreviewGeneration.Point(0, 0), 0));
       assertThat(game.preview(subject, turn.turnId(), 0, 3, joined).previews())
-          .allSatisfy(p -> assertThat(p.action().affectedPieceIds())
-              .containsExactlyInAnyOrder(piece(g0), piece(g1), piece(g2)));
+          .allSatisfy(p ->
+              assertThat(p.action().affectedPieceIds())
+                  .containsExactlyInAnyOrder(piece(g0), piece(g1), piece(g2)));
       game.cancel(subject, cancelPayload(puzzle, turn.turnId(), 0, 0, UUID.randomUUID()));
     }
 

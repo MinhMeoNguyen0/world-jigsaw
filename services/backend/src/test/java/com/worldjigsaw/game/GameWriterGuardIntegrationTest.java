@@ -109,7 +109,8 @@ class GameWriterGuardIntegrationTest {
     assertThat(current.statusCode()).isEqualTo(500);
     assertThat(mapper.readTree(current.body()).path("error").path("code").asText())
         .isEqualTo("INTERNAL_ERROR");
-    assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> new GameWriterGuard(dataSource)))
+    assertThat(
+            org.assertj.core.api.Assertions.catchThrowable(() -> new GameWriterGuard(dataSource)))
         .isInstanceOf(IllegalStateException.class);
     writer.close();
     GameWriterGuard successor = new GameWriterGuard(dataSource);
