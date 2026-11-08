@@ -175,6 +175,46 @@ class ChatServerTest {
   }
 
   @Test
+  void paddingLargerThanHeapIsParsedIncrementally() throws Exception {
+    String classpath =
+        java.util.stream.Stream.of(
+                ChatRequestMemoryProbe.class,
+                ChatServer.class,
+                com.ibm.icu.text.BreakIterator.class,
+                com.fasterxml.jackson.databind.ObjectMapper.class,
+                com.fasterxml.jackson.core.JsonParser.class,
+                com.fasterxml.jackson.annotation.JsonInclude.class)
+            .map(type -> {
+              try {
+                return java.nio.file.Path.of(
+                        type.getProtectionDomain().getCodeSource().getLocation().toURI())
+                    .toString();
+              } catch (java.net.URISyntaxException ex) {
+                throw new IllegalStateException(ex);
+              }
+            })
+            .distinct()
+            .collect(java.util.stream.Collectors.joining(java.io.File.pathSeparator));
+    var process =
+        new ProcessBuilder(
+                java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Xmx64m",
+                "-cp",
+                classpath,
+                ChatRequestMemoryProbe.class.getName())
+            .redirectErrorStream(true)
+            .start();
+    try {
+      assertTrue(
+          process.waitFor(45, java.util.concurrent.TimeUnit.SECONDS), "memory probe timed out");
+      String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      assertEquals(0, process.exitValue(), output);
+    } finally {
+      process.destroyForcibly();
+    }
+  }
+
+  @Test
   void proposedWireMessageAndMalformedJson() throws Exception {
     try (var fixtureStream = getClass().getResourceAsStream("/chat-wire-proposal.json");
         BufferedReader live = subscribe(subject)) {
@@ -216,6 +256,21 @@ class ChatServerTest {
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(400, invalid.statusCode());
+      String validBody = json.writeValueAsString(post);
+      for (byte[] suffix :
+          new byte[][] {" {}".getBytes(StandardCharsets.UTF_8), new byte[] {(byte) 0xc3, 0x28}}) {
+        byte[] prefix = validBody.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = java.util.Arrays.copyOf(prefix, prefix.length + suffix.length);
+        System.arraycopy(suffix, 0, bytes, prefix.length, suffix.length);
+        invalid =
+            client.send(
+                request("/api/v1/chat/messages")
+                    .header("X-Local-Subject", subject)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, invalid.statusCode());
+      }
     }
   }
 

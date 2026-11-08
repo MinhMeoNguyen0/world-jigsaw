@@ -12,6 +12,7 @@ import com.ibm.icu.text.Normalizer2;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -183,12 +184,14 @@ public final class ChatServer implements AutoCloseable {
 
   private void stream(HttpExchange e, IdentityAdapter.Identity identity) throws IOException {
     Subscriber subscriber = new Subscriber();
+    boolean accepted;
     synchronized (this) {
-      if (subscribers.size() >= 16) {
-        error(e, 503, "CHAT_UNAVAILABLE");
-        return;
-      }
-      subscribers.add(subscriber);
+      accepted = subscribers.size() < 16;
+      if (accepted) subscribers.add(subscriber);
+    }
+    if (!accepted) {
+      error(e, 503, "CHAT_UNAVAILABLE");
+      return;
     }
     ScheduledFuture<?> deadline =
         identity.expiresAt() == Long.MAX_VALUE
@@ -229,15 +232,11 @@ public final class ChatServer implements AutoCloseable {
   }
 
   private void send(HttpExchange e, IdentityAdapter.Identity identity) throws IOException {
-    byte[] body = e.getRequestBody().readAllBytes();
     JsonNode input;
     try {
       input =
           JSON.readTree(
-              StandardCharsets.UTF_8
-                  .newDecoder()
-                  .decode(java.nio.ByteBuffer.wrap(body))
-                  .toString());
+              new InputStreamReader(e.getRequestBody(), StandardCharsets.UTF_8.newDecoder()));
     } catch (IOException ex) {
       error(e, 400, "INVALID_REQUEST");
       return;
@@ -266,43 +265,43 @@ public final class ChatServer implements AutoCloseable {
       error(e, 400, "INVALID_REQUEST");
       return;
     }
+    int status;
     synchronized (this) {
       if (System.currentTimeMillis() / 1000 >= identity.expiresAt()) {
-        error(e, 401, "UNAUTHENTICATED");
-        return;
-      }
-      if (subscribers.isEmpty()) {
-        error(e, 503, "CHAT_UNAVAILABLE");
-        return;
-      }
-      String event =
-          JSON.writeValueAsString(
-              Map.of(
-                  "schemaVersion",
-                  1,
-                  "messageId",
-                  command,
-                  "displayName",
-                  identity.displayName(),
-                  "text",
-                  text,
-                  "sentAt",
-                  Instant.now().toString()));
-      boolean offered = false;
-      for (var iterator = subscribers.iterator(); iterator.hasNext(); ) {
-        var subscriber = iterator.next();
-        if (subscriber.queue.offer(event)) {
-          offered = true;
-        } else {
-          iterator.remove();
-          subscriber.terminate();
+        status = 401;
+      } else if (subscribers.isEmpty()) {
+        status = 503;
+      } else {
+        String event =
+            JSON.writeValueAsString(
+                Map.of(
+                    "schemaVersion",
+                    1,
+                    "messageId",
+                    command,
+                    "displayName",
+                    identity.displayName(),
+                    "text",
+                    text,
+                    "sentAt",
+                    Instant.now().toString()));
+        boolean offered = false;
+        for (var iterator = subscribers.iterator(); iterator.hasNext(); ) {
+          var subscriber = iterator.next();
+          if (subscriber.queue.offer(event)) {
+            offered = true;
+          } else {
+            iterator.remove();
+            subscriber.terminate();
+          }
         }
+        status = offered ? 202 : 503;
       }
-      if (!offered) {
-        error(e, 503, "CHAT_UNAVAILABLE");
-        return;
-      }
-      json(e, 202, Map.of("schemaVersion", 1, "messageId", command));
+    }
+    if (status == 202) {
+      json(e, status, Map.of("schemaVersion", 1, "messageId", command));
+    } else {
+      error(e, status, status == 401 ? "UNAUTHENTICATED" : "CHAT_UNAVAILABLE");
     }
   }
 
