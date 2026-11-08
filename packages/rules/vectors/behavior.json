@@ -26,12 +26,12 @@
         "x": 0,
         "y": 0
       },
-      "rotation": 12345,
+      "rotation": 270000,
       "pivot": {
         "x": 0,
         "y": 0
       },
-      "delta": -12345,
+      "delta": 90000,
       "expected": {
         "translation": {
           "x": 0,
@@ -39,9 +39,26 @@
         },
         "rotation": 0
       }
+    },
+    {
+      "translation": { "x": 10, "y": 20 },
+      "rotation": 0,
+      "pivot": { "x": 0, "y": 0 },
+      "delta": -90000,
+      "expected": { "translation": { "x": 20, "y": -10 }, "rotation": 270000 }
     }
   ],
   "accounting": [
+    {
+      "events": ["stationary placed action", "enter neighbor", "attach", "confirm"],
+      "pending": [0, 1, 1, 0],
+      "remaining": [5, 5, 5, 4]
+    },
+    {
+      "events": ["outer sort", "enter neighbor", "attach", "confirm"],
+      "pending": [0, 1, 1, 0],
+      "remaining": [5, 5, 5, 4]
+    },
     {
       "events": [
         "outer sort",

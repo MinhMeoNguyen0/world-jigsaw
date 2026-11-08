@@ -61,13 +61,94 @@ for (const name of fixtures)
     rejects(() => confirm(d, snapshot, { limit: 5, used: 1, remaining: 4 }), 'QUOTA_EXCEEDED')
   })
 
-test('portable rotation vectors include arbitrary-angle correction', () => {
+test('portable rotation vectors cover quarter turns in both directions', () => {
   const vectors = load('../vectors/behavior.json')
   for (const v of vectors.rotation)
     assert.deepEqual(
       rotateAround({ translation: v.translation, rotation: v.rotation }, v.pivot, v.delta),
       v.expected,
     )
+})
+
+test('settled snapshots and player rotations reject other angles', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const invalid = structuredClone(snapshot)
+  invalid.groups[0].transform.rotation = 12345
+  rejects(() => begin(definition, invalid, allowance), 'INVALID_ACTION')
+  const d = begin(definition, snapshot, allowance)
+  rejects(() => confirm(d, invalid, allowance), 'INVALID_ACTION')
+  rejects(
+    () => move(d, snapshot.groups[0].groupId, action(1), invalid.groups[0].transform),
+    'INVALID_ACTION',
+  )
+  rejects(() => rotateAround(solved, { x: 0, y: 0 }, 12345), 'INVALID_ACTION')
+  rejects(() => rotateAround(invalid.groups[0].transform, { x: 0, y: 0 }, 90000), 'INVALID_ACTION')
+})
+
+test('joining preserves free actions in either role and through another join', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/review-60.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const placed = snapshot.groups[2],
+    incoming = snapshot.groups[3],
+    next = snapshot.groups[4]
+  const oneMove = { limit: 5 as const, used: 4, remaining: 1 }
+  for (const freeMoves of [false, true]) {
+    let d = begin(definition, snapshot, oneMove)
+    d = move(d, placed.groupId, action(1), placed.transform)
+    d = move(d, incoming.groupId, action(2), solved)
+    assert.equal(pendingCount(d), 1)
+    d = attach(
+      d,
+      freeMoves ? placed.groupId : incoming.groupId,
+      freeMoves ? incoming.groupId : placed.groupId,
+      action(99),
+      0,
+      0,
+    )
+    assert.equal(pendingCount(d), 1)
+    d = attach(d, action(99), next.groupId, action(100), 10000000, 180000)
+    assert.equal(pendingCount(d), 1)
+    d = move(d, action(100), action(1), solved)
+    assert.equal(pendingCount(d), 1)
+    const result = confirm(d, snapshot, oneMove)
+    assert.equal(result.charged, 1)
+    assert.equal(result.allowance.remaining, 0)
+  }
+})
+
+test('joining a free outer sort with an entered neighbor keeps one charge', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const outer = snapshot.groups[0],
+    incoming = snapshot.groups[1]
+  const p = definition.pieces[0]
+  const outside: Transform = {
+    rotation: 0,
+    translation: { x: -p.solvedPosition.x - p.referencePoint.x - 10000, y: 0 },
+  }
+  for (const freeMoves of [false, true]) {
+    let d = begin(definition, snapshot, allowance)
+    d = move(d, outer.groupId, action(1), outside)
+    d = move(d, incoming.groupId, action(2), solved)
+    assert.equal(pendingCount(d), 1)
+    d = attach(
+      d,
+      freeMoves ? outer.groupId : incoming.groupId,
+      freeMoves ? incoming.groupId : outer.groupId,
+      action(99),
+      10000000,
+      0,
+    )
+    assert.equal(pendingCount(d), 1)
+    assert.equal(confirm(d, snapshot, allowance).charged, 1)
+  }
 })
 
 test('attachment, independent action charges, group movement and undo', () => {
@@ -266,7 +347,7 @@ for (const name of fixtures)
       const mergedId = action(3000 + i)
       draft = attach(draft, next.groupId, assembledId, mergedId, 0, 0)
       const result = confirm(draft, snapshot, allowance)
-      assert.equal(result.charged, 1)
+      assert.equal(result.charged, next.finalPosition ? 0 : 1)
       snapshot = result.snapshot
       assembledId = mergedId
     }

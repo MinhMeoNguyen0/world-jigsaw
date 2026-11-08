@@ -20,7 +20,7 @@ export class RuleError extends Error {
   }
 }
 type DraftGroup = { group: Group; sources: string[]; actions: string[] }
-type PendingAction = { id: string; source: string; entered: boolean }
+type PendingAction = { id: string; source: string; entered: boolean; joinedCharge?: boolean }
 export type Draft = {
   definition: Definition
   base: Snapshot
@@ -42,6 +42,7 @@ const validTransform = (t: Transform) =>
   integer(t.rotation) &&
   t.rotation >= 0 &&
   t.rotation < 360000 &&
+  t.rotation % 90000 === 0 &&
   integer(t.translation.x) &&
   integer(t.translation.y) &&
   Math.abs(t.translation.x) <= 1e9 &&
@@ -57,12 +58,19 @@ export function transformPoint(p: Point, t: Transform): Point {
   return { x: round(r.x + t.translation.x), y: round(r.y + t.translation.y) }
 }
 export function rotateAround(t: Transform, pivot: Point, delta: number): Transform {
-  if (!validTransform(t) || !integer(delta) || !integer(pivot.x) || !integer(pivot.y))
+  if (
+    !validTransform(t) ||
+    !integer(delta) ||
+    delta % 90000 !== 0 ||
+    !integer(pivot.x) ||
+    !integer(pivot.y)
+  )
     return fail('INVALID_ACTION', 'Invalid rotation')
-  const r = rotate({ x: t.translation.x - pivot.x, y: t.translation.y - pivot.y }, delta)
+  const turn = normalizeAngle(delta)
+  const r = rotate({ x: t.translation.x - pivot.x, y: t.translation.y - pivot.y }, turn)
   const result = {
     translation: { x: round(pivot.x + r.x), y: round(pivot.y + r.y) },
-    rotation: normalizeAngle(t.rotation + delta),
+    rotation: normalizeAngle(t.rotation + turn),
   }
   if (!validTransform(result)) return fail('INVALID_ACTION', 'Rotation outside coordinate bounds')
   return result
@@ -94,12 +102,11 @@ const findGroup = (d: Draft, id: string) =>
 const original = (d: Draft, id: string) =>
   d.base.groups.find((g) => same(g.groupId, id)) ?? fail('INVALID_ACTION', 'Unknown source')
 const counted = (d: Draft, a: PendingAction) => {
+  if (a.joinedCharge !== undefined) return a.joinedCharge
   const component = d.groups.find((g) => g.actions.some((id) => same(id, a.id)))!
   const src = original(d, a.source)
-  if (component.sources.length === 1 && equalTransform(src.transform, component.group.transform))
-    return false
+  if (equalTransform(src.transform, component.group.transform)) return false
   return (
-    component.sources.length > 1 ||
     src.pieceIds.length > 1 ||
     inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface) ||
     a.entered
@@ -169,7 +176,9 @@ function validGeometry(definition: Definition, snapshot: Snapshot): boolean {
   return true
 }
 const validBoard = (definition: Definition, snapshot: Snapshot) =>
-  validateBoard(definition, snapshot).valid && validGeometry(definition, snapshot)
+  validateBoard(definition, snapshot).valid &&
+  snapshot.groups.every((g) => validTransform(g.transform)) &&
+  validGeometry(definition, snapshot)
 const sameGroup = (a: Group, b: Group) =>
   same(a.groupId, b.groupId) &&
   a.revision === b.revision &&
@@ -276,6 +285,9 @@ export function attach(
     finalPosition: false,
   }
   checkWorkspace(d, group)
+  for (const action of d.actions)
+    if ([...moving.actions, ...target.actions].some((id) => same(id, action.id)))
+      action.joinedCharge = counted(d, action)
   d.groups = d.groups.filter((g) => g !== moving && g !== target)
   d.groups.push({
     group,
