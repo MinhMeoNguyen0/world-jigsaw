@@ -57,6 +57,8 @@ function harness() {
   let confirmFailure = false
   let confirmResult: unknown = fixture.commandResult
   let cancelFailure = false
+  let rejectCancel = false
+  let rejectBegin = false
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     const body: { requestId: string } | undefined =
@@ -66,7 +68,9 @@ function harness() {
     if (path === '/api/v1/session')
       result = { schemaVersion: 1, displayName: 'Player', expiresAt: '2026-11-09T00:00:00Z' }
     else if (path === '/api/v1/game/current') result = game
-    else if (path === '/api/v1/game/turns') {
+    else if ((path === '/api/v1/game/turns' && rejectBegin) || (path.endsWith('/cancel') && rejectCancel)) {
+      return Promise.resolve(new Response(JSON.stringify({ schemaVersion: 1, error: { code: 'INVALID_ACTION', message: 'Rejected', requestId: '00000000-0000-4000-8000-000000000099', retryable: false } }), { status: 400 }))
+    } else if (path === '/api/v1/game/turns') {
       game = { ...game, ownTurn: turn }
       result = turn
     } else if (path.endsWith('/confirm')) {
@@ -151,6 +155,8 @@ function harness() {
     setConfirmResult: (value: unknown) => {
       confirmResult = value
     },
+    setRejectBegin: (value: boolean) => { rejectBegin = value },
+    setRejectCancel: (value: boolean) => { rejectCancel = value },
     setCancelFailure: (value: boolean) => {
       cancelFailure = value
     },
@@ -219,52 +225,100 @@ describe('live game adapter', () => {
     expect(h.client.getState().game?.snapshot.boardVersion).toBe(8)
   })
 
-  it('retains the exact command and server-authored action after a lost Confirm response', async () => {
+  it('retains an existing command after a lost Confirm response', async () => {
     const h = harness()
-    const socket = await h.connect()
-    await h.client.begin()
-    const pendingAction = h.client.newAction({ ...action })
-    h.client.preview(pendingAction)
-    expect(() => {
-      h.client.preview(pendingAction)
-    }).toThrow('not ready')
-    socket.emit(frame(pendingAction, 100))
+    const pending = fixture.confirm as Confirm
+    h.client.restorePendingConfirm(pending)
     h.setConfirmFailure(true)
     await expect(h.client.confirm()).rejects.toThrow('connection lost')
-    const pending = h.client.getState().pendingConfirm
-    if (!pending) throw new Error('Missing pending confirmation')
-    expect(pending.actions).toEqual([pendingAction])
-    expect(() => {
-      h.client.preview(pendingAction)
-    }).toThrow('not ready')
     h.setConfirmResult({ ...fixture.commandResult, commandId: pending.commandId })
     h.setConfirmFailure(false)
     await h.client.confirm()
-    const payloads = h.calls
-      .filter((call) => call.path.endsWith('/confirm'))
-      .map((call) => call.body)
-    expect(payloads).toEqual([pending, pending])
+    expect(h.calls.filter((call) => call.path.endsWith('/confirm')).map((call) => call.body)).toEqual([pending, pending])
     expect(h.client.getState().pendingConfirm).toBeNull()
   })
 
-  it('reconnects with fresh overlays and keeps submitted sequence independent of received sequence', async () => {
+  it('does not treat a delayed or other-tab preview as acceptance', async () => {
     const h = harness()
     const socket = await h.connect()
     await h.client.begin()
-    h.client.preview(action)
+    h.client.preview({ ...action, intendedTransform: { ...action.intendedTransform, rotation: 90000 } })
     socket.emit(frame(action, 100))
+    expect(h.client.getState().connection).not.toBe('ready')
+    await expect(h.client.confirm()).rejects.toThrow()
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = h.sockets[1]!
+    next.open()
+    next.emit({ schemaVersion: 1, type: 'subscribed', snapshot: current.snapshot, watermark: current.snapshot.boardVersion, previews: [frame(action, 100)] })
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    expect(() => h.client.preview(action)).toThrow('not ready')
+    expect(h.calls.filter((call) => call.path.endsWith('/confirm'))).toHaveLength(0)
+  })
+
+  it('requires cancellation after reconnecting to an active turn', async () => {
+    const h = harness()
+    const socket = await h.connect()
+    await h.client.begin()
     socket.drop()
-    const next = await h.connect()
-    h.client.preview({
-      ...action,
-      intendedTransform: { ...action.intendedTransform, rotation: 90000 },
-    })
-    expect(next.sent[1]).toMatchObject({
-      type: 'preview.submit',
-      sequence: 1,
-      action: { actionId: action.actionId },
-    })
-    expect(h.client.getState().previews).toEqual({})
+    await h.connect()
+    expect(() => h.client.preview(action)).toThrow('not ready')
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+    expect((await h.client.cancel()).outcome).toBe('canceled')
+  })
+
+  it('refreshes identity state when subscription advances the board', async () => {
+    const h = harness()
+    await h.client.connect()
+    const socket = h.sockets[0]!
+    socket.open()
+    h.setGame({ ...current, snapshot: fixture.confirmedSnapshot as CurrentGame['snapshot'], allowance: { limit: 5, used: 1, remaining: 4 } })
+    socket.emit({ schemaVersion: 1, type: 'subscribed', snapshot: fixture.confirmedSnapshot, watermark: 8, previews: [] })
+    expect(h.client.getState().connection).not.toBe('ready')
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = h.sockets[1]!
+    next.open()
+    next.emit({ schemaVersion: 1, type: 'subscribed', snapshot: fixture.confirmedSnapshot, watermark: 8, previews: [] })
+    expect(h.client.getState().game?.allowance?.used).toBe(1)
+    expect(h.client.getState().connection).toBe('ready')
+  })
+
+  it('resynchronizes an undo from another tab before further operations', async () => {
+    const h = harness()
+    const socket = await h.connect()
+    await h.client.begin()
+    const updated = { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 }
+    h.setGame({ ...current, ownTurn: updated })
+    socket.emit({ ...fixture.previewCleared, turnId: turn.turnId, generation: turn.generation, reason: 'undone' })
+    expect(h.client.getState().connection).not.toBe('ready')
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = h.sockets[1]!
+    next.open()
+    next.emit({ schemaVersion: 1, type: 'subscribed', snapshot: current.snapshot, watermark: current.snapshot.boardVersion, previews: [] })
+    expect(h.client.getState().game?.ownTurn).toEqual(updated)
+    expect(() => h.client.preview(action)).toThrow('not ready')
+    await h.client.cancel()
+    expect(h.calls.filter((call) => call.path.endsWith('/cancel')).at(-1)?.body).toMatchObject({ generation: updated.generation, turnRevision: updated.turnRevision })
+  })
+
+  it('replaces definitively rejected begin and cancel requests', async () => {
+    const h = harness()
+    await h.connect()
+    h.setRejectBegin(true)
+    await expect(h.client.begin()).rejects.toThrow('Rejected')
+    h.setRejectBegin(false)
+    await h.client.begin()
+    const begins = h.calls.filter((call) => call.path === '/api/v1/game/turns')
+    expect(begins[1]?.body).not.toEqual(begins[0]?.body)
+    h.setRejectCancel(true)
+    await expect(h.client.cancel()).rejects.toThrow('Rejected')
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = h.sockets[1]!
+    next.open()
+    next.emit({ schemaVersion: 1, type: 'subscribed', snapshot: current.snapshot, watermark: current.snapshot.boardVersion, previews: [] })
+    h.setRejectCancel(false)
+    await h.client.cancel()
+    const cancels = h.calls.filter((call) => call.path.endsWith('/cancel'))
+    expect(cancels[1]?.body).not.toEqual(cancels[0]?.body)
   })
 
   it('does not apply a board event with a version gap and requests a fresh subscription', async () => {
@@ -283,7 +337,6 @@ describe('live game adapter', () => {
     const h = harness()
     const socket = await h.connect()
     await h.client.begin()
-    socket.emit(frame(action, 1))
     h.setCancelFailure(true)
     await expect(h.client.cancel()).rejects.toThrow('connection lost')
     socket.emit({

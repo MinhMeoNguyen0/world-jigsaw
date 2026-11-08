@@ -103,7 +103,6 @@ export class LiveGame {
   private heartbeatPending = false
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
   private sequence = 0
-  private ownedTurn: string | null = null
   private uncertainDraft = false
   private inFlight: { sequence: number; actionId: string } | null = null
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
@@ -166,12 +165,13 @@ export class LiveGame {
       const game = await this.request<CurrentGame>('/api/v1/game/current', 'CurrentGame')
       await verifyGame(game)
       if (epoch !== this.epoch) return
-      if (game.ownTurn && !sameId(game.ownTurn.turnId, this.ownedTurn ?? ''))
-        this.uncertainDraft = true
-      if (!game.ownTurn) {
-        this.ownedTurn = null
-        this.uncertainDraft = false
-      }
+      this.uncertainDraft = Boolean(game.ownTurn)
+      if (this.beginRequest && (game.ownTurn || !sameId(this.beginRequest.puzzleId, game.snapshot.puzzleId)))
+        this.beginRequest = null
+      if (this.cancelRequest && !sameId(this.cancelRequest.puzzleId, game.snapshot.puzzleId))
+        this.cancelRequest = null
+      if (this.undoRequest && !sameId(this.undoRequest.puzzleId, game.snapshot.puzzleId))
+        this.undoRequest = null
       this.history = { byVersion: new Map(), eventIds: new Set() }
       this.publish({ game, connection: 'resyncing' })
       const url = new URL('/api/v1/game/stream', this.deps.origin)
@@ -254,8 +254,14 @@ export class LiveGame {
         const reply = checked<Subscribed>('Subscribed', message)
         if (!validateBoard(game.definition, reply.snapshot).valid)
           throw new Error('Invalid subscribed board')
+        if (reply.watermark !== reply.snapshot.boardVersion)
+          throw new Error('Subscription watermark mismatch')
         if (reply.watermark < game.snapshot.boardVersion)
           throw new Error('Subscription regressed the board')
+        if (reply.watermark > game.snapshot.boardVersion) {
+          this.resync('Subscription advanced; refreshing allowance and turn.')
+          return
+        }
         const previews: Record<string, PreviewState> = {}
         for (const preview of reply.previews) {
           const key = preview.turnId.toLowerCase()
@@ -285,27 +291,14 @@ export class LiveGame {
         const previous = this.state.previews[key] ?? null
         const next = applyPreview(previous, event)
         if (
-          type === 'preview' &&
-          next !== previous &&
-          this.inFlight &&
-          event.generation === game.ownTurn?.generation &&
-          sameId((event as Preview).action.actionId, this.inFlight.actionId) &&
-          sameId(event.turnId, game.ownTurn.turnId)
-        ) {
-          this.inFlight = null
-          this.publish({ previewPending: false })
-        }
-        if (
-          type === 'previewCleared' &&
           next !== previous &&
           game.ownTurn &&
           sameId(event.turnId, game.ownTurn.turnId) &&
-          event.generation === game.ownTurn.generation &&
-          (event as PreviewCleared).reason !== 'undone'
+          event.generation >= game.ownTurn.generation
         ) {
-          this.inFlight = null
-          this.ownedTurn = null
-          this.publish({ game: { ...game, ownTurn: null }, previewPending: false })
+          this.uncertainDraft = true
+          this.resync('Turn changed without a correlated receipt; resynchronizing before cancellation.')
+          return
         }
         if (next) this.publish({ previews: { ...this.state.previews, [key]: next } })
       } else if (type === 'preview.rejected') {
@@ -375,10 +368,15 @@ export class LiveGame {
       puzzleId: game.snapshot.puzzleId,
       requestId: this.deps.id(),
     }
-    const turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', this.beginRequest)
+    let turn: Turn
+    try {
+      turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', this.beginRequest)
+    } catch (error) {
+      if (error instanceof GameRequestError && error.definitive) this.beginRequest = null
+      throw error
+    }
     if (!sameId(turn.puzzleId, game.snapshot.puzzleId)) throw new Error('Turn puzzle mismatch')
     this.beginRequest = null
-    this.ownedTurn = turn.turnId
     this.sequence = 0
     this.uncertainDraft = false
     this.publish({ game: { ...this.readyGame(), ownTurn: turn }, issue: null })
@@ -436,31 +434,33 @@ export class LiveGame {
   }
 
   async undo(actionId: string): Promise<UndoResult> {
-    const turn = this.turn()
     if (
       this.state.pendingConfirm ||
       this.state.unresolvedCommand ||
+      (this.uncertainDraft && !this.undoRequest) ||
       this.inFlight ||
       this.cancelRequest
     )
       throw new Error('Draft is not ready for undo')
+    const turn = this.undoRequest ? null : this.turn()
     this.undoRequest ??= {
       schemaVersion: 1,
-      puzzleId: turn.puzzleId,
-      turnId: turn.turnId,
+      puzzleId: turn!.puzzleId,
+      turnId: turn!.turnId,
       requestId: this.deps.id(),
-      turnRevision: turn.turnRevision,
-      generation: turn.generation,
+      turnRevision: turn!.turnRevision,
+      generation: turn!.generation,
       actionId,
     }
-    if (!sameId(this.undoRequest.actionId, actionId))
+    const payload = this.undoRequest
+    if (!sameId(payload.actionId, actionId))
       throw new Error('Retry the pending undo first')
     let result: UndoResult
     try {
       result = await this.request<UndoResult>(
-        `/api/v1/game/turns/${turn.turnId}/undo`,
+        `/api/v1/game/turns/${payload.turnId}/undo`,
         'UndoResult',
-        this.undoRequest,
+        payload,
       )
     } catch (error) {
       if (error instanceof GameRequestError && error.definitive) this.undoRequest = null
@@ -468,21 +468,16 @@ export class LiveGame {
       throw error
     }
     if (
-      !sameId(result.requestId, this.undoRequest.requestId) ||
-      !sameId(result.turnId, turn.turnId) ||
-      !sameId(result.puzzleId, turn.puzzleId) ||
+      !sameId(result.requestId, payload.requestId) ||
+      !sameId(result.turnId, payload.turnId) ||
+      !sameId(result.puzzleId, payload.puzzleId) ||
       !sameId(result.actionId, actionId)
     )
       throw new Error('Undo response mismatch')
     this.undoRequest = null
     this.sequence = 0
-    const game = this.readyGame()
-    this.publish({
-      game: {
-        ...game,
-        ownTurn: { ...turn, turnRevision: result.turnRevision, generation: result.generation },
-      },
-    })
+    this.uncertainDraft = true
+    this.resync('Turn changed; refreshing turn and previews.')
     return result
   }
 
@@ -501,11 +496,20 @@ export class LiveGame {
       }
     }
     const payload = this.cancelRequest
-    const result = await this.request<CancelResult>(
-      `/api/v1/game/turns/${payload.turnId}/cancel`,
-      'CancelResult',
-      payload,
-    )
+    let result: CancelResult
+    try {
+      result = await this.request<CancelResult>(
+        `/api/v1/game/turns/${payload.turnId}/cancel`,
+        'CancelResult',
+        payload,
+      )
+    } catch (error) {
+      if (error instanceof GameRequestError && error.definitive) {
+        this.cancelRequest = null
+        this.resync('Cancel rejected; refreshing turn before retry.')
+      }
+      throw error
+    }
     if (
       !sameId(result.requestId, payload.requestId) ||
       !sameId(result.turnId, payload.turnId) ||
@@ -516,9 +520,6 @@ export class LiveGame {
     if (result.outcome === 'canceled' || result.outcome === 'already_canceled') {
       this.inFlight = null
       this.uncertainDraft = false
-      this.ownedTurn = null
-      const game = this.readyGame()
-      this.publish({ game: { ...game, ownTurn: null, allowance: result.allowance }, issue: null })
       this.resync('Canceled; synchronizing the latest board.')
     } else {
       this.uncertainDraft = true
@@ -536,7 +537,7 @@ export class LiveGame {
   async confirm(): Promise<CommandResult> {
     if (this.confirmBusy) throw new Error('Confirmation already in progress')
     if (!this.state.pendingConfirm) {
-      const turn = this.turn()
+      this.turn()
       if (
         this.state.unresolvedCommand ||
         this.uncertainDraft ||
@@ -546,23 +547,7 @@ export class LiveGame {
         this.cancelRequest
       )
         throw new Error('Draft is not ready to confirm')
-      const overlay = this.state.previews[turn.turnId.toLowerCase()]
-      if (!overlay || overlay.closed || overlay.generation !== turn.generation)
-        throw new Error('No accepted actions to confirm')
-      const actions = Object.values(overlay.actions)
-      if (!actions.length) throw new Error('No accepted actions to confirm')
-      this.publish({
-        pendingConfirm: {
-          schemaVersion: 1,
-          puzzleId: turn.puzzleId,
-          turnId: turn.turnId,
-          commandId: this.deps.id(),
-          turnRevision: turn.turnRevision,
-          generation: turn.generation,
-          actions: actions as [Action, ...Action[]],
-        },
-        issue: null,
-      })
+      throw new Error('Confirmation requires a correlated preview receipt from the service')
     }
     const payload = this.state.pendingConfirm
     if (!payload) throw new Error('No confirmation payload')
