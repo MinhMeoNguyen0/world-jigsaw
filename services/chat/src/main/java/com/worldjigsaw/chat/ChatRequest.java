@@ -2,8 +2,6 @@ package com.worldjigsaw.chat;
 
 import com.ibm.icu.lang.UCharacter;
 import com.ibm.icu.lang.UProperty;
-import com.ibm.icu.text.BreakIterator;
-import com.ibm.icu.util.ULocale;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -79,6 +77,7 @@ record ChatRequest(String messageId, String text) {
       StringBuilder value = new StringBuilder();
       StringBuilder spaces = new StringBuilder();
       int spaceCount = 0;
+      GraphemeCounter counter = new GraphemeCounter();
       int unit;
       while ((unit = character()) != -1) {
         int cp = unit;
@@ -98,23 +97,16 @@ record ChatRequest(String messageId, String text) {
           continue;
         }
         if (spaceCount > maxGraphemes) throw invalid();
-        boolean hasSpaces = !spaces.isEmpty();
+        for (int offset = 0; offset < spaces.length(); ) {
+          int pending = spaces.codePointAt(offset);
+          if (counter.add(pending) > maxGraphemes) throw invalid();
+          offset += Character.charCount(pending);
+        }
+        if (counter.add(cp) > maxGraphemes) throw invalid();
         value.append(spaces);
         spaces.setLength(0);
         spaceCount = 0;
         value.appendCodePoint(cp);
-        int graphemeBreak = UCharacter.getIntPropertyValue(cp, UProperty.GRAPHEME_CLUSTER_BREAK);
-        if (hasSpaces
-            || (graphemeBreak != UCharacter.GraphemeClusterBreak.EXTEND
-                && graphemeBreak != UCharacter.GraphemeClusterBreak.ZWJ
-                && graphemeBreak != UCharacter.GraphemeClusterBreak.SPACING_MARK)) {
-          BreakIterator iterator = BreakIterator.getCharacterInstance(ULocale.ROOT);
-          iterator.setText(value.toString());
-          int count = 0;
-          for (int pos = iterator.first(); (pos = iterator.next()) != BreakIterator.DONE; ) {
-            if (++count > maxGraphemes) throw invalid();
-          }
-        }
       }
       String normalized = ChatServer.normalize(value.toString(), maxGraphemes);
       if (normalized == null) throw invalid();

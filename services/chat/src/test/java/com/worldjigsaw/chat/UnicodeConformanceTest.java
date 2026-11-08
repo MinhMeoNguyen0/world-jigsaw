@@ -39,6 +39,34 @@ class UnicodeConformanceTest {
   }
 
   @Test
+  void streamingBoundariesMatchUnicode151() throws Exception {
+    try (var stream = getClass().getResourceAsStream("/GraphemeBreakTest-15.1.0.txt");
+        var lines =
+            new java.io.BufferedReader(
+                new java.io.InputStreamReader(stream, StandardCharsets.UTF_8))) {
+      String line;
+      int cases = 0;
+      while ((line = lines.readLine()) != null) {
+        String spec = line.split("#", 2)[0].trim();
+        if (spec.isEmpty()) continue;
+        GraphemeCounter counter = new GraphemeCounter();
+        boolean boundary = false;
+        int expected = 0;
+        for (String token : spec.split("\\s+")) {
+          if (token.equals("÷")) boundary = true;
+          else if (token.equals("×")) boundary = false;
+          else {
+            if (boundary) expected++;
+            assertEquals(expected, counter.add(Integer.parseInt(token, 16)), spec);
+          }
+        }
+        cases++;
+      }
+      assertTrue(cases > 1000);
+    }
+  }
+
+  @Test
   void s3ProposedUnicodeVectors() throws Exception {
     try (var stream = getClass().getResourceAsStream("/chat-wire-proposal.json")) {
       var fixture = new ObjectMapper().readTree(stream);

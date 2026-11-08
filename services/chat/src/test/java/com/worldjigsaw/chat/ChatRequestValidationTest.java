@@ -25,6 +25,10 @@ class ChatRequestValidationTest {
             "{\"text\":\"" + "a" + "\u0301".repeat(511) + "🙂".repeat(40),
             "{\"text\":\"" + "a" + "\u0301".repeat(511) + " ".repeat(39) + "中",
             "{\"text\":\"" + "a" + "\u0301".repeat(511) + " ".repeat(40) + "\u0301",
+            "{\"text\":\"" + "a".repeat(39) + "\u200B\u0301",
+            "{\"text\":\"" + "a".repeat(39) + "\u200B\u200D",
+            "{\"text\":\"" + "a".repeat(39) + "\u200B\u0903",
+            "{\"text\":\"" + "a".repeat(39) + "\\u200B\\u0301",
             "{\"schemaVersion\":2"
           }) {
         try (var socket = new Socket()) {
@@ -130,6 +134,33 @@ class ChatRequestValidationTest {
       }
       assertTrue(cases > 500);
     }
+  }
+
+  @Test
+  void longValidClustersAreProcessedPromptly() {
+    assertTimeoutPreemptively(
+        java.time.Duration.ofSeconds(12),
+        () -> {
+          var json = new com.fasterxml.jackson.databind.ObjectMapper();
+          for (String text :
+              new String[] {
+                "\u1100".repeat(100000),
+                "\u0600".repeat(100000) + "a",
+                "👩‍".repeat(30000) + "👩",
+                "क्".repeat(30000) + "क"
+              }) {
+            byte[] body =
+                json.writeValueAsBytes(
+                    java.util.Map.of(
+                        "schemaVersion",
+                        1,
+                        "messageId",
+                        "00000000-0000-4000-8000-000000000700",
+                        "text",
+                        text));
+            assertEquals(text, ChatRequest.read(new java.io.ByteArrayInputStream(body), 40).text());
+          }
+        });
   }
 
   @Test
