@@ -106,10 +106,15 @@ class GameCoordinatorTest {
     var b1 = action(actionB, g1, 0, 0);
     assertThat(game.preview(b, second.turnId(), 0, 2, b1).pending()).isEqualTo(1);
     assertThat(game.subscribe(puzzle).previews()).hasSize(2);
+    JsonNode lateConfirm = confirmPayload(puzzle, first.turnId(), 0, UUID.randomUUID());
     JsonNode cancelA = cancelPayload(puzzle, first.turnId(), 0, 0, UUID.randomUUID());
     JsonNode canceled = game.cancel(a, cancelA);
     assertThat(canceled.path("outcome").asText()).isEqualTo("canceled");
     assertThat(game.cancel(a, cancelA)).isEqualTo(canceled);
+    JsonNode rejected = game.confirm(a, lateConfirm);
+    assertThat(rejected.path("outcome").asText()).isEqualTo("rejected");
+    assertThat(rejected.path("error").path("code").asText()).isEqualTo("TURN_CLOSED");
+    assertThat(game.confirm(a, lateConfirm)).isEqualTo(rejected);
     ObjectNode changedCancel = cancelA.deepCopy();
     changedCancel.put("turnRevision", 1);
     assertThatThrownBy(() -> game.cancel(a, changedCancel))
@@ -259,11 +264,7 @@ class GameCoordinatorTest {
       var confirming =
           pool.submit(() -> {
             start.await();
-            try {
-              return game.confirm(a, raceConfirm);
-            } catch (DraftRules.RuleError rejected) {
-              return null;
-            }
+            return game.confirm(a, raceConfirm);
           });
       var canceling =
           pool.submit(() -> {
@@ -273,13 +274,15 @@ class GameCoordinatorTest {
       start.countDown();
       JsonNode outcome = confirming.get(), cancellation = canceling.get();
       if ("confirmed".equals(cancellation.path("outcome").asText())) {
-        assertThat(outcome).isNotNull();
         assertThat(outcome.path("outcome").asText()).isEqualTo("confirmed");
         assertThat(cancellation.path("commandId")).isEqualTo(raceConfirm.path("commandId"));
       } else {
         assertThat(cancellation.path("outcome").asText()).isEqualTo("canceled");
-        assertThat(outcome).isNull();
+        assertThat(outcome.path("outcome").asText()).isEqualTo("rejected");
+        assertThat(outcome.path("error").path("code").asText()).isEqualTo("TURN_CLOSED");
+        assertSameSnapshot(game.subscribe(puzzle).snapshot(), current);
       }
+      assertThat(game.confirm(a, raceConfirm)).isEqualTo(outcome);
       assertThat(game.cancel(a, raceCancel)).isEqualTo(cancellation);
     }
 
