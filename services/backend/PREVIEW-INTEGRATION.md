@@ -17,9 +17,9 @@ Integration must also coordinate the canonical snapshot and its event watermark 
 snapshot, queue or replay events across subscription, and order each accepted preview or clear
 with its broadcast. A `snapshot()` call alone is not an atomic network handoff. Confirm must clear
 the overlay only in coordination with the actual durable outcome; it must not turn a preview into
-a claimed save. The generator, rules engine, database/import/read API, session identity and live
-transport are separate pending work. See the [v1 contract](../../packages/contracts/README.md) and
-its unresolved integration constraints.
+a claimed save. Integration with the [board import and read API](../../README.md#game-board-import-and-reads)
+remains pending, as do the generator, rules engine, session identity and live transport. See the
+[v1 contract](../../packages/contracts/README.md) and its unresolved integration constraints.
 
 ## Private transport demo
 
