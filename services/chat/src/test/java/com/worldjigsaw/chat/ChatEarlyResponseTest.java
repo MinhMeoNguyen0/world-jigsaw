@@ -93,7 +93,8 @@ class ChatEarlyResponseTest {
   void slowValidUploadsRemainConnected() throws Exception {
     try (var server = new ChatServer(0, IdentityAdapter.local(), new ChatSettings(40, "15.1"))) {
       server.start();
-      try (var fixed = connect(server); var chunked = connect(server)) {
+      try (var fixed = connect(server);
+          var chunked = connect(server)) {
         String body =
             "{\"schemaVersion\":1,\"messageId\":\"00000000-0000-4000-8000-000000000700\",\"text\":\"hi\"}";
         var request = new Request("POST", "/api/v1/chat/messages", "127.0.0.1", SUBJECT, "", 0);
