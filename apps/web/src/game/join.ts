@@ -71,14 +71,13 @@ export function suggestJoin(
         continue
       const otherBox = controlBounds(other, candidate.transform)
       if (!otherBox) continue
-      // Conservatively propose; the service performs the exact snap and collision checks.
       const tolerance =
         Math.min(
           box.right - box.left,
           box.bottom - box.top,
           otherBox.right - otherBox.left,
           otherBox.bottom - otherBox.top,
-        ) * 0.035
+        ) * 0.05
       if (
         Math.hypot(
           transform.translation.x - candidate.transform.translation.x,

@@ -44,6 +44,14 @@ interface DraftProof {
   nextSequence: number
   actions: Action[]
 }
+interface Flight {
+  sequence: number
+  actionId: string
+  draftRevision: number
+  action: Action
+  proof: DraftProof | null
+  recover: boolean
+}
 export interface LiveGameDependencies {
   fetch: typeof fetch
   socket: (url: string) => Socket
@@ -118,7 +126,8 @@ export class LiveGame {
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
   private sequence = 0
   private uncertainDraft = false
-  private inFlight: { sequence: number; actionId: string; draftRevision: number } | null = null
+  private inFlight: Flight | null = null
+  private lostPreview: Flight | null = null
   private draftRevision: number | null = null
   private acceptedActions: Action[] = []
   private draftProof: DraftProof | null = null
@@ -200,7 +209,10 @@ export class LiveGame {
   async connect(): Promise<void> {
     const epoch = ++this.epoch
     this.stopSocket()
-    if (this.inFlight) this.uncertainDraft = true
+    if (this.inFlight) {
+      this.uncertainDraft = true
+      this.lostPreview = this.inFlight
+    }
     this.inFlight = null
     this.publish({ connection: 'connecting', previews: {}, previewPending: false })
     if (epoch !== this.epoch) return
@@ -244,7 +256,10 @@ export class LiveGame {
       socket.onclose = () => {
         if (epoch !== this.epoch) return
         ++this.epoch
-        if (this.inFlight) this.uncertainDraft = true
+        if (this.inFlight) {
+          this.uncertainDraft = true
+          this.lostPreview = this.inFlight
+        }
         this.inFlight = null
         this.stopSocket()
         this.publish({
@@ -275,7 +290,10 @@ export class LiveGame {
 
   disconnect() {
     ++this.epoch
-    if (this.inFlight) this.uncertainDraft = true
+    if (this.inFlight) {
+      this.uncertainDraft = true
+      this.lostPreview = this.inFlight
+    }
     this.inFlight = null
     this.stopSocket()
     this.publish({ connection: 'disconnected', previews: {}, previewPending: false })
@@ -321,6 +339,50 @@ export class LiveGame {
       nextSequence: 0,
       actions: proof.actions.filter((action) => !sameId(action.actionId, payload.actionId)),
     }
+  }
+
+  recoverInterruptedPreview() {
+    if (this.inFlight) this.inFlight.recover = true
+    if (this.lostPreview) {
+      this.lostPreview.recover = true
+      if (this.uncertainDraft && this.state.connection === 'ready')
+        this.resync('Recovering interrupted preview.')
+    }
+  }
+
+  private matchesInterruptedPreview(reply: SubscribedV2): boolean {
+    const flight = this.lostPreview
+    const proof = flight?.proof
+    if (
+      !flight?.recover || !proof || !reply.ownTurn ||
+      !sameId(proof.turn.puzzleId, reply.ownTurn.puzzleId) ||
+      !sameId(proof.turn.turnId, reply.ownTurn.turnId) ||
+      proof.turn.generation !== reply.ownTurn.generation ||
+      proof.turn.turnRevision !== reply.ownTurn.turnRevision ||
+      reply.draftRevision !== flight.draftRevision + 1 ||
+      reply.nextSequence !== flight.sequence + 1
+    ) return false
+    const normalize = (action: Action) => ({
+      ...action,
+      actionId: action.actionId.toLowerCase(),
+      targetId: action.targetId.toLowerCase(),
+      kind: undefined,
+      affectedPieceIds: action.affectedPieceIds.map((id) => id.toLowerCase()).sort(),
+      baseRevisions: action.baseRevisions
+        .map((revision) => ({ ...revision, groupId: revision.groupId.toLowerCase() }))
+        .sort((a, b) => a.groupId.localeCompare(b.groupId)),
+    })
+    const affected = new Set(flight.action.affectedPieceIds.map((id) => id.toLowerCase()))
+    const expected = proof.actions.map((action) =>
+      action.affectedPieceIds.some((id) => affected.has(id.toLowerCase()))
+        ? { ...action, intendedTransform: flight.action.intendedTransform }
+        : action,
+    )
+    if (!expected.some((action) => sameId(action.actionId, flight.actionId)))
+      expected.push(flight.action)
+    const ordered = (actions: Action[]) =>
+      actions.map(normalize).sort((a, b) => a.actionId.localeCompare(b.actionId))
+    return canonical(ordered(expected)) === canonical(ordered(reply.actions))
   }
 
   private receive(raw: unknown) {
@@ -398,7 +460,11 @@ export class LiveGame {
             candidate.nextSequence === reply.nextSequence &&
             canonical(candidate.actions) === canonical(reply.actions),
           )
-        this.uncertainDraft = reply.actions.length > 0 && !matches(proof) && !matches(undoneProof)
+        this.uncertainDraft =
+          !matches(proof) && !matches(undoneProof) &&
+          !(this.lostPreview?.recover && matches(this.lostPreview.proof)) &&
+          !this.matchesInterruptedPreview(reply) &&
+          (reply.actions.length > 0 || Boolean(this.lostPreview?.recover))
         this.draftProof =
           reply.ownTurn && reply.draftRevision !== null && !this.uncertainDraft
             ? {
@@ -412,6 +478,7 @@ export class LiveGame {
         this.sequence = reply.nextSequence
         this.draftRevision = reply.draftRevision
         this.acceptedActions = structuredClone(reply.actions)
+        if (!this.uncertainDraft) this.lostPreview = null
         this.publish({
           game: {
             ...game,
@@ -451,6 +518,7 @@ export class LiveGame {
           return
         }
         this.inFlight = null
+        this.lostPreview = null
         this.acceptedActions = structuredClone(receipt.actions)
         this.draftRevision = receipt.draftRevision
         this.draftProof = {
@@ -623,7 +691,11 @@ export class LiveGame {
     if (!socket) throw new Error('Game stream is not connected')
     if (this.draftRevision === null) throw new Error('Missing draft revision')
     const epoch = this.epoch
-    this.inFlight = { sequence, actionId: action.actionId, draftRevision: this.draftRevision }
+    this.lostPreview = null
+    this.inFlight = {
+      sequence, actionId: action.actionId, draftRevision: this.draftRevision,
+      action: structuredClone(action), proof: this.draftProof, recover: false,
+    }
     this.publish({ previewPending: true, issue: null })
     if (epoch !== this.epoch || socket !== this.socket)
       throw new Error('Connection changed before preview')

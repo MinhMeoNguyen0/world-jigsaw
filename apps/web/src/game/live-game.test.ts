@@ -615,6 +615,33 @@ describe('versioned subscription and preview receipts', () => {
     actions: [action],
   })
 
+  it.each(['accepted', 'unchanged', 'concurrent'] as const)(
+    'recovers an interrupted preview after a lost receipt when the draft is %s',
+    async (outcome) => {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      const second = fixture.confirm.actions[1] as Confirm['actions'][number]
+      h.client.preview(second)
+      socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
+      const moved = { ...action, intendedTransform: {
+        ...action.intendedTransform,
+        translation: { ...action.intendedTransform.translation, x: action.intendedTransform.translation.x + 1000 },
+      } }
+      h.client.preview(moved)
+      h.client.recoverInterruptedPreview()
+      socket.drop()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit(handoff(outcome === 'unchanged' ? [action, second] : [moved, second], outcome === 'unchanged' ? 2 : outcome === 'accepted' ? 3 : 4))
+      if (outcome === 'concurrent') expect(h.client.provenDraft()).toBeNull()
+      else expect(h.client.provenDraft()).toEqual([outcome === 'accepted' ? moved : action, second])
+    },
+  )
+
   it('confirms only the latest correlated receipt and retains its exact action and revision', async () => {
     const h = harness()
     const socket = await h.start()

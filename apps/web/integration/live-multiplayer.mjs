@@ -69,6 +69,7 @@ async function dragTo(page, groupId, pieceId, target, hold = false) {
         const neighbor = document.querySelector(`[data-group-id="${target.groupId}"]`)
         if (!neighbor) throw new Error('missing join target')
         desired = local.matrixTransform(neighbor.getScreenCTM())
+        if (target.offsetX) desired.x += target.offsetX * board.getScreenCTM().a
       } else desired = new DOMPoint(target.x, target.y).matrixTransform(board.getScreenCTM())
       const sx = rect.x + rect.width / 2,
         sy = rect.y + rect.height / 2
@@ -91,10 +92,26 @@ try {
   console.log('peer saw preview while pointer held')
   await a.mouse.up()
   await settle(a, 1)
+  await dragTo(a, ids[1], pieces[1], { x: 800000, y: 200000 }, true)
+  await b.locator(`[data-preview-piece-ids="${pieces[1]}"]`).waitFor({ state: 'attached' })
+  await a.locator('svg.board').dispatchEvent('pointercancel', { pointerId: 1 })
+  await a.mouse.up()
+  await a.waitForFunction((id) =>
+    document.querySelector('.pill-count')?.textContent?.includes('1 pending') &&
+    !document.querySelector('.pill-confirm')?.disabled &&
+    !document.querySelector(`[data-preview-piece-ids="${id}"]`), pieces[1])
+  await b.locator(`[data-preview-piece-ids="${pieces[1]}"]`).waitFor({ state: 'detached' })
+  assert.ok(await b.locator(`[data-preview-piece-ids="${pieces[0]}"]`).count())
   await a.getByRole('button', { name: 'Cancel batch' }).click()
   await b.waitForFunction(() => document.querySelectorAll('[data-preview-action]').length === 0)
   assert.equal(await b.locator(`[data-group-id="${ids[0]}"]`).getAttribute('transform'), original)
   console.log('cancel restored peer canonical position')
+  await a.locator('[data-connection=ready]').waitFor()
+  await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 })
+  await settle(a, 1)
+  await a.getByRole('button', { name: 'Undo last change' }).click()
+  await a.locator('[data-connection=ready]').waitFor()
+  assert.equal(await a.getByRole('button', { name: 'Rotate selected piece' }).isDisabled(), true)
   const targets = [
     { x: 500000, y: 200000 },
     { x: 800000, y: 200000 },
@@ -126,7 +143,15 @@ try {
     saved,
   )
   console.log('five-action confirmation persisted and peer reload matched')
-  await dragTo(a, ids[0], pieces[0], { groupId: ids[1] })
+  const targetTransform = await b.locator(`[data-group-id="${ids[1]}"]`).getAttribute('transform')
+  const match = /translate\((-?\d+) (-?\d+)\)/.exec(targetTransform)
+  assert.ok(match)
+  const nearTransform = `translate(${Number(match[1]) + 5000} ${match[2]})`
+  await dragTo(a, ids[0], pieces[0], { groupId: ids[1], offsetX: 5000 }, true)
+  await b.waitForFunction(({ piece, transform }) =>
+    document.querySelector(`[data-preview-piece-ids="${piece}"]`)?.getAttribute('transform')?.includes(transform),
+    { piece: pieces[0], transform: nearTransform }, { timeout: 20000 })
+  await a.mouse.up()
   await settle(a, 1)
   const peerPreview = b.locator('[data-preview-piece-ids]')
   await peerPreview.first().waitFor({ state: 'attached' })

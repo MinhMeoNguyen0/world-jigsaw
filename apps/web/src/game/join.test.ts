@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Action, CurrentGame, PreviewState } from '@world-jigsaw/contracts'
 import fixture from '../../../../packages/generator/fixtures/surround-60.json'
+import balancedFixture from '../../../../packages/generator/fixtures/hoi-an-balanced-60.json'
 import { suggestJoin } from './join'
 
 const game = fixture as unknown as CurrentGame
@@ -17,6 +18,22 @@ const action: Action = {
 }
 
 describe('join proposal', () => {
+  it('proposes a 5000-unit snap on the balanced fixture', () => {
+    const balanced = balancedFixture as unknown as CurrentGame
+    const moving = balanced.snapshot.groups[0]
+    const neighbor = balanced.snapshot.groups[1]
+    const proposal: Action = {
+      actionId: 'action-a', kind: 'piece', targetId: moving.pieceIds[0],
+      affectedPieceIds: moving.pieceIds,
+      baseRevisions: [{ groupId: moving.groupId, revision: moving.revision }],
+      intendedTransform: moving.transform,
+    }
+    const near = { ...neighbor.transform, translation: {
+      ...neighbor.transform.translation, x: neighbor.transform.translation.x + 5000,
+    } }
+    expect(suggestJoin(balanced, {}, proposal, near, [proposal]).affectedPieceIds)
+      .toEqual([...moving.pieceIds, ...neighbor.pieceIds])
+  })
   it('requests the whole adjacent group only within the conservative snap range', () => {
     const joined = suggestJoin(game, {}, action, second.transform, [action])
     expect(joined.affectedPieceIds).toEqual([...first.pieceIds, ...second.pieceIds])

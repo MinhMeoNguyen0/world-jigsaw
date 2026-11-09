@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import { LiveGame, type LiveGameState } from '../game/live-game.ts'
 import { t } from '../i18n/translate.ts'
-import { transitIsClear } from '../game/transit.ts'
 import { suggestJoin } from '../game/join.ts'
 import { validate } from '@world-jigsaw/contracts'
 import type {
@@ -31,6 +30,10 @@ interface Pending {
   moved: boolean
   acquiring: boolean
   finalPrepared: boolean
+  interrupted: boolean
+  restoring: boolean
+  undoStarted: boolean
+  original: Action | null
 }
 export function outline(piece: Piece): string {
   const base = piece.solvedPosition,
@@ -187,6 +190,51 @@ export function useLiveBoard() {
       now = client.getState()
     if (!p || !p.moved || now.connection !== 'ready' || !now.game?.ownTurn || now.previewPending)
       return
+    if (p.interrupted) {
+      if (p.undoStarted && !p.restoring) {
+        p.restoring = true
+        void client.undo(p.action.actionId)
+          .then(() => {
+            pending.current = null
+            setGhost(null)
+            setDragging(false)
+            setSelected(null)
+          })
+          .catch((e: unknown) => {
+            p.restoring = false
+            setError(String(e))
+          })
+        return
+      }
+      const draft = client.provenDraft()
+      if (!draft || p.restoring) return
+      const current = draft.find((action) => action.actionId === p.action.actionId)
+      if (!current) {
+        pending.current = null
+        setGhost(null)
+        setDragging(false)
+      } else if (!p.original) {
+        p.undoStarted = true
+        flush()
+      } else if (
+        JSON.stringify(current.intendedTransform) !== JSON.stringify(p.original.intendedTransform)
+      ) {
+        p.restoring = true
+        try {
+          client.preview(p.original)
+          p.restoring = false
+        } catch (e) {
+          p.restoring = false
+          setError(String(e))
+        }
+      } else {
+        pending.current = null
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      }
+      return
+    }
     if (!p.active && !p.finalPrepared) {
       p.action = suggestJoin(
         now.game,
@@ -199,8 +247,6 @@ export function useLiveBoard() {
     }
     const value = JSON.stringify({ transform: p.desired, members: p.action.affectedPieceIds })
     if (value !== p.sent) {
-      if (p.active && !transitIsClear(now.game, now.previews, p.action.affectedPieceIds, p.desired))
-        return
       p.sent = value
       p.action = { ...p.action, intendedTransform: structuredClone(p.desired) }
       setAccepted(false)
@@ -255,6 +301,11 @@ export function useLiveBoard() {
     moved: false,
     acquiring: false,
     finalPrepared: false,
+    interrupted: false,
+    restoring: false,
+    undoStarted: false,
+    original:
+      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ?? null,
     action:
       actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
       client.newAction({
@@ -354,17 +405,21 @@ export function useLiveBoard() {
       pan.current = null
       return
     }
-    pending.current = null
-    setGhost(null)
-    setDragging(false)
+    const d = pending.current
+    if (!d) return
     setAccepted(false)
+    setSelected(null)
     setError(t('probe.interrupted'))
-    const current = client.getState()
-    if (current.connection === 'ready' && current.game?.ownTurn) {
-      void client.cancel().catch((e: unknown) => {
-        setError(String(e))
-      })
+    if (!d.moved) {
+      pending.current = null
+      setGhost(null)
+      setDragging(false)
+      return
     }
+    d.active = false
+    d.interrupted = true
+    client.recoverInterruptedPreview()
+    flush()
   }
   const rotate = (group: Group) => {
     if (
@@ -453,7 +508,11 @@ export function useLiveBoard() {
       if (next.connection === 'ready' && !next.issue && !next.previewPending && !pending.current) {
         setAccepted((client.provenDraft()?.length ?? 0) > 0)
       }
-      if (next.connection === 'resyncing' && next.issue?.startsWith('Preview rejected:')) {
+      if (
+        next.connection === 'resyncing' &&
+        next.issue?.startsWith('Preview rejected:') &&
+        !pending.current?.interrupted
+      ) {
         pending.current = null
         setGhost(null)
         setDragging(false)
@@ -502,10 +561,12 @@ export function useLiveBoard() {
   }
   const undo = () => {
     const last = client.provenDraft()?.at(-1)
-    if (last)
+    if (last) {
+      setSelected(null)
       void client.undo(last.actionId).catch((e: unknown) => {
         setError(String(e))
       })
+    }
   }
   const confirm = () => {
     if (recoveryFailed.current) return
