@@ -117,6 +117,33 @@ try {
   assert.equal(await b.locator(`[data-group-id="${ids[0]}"]`).getAttribute('transform'), original)
   console.log('cancel restored peer canonical position')
   await a.locator('[data-connection=ready]').waitFor()
+  let undoAttempts = 0
+  const rejectUndo = async (route) => {
+    undoAttempts++
+    await route.fulfill({ status: 409, json: {
+      schemaVersion: 1,
+      error: {
+        code: 'INVALID_ACTION', message: 'Undo would cause forbidden piece overlap',
+        requestId: '00000000-0000-4000-8000-000000000099', retryable: false,
+      },
+    } })
+  }
+  await a.route('**/api/v1/game/turns/*/undo', rejectUndo)
+  await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 }, true)
+  await b.locator(`[data-preview-piece-ids="${pieces[0]}"]`).waitFor({ state: 'attached' })
+  await a.locator('[data-preview-pending=false]').waitFor()
+  await a.locator('svg.board').dispatchEvent('pointercancel', { pointerId: 1 })
+  await a.mouse.up()
+  await status(a).filter({ hasText: 'Undo would cause forbidden piece overlap' }).waitFor()
+  await a.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+  await settle(a, 1)
+  await a.waitForTimeout(1000)
+  assert.equal(undoAttempts, 1)
+  assert.ok(await b.locator(`[data-preview-piece-ids="${pieces[0]}"]`).count())
+  await a.unroute('**/api/v1/game/turns/*/undo', rejectUndo)
+  await a.getByRole('button', { name: 'Cancel batch' }).click()
+  await b.waitForFunction(() => document.querySelectorAll('[data-preview-action]').length === 0)
+  await a.locator('[data-connection=ready]').waitFor()
   await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 })
   await settle(a, 1)
   await a.getByRole('button', { name: 'Undo last change' }).click()
@@ -280,6 +307,11 @@ try {
   await a.route('**/hoi-an-generated.png', (route) => route.abort())
   await a.reload()
   await status(a).filter({ hasText: 'Puzzle image is unsupported or unavailable.' }).waitFor()
+  await a.locator('[data-connection=ready]').waitFor()
+  assert.equal(await a.locator('.feedback').count(), 1)
+  const feedback = a.locator('.feedback')
+  assert.ok((await feedback.textContent()).includes('Connected to the shared board'))
+  assert.ok((await feedback.boundingBox()).height > 25)
   assert.deepEqual(errors, [])
 } catch (error) {
   console.error('FAILED', error)

@@ -517,8 +517,8 @@ export function HomePage() {
             </div>
           )}
         </div>
-        {imageError && <div className="feedback" role="status">{imageError}</div>}
         <div className="feedback" aria-live="polite" role="status">
+          {imageError && <>{imageError}<br /></>}
           {error ??
             state.issue ??
             t(state.connection === 'ready' ? 'probe.ready' : 'live.connecting')}

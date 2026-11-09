@@ -1072,6 +1072,43 @@ describe('versioned subscription and preview receipts', () => {
     expect(h.undoBodies[1]).toEqual(h.undoBodies[0])
   })
 
+  it('accepts an undo receipt with six surviving free sorts', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    const sorts = Array.from({ length: 7 }, (_, index) => {
+      const pieceId = `00000000-0000-4000-8000-${String(index + 600).padStart(12, '0')}`
+      const groupId = `00000000-0000-4000-8000-${String(index + 700).padStart(12, '0')}`
+      return {
+        ...action,
+        kind: 'sort' as const,
+        actionId: `00000000-0000-4000-8000-${String(index + 500).padStart(12, '0')}`,
+        targetId: pieceId,
+        affectedPieceIds: [pieceId] as typeof action.affectedPieceIds,
+        baseRevisions: [{ groupId, revision: 0 }] as typeof action.baseRevisions,
+      }
+    })
+    for (const [index, item] of sorts.entries()) {
+      h.client.preview(item)
+      socket.emit({ ...accepted(index, index + 1), actionId: item.actionId, actions: sorts.slice(0, index + 1) })
+    }
+    const last = sorts[6]!
+    const newTurn = { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 }
+    h.setGame({ ...current, ownTurn: newTurn })
+    h.setUndoReply(Promise.resolve(new Response(JSON.stringify({
+      schemaVersion: 1, puzzleId, turnId: turn.turnId,
+      requestId: '00000000-0000-4000-8000-000000000001',
+      turnRevision: newTurn.turnRevision, generation: newTurn.generation,
+      actionId: last.actionId, actions: sorts.slice(0, 6),
+    }))))
+    await h.client.undo(last.actionId)
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...handoff(sorts.slice(0, 6), 8), ownTurn: newTurn, nextSequence: 0 })
+    expect(h.client.provenDraft()).toEqual(sorts.slice(0, 6))
+  })
+
   it.each(['revision', 'actions', 'generation', 'turn revision', 'sequence'] as const)(
     'blocks a recovered draft when its %s conflicts with acknowledged work',
     async (conflict) => {

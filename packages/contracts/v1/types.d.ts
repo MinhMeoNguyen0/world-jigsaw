@@ -401,7 +401,7 @@ export interface UndoResult {
   generation: number
   actionId: string
   /**
-   * @maxItems 5
+   * @maxItems 80
    */
   actions: Action[]
 }

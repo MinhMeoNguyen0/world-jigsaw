@@ -227,6 +227,12 @@ export function useLiveBoard() {
           })
           .catch((e: unknown) => {
             p.restoring = false
+            if (client.pendingUndoActionId() === null && pending.current === p) {
+              pending.current = null
+              setGhost(null)
+              setDragging(false)
+              setSelected(null)
+            }
             setError(String(e))
           })
         return

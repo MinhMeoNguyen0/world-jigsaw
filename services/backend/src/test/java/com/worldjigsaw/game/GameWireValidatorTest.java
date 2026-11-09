@@ -7,7 +7,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.SpecVersion;
 import java.nio.file.Path;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class GameWireValidatorTest {
@@ -15,6 +18,28 @@ class GameWireValidatorTest {
   private final GameWireValidator wire = new GameWireValidator();
 
   GameWireValidatorTest() throws Exception {}
+
+  @Test
+  void undoReceiptAcceptsUpToEightySurvivors() throws Exception {
+    ObjectNode schema = (ObjectNode) mapper.readTree(getClass().getResourceAsStream("/contracts/v1/schema.json"));
+    schema.remove("oneOf");
+    schema.put("$ref", "#/$defs/UndoResult");
+    var validator = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7).getSchema(schema);
+    JsonNode fixture = mapper.readTree(Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
+    ObjectNode result = mapper.createObjectNode().put("schemaVersion", 1)
+        .put("puzzleId", fixture.path("confirm").path("puzzleId").textValue())
+        .put("turnId", fixture.path("confirm").path("turnId").textValue())
+        .put("requestId", UUID.randomUUID().toString()).put("turnRevision", 1)
+        .put("generation", 1).put("actionId", UUID.randomUUID().toString());
+    ArrayNode actions = result.putArray("actions");
+    for (int i = 0; i < 81; i++) {
+      ObjectNode action = fixture.path("confirm").path("actions").get(0).deepCopy();
+      action.put("actionId", UUID.randomUUID().toString());
+      actions.add(action);
+      if (i == 5 || i == 79) assertThat(validator.validate(result)).isEmpty();
+    }
+    assertThat(validator.validate(result)).isNotEmpty();
+  }
 
   @Test
   void sharedCommandAndPreviewShapesValidateAndDuplicatesFailClosed() throws Exception {
