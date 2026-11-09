@@ -23,7 +23,7 @@ is a proposal, not the current wire contract.
 | `packages/contracts` | Versioned shared schemas, fixtures and types       |
 | `packages/generator` | Deterministic puzzle generator and review fixtures |
 | `packages/rules`     | Local puzzle rules                                 |
-| `docs`               | Product and engineering plan                       |
+| `docs`               | Handoff, demo recordings, and product plan         |
 | `.github`            | CI workflows and Dependabot configuration          |
 
 The [puzzle generator](packages/generator/README.md) produces standalone definitions and starting snapshots.
