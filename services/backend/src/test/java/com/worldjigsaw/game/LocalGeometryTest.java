@@ -154,6 +154,8 @@ class LocalGeometryTest {
     ObjectNode translation = (ObjectNode) transform.path("translation");
     translation.put("x", 3113262).put("y", 676216);
     assertThat(LocalGeometry.hasForbiddenOverlap(definition, snapshot)).isFalse();
+    translation.put("x", 3112278);
+    assertThat(LocalGeometry.hasForbiddenOverlap(definition, snapshot)).isFalse();
     translation.put("x", 2996944);
     assertThat(LocalGeometry.hasForbiddenOverlap(definition, snapshot)).isTrue();
   }

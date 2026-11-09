@@ -179,6 +179,8 @@ services and run `pnpm --filter @world-jigsaw/web test:integration` to exercise 
 browser sessions. Run `pnpm --filter @world-jigsaw/web test:shape-integration` separately against a
 fresh import to exercise shared shape changes, recovery and races. Both tests change the imported
 board; do not point either at data you want to keep.
+The reviewed collision-pair regression uses a separate disposable database imported with
+`hoi-an-surround-60.json` and runs with `pnpm --filter @world-jigsaw/web test:collision-integration`.
 
 `GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
 UTC close time. If today's puzzle has not been imported, it returns `PUZZLE_UNAVAILABLE` (503),
