@@ -566,6 +566,9 @@ export function HomePage() {
               ? t('game.noMoves')
               : null) ??
             (remaining === 0 ? t('game.movesInBatch') : null) ??
+            (selected && remaining !== null && remaining > 0 && !canMove(selected)
+              ? t('game.notEnoughMovesForGroup')
+              : null) ??
             t(state.connection === 'ready' ? 'probe.ready' : 'live.connecting')}
         </div>
       </section>
@@ -599,7 +602,7 @@ export function HomePage() {
           }}
           disabled={
             !selected ||
-            !canMove ||
+            !canMove(selected) ||
             state.connection !== 'ready' ||
             (!!game?.ownTurn && proven === null)
           }

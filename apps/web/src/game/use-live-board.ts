@@ -184,7 +184,8 @@ export function useLiveBoard() {
       : null
   const remaining =
     game?.allowance && pendingMoves !== null ? game.allowance.remaining - pendingMoves : null
-  const canMove = canMoveGroup(game?.allowance?.remaining ?? null, pendingMoves)
+  const canMove = (group: Group) =>
+    canMoveGroup(game?.allowance?.remaining ?? null, pendingMoves, group, actions)
   const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
   const previews = Object.values(state.previews).flatMap((turn) =>
     turn.closed ? [] : Object.values(turn.actions),
@@ -399,7 +400,10 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
-    if (!canMove) return
+    if (!canMove(group)) {
+      if (remaining !== null && remaining > 0) setSelected(group)
+      return
+    }
     const p = point(event.clientX, event.clientY)
     if (!p) return
     event.preventDefault()
@@ -511,7 +515,7 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
-    if (!canMove) return
+    if (!canMove(group)) return
     const piece = pieceMap.get(group.pieceIds[0].toLowerCase())
     if (!piece) return
     const current = pending.current
@@ -613,6 +617,8 @@ export function useLiveBoard() {
           setError(t('game.invalidPlacement'))
         }
       }
+      if (stateRef.current.pendingConfirm && !next.pendingConfirm && !next.issue)
+        setError((current) => (current === t('game.invalidPlacement') ? null : current))
       stateRef.current = next
       setState(next)
       queueMicrotask(() => {
@@ -667,9 +673,14 @@ export function useLiveBoard() {
     const actionId = client.pendingUndoActionId() ?? client.provenDraft()?.at(-1)?.actionId
     if (actionId) {
       setSelected(null)
-      void client.undo(actionId).catch((e: unknown) => {
-        setError(String(e))
-      })
+      void client
+        .undo(actionId)
+        .then(() => {
+          setError((current) => (current === t('game.invalidPlacement') ? null : current))
+        })
+        .catch((e: unknown) => {
+          setError(String(e))
+        })
     }
   }
   const confirm = () => {

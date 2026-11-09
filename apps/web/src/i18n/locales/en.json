@@ -166,6 +166,7 @@
   "game.cancel": "Cancel batch",
   "game.noMoves": "No moves left today",
   "game.movesInBatch": "All available moves are in this batch. Confirm or undo them to continue.",
+  "game.notEnoughMovesForGroup": "Not enough moves to move this group. Confirm or undo a move to continue.",
   "game.summaryUnavailable": "Move availability is unavailable. Try again to continue playing.",
   "game.retrySummary": "Retry move availability",
   "game.invalidPlacement": "That piece can't be placed there. Try another spot.",
