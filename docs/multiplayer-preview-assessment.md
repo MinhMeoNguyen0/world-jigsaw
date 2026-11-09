@@ -71,8 +71,9 @@ leave, disconnect or resynchronization. They do not establish game state.
 - With the isolated session's allowance set to zero and reloaded, a drag attempt produced zero pointer
   captures, zero preview submissions, no local ghost and the live status “No moves left today”. The
   rotation button was disabled. This setup deliberately changed only the disposable test database.
-- No comparable before/after frame-time or latency benchmark was collected; no general performance
-  improvement is claimed. The focused collision counterfactual and observed connection states show
+- This assessment collected no comparable before/after frame-time or latency benchmark; see the
+  later [latency assessment](multiplayer-latency-assessment.md) for limited loopback measurements.
+  The focused collision counterfactual and observed connection states show
   which reconnect was removed, but do not quantify all visual flashing or network conditions. The
   isolated browser check did not exercise a durable batch confirmation or Undo; the existing suites
   cover those paths and remain relevant.
