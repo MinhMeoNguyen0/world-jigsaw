@@ -1,7 +1,16 @@
 # World Jigsaw
 
-A browser-based, collaborative daily jigsaw puzzle. The product and engineering plan is in
-[`docs/PLAN.md`](docs/PLAN.md).
+A browser-based, collaborative daily jigsaw puzzle.
+
+## Handoff and demo
+
+The [project handoff](docs/HANDOFF.md) maps the current architecture, operational constraints and
+known gaps. The [documentation and recording notes](docs/demo/README.md) include playback and
+reproduction instructions. [Watch the two-player local demo](docs/demo/two-player-local.webm): two
+independent browser contexts on one computer show a remote pointer, live chat and drag preview,
+confirmation and a saved position after reload. The silent recording uses disposable local data;
+it does not demonstrate separate devices or a public deployment. The earlier [product plan](docs/PLAN.md)
+is a proposal, not the current wire contract.
 
 ## Repository layout
 
