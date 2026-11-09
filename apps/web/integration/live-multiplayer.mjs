@@ -92,6 +92,46 @@ try {
   assert.ok(boardBox)
   await a.mouse.move(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2)
   await b.locator('[data-remote-cursor]').waitFor({ state: 'attached', timeout: 10000 })
+  const trailing = await a.locator('svg.board').evaluate((board) => {
+    const rect = board.getBoundingClientRect()
+    const x = rect.x + rect.width / 2
+    const y = rect.y + rect.height / 2
+    for (const offset of [-30, 30])
+      board.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          pointerType: 'mouse',
+          clientX: x + offset,
+          clientY: y,
+        }),
+      )
+    const position = new DOMPoint(x + 30, y).matrixTransform(board.getScreenCTM().inverse())
+    return `translate(${Math.round(position.x)} ${Math.round(position.y)})`
+  })
+  await b.waitForFunction(
+    (expected) =>
+      document.querySelector('[data-remote-cursor]')?.getAttribute('transform')?.startsWith(expected),
+    trailing,
+    { timeout: 5000 },
+  )
+  await a.locator('svg.board').evaluate((board) => {
+    const rect = board.getBoundingClientRect()
+    for (const offset of [0, 20])
+      board.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          pointerType: 'mouse',
+          clientX: rect.x + rect.width / 2 + offset,
+          clientY: rect.y + rect.height / 2,
+        }),
+      )
+    board.dispatchEvent(
+      new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }),
+    )
+  })
+  await b.locator('[data-remote-cursor]').waitFor({ state: 'detached', timeout: 5000 })
+  await b.waitForTimeout(150)
+  assert.equal(await b.locator('[data-remote-cursor]').count(), 0)
   console.log('peer saw pointer in another browser session')
   await a.getByRole('button', { name: /Live chat/ }).click()
   await b.getByRole('button', { name: /Live chat/ }).click()

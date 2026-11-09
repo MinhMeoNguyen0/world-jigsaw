@@ -95,8 +95,9 @@ export function useLiveBoard() {
   const [client] = useState(() => new LiveGame())
   const [state, setState] = useState<LiveGameState>(() => client.getState())
   const stateRef = useRef(state)
-  const lastCursor = useRef(0)
+  const lastCursor = useRef(-Infinity)
   const cursorPosition = useRef<Point | null>(null)
+  const cursorTimer = useRef<number | null>(null)
   const [overlay, setOverlay] = useState(true),
     [reference, setReference] = useState(false)
   const [shapeOpen, setShapeOpen] = useState(false)
@@ -445,11 +446,24 @@ export function useLiveBoard() {
   }
   const move = (event: PointerEvent<SVGSVGElement>) => {
     const cursorPoint = point(event.clientX, event.clientY)
-    const now = performance.now()
-    if (cursorPoint && now - lastCursor.current >= 50) {
-      lastCursor.current = now
+    if (cursorPoint) {
       cursorPosition.current = { x: Math.round(cursorPoint.x), y: Math.round(cursorPoint.y) }
-      client.sendCursor(cursorPosition.current)
+      const now = performance.now()
+      const delay = 50 - (now - lastCursor.current)
+      if (delay <= 0) {
+        if (cursorTimer.current !== null) window.clearTimeout(cursorTimer.current)
+        cursorTimer.current = null
+        lastCursor.current = now
+        client.sendCursor(cursorPosition.current)
+      } else if (cursorTimer.current === null) {
+        cursorTimer.current = window.setTimeout(() => {
+          cursorTimer.current = null
+          if (cursorPosition.current) {
+            lastCursor.current = performance.now()
+            client.sendCursor(cursorPosition.current)
+          }
+        }, delay)
+      }
     }
     if (pan.current) {
       const start = pan.current
@@ -611,7 +625,7 @@ export function useLiveBoard() {
     }
     const unsubscribe = client.subscribe((next) => {
       if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
-        client.sendCursor(null)
+        client.sendCursor(cursorPosition.current)
       if (next.pendingConfirm)
         sessionStorage.setItem('world-jigsaw-pending-confirm', JSON.stringify(next.pendingConfirm))
       else if (!recoveryFailed.current) sessionStorage.removeItem('world-jigsaw-pending-confirm')
@@ -666,6 +680,9 @@ export function useLiveBoard() {
     }, 2000)
     return () => {
       window.clearInterval(timer)
+      if (cursorTimer.current !== null) window.clearTimeout(cursorTimer.current)
+      cursorTimer.current = null
+      cursorPosition.current = null
     }
   }, [client])
   useEffect(() => {
@@ -802,7 +819,10 @@ export function useLiveBoard() {
     down,
     move,
     leave: () => {
+      if (cursorTimer.current !== null) window.clearTimeout(cursorTimer.current)
+      cursorTimer.current = null
       cursorPosition.current = null
+      lastCursor.current = -Infinity
       client.sendCursor(null)
     },
     up,
