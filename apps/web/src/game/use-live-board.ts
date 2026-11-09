@@ -488,7 +488,7 @@ export function useLiveBoard() {
     }
     const d = pending.current
     if (!d?.active) return
-    const p = point(event.clientX, event.clientY)
+    const p = cursorPoint ?? point(event.clientX, event.clientY)
     if (!p) return
     const dx = p.x - d.start.x,
       dy = p.y - d.start.y
