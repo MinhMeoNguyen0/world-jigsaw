@@ -103,6 +103,7 @@ class GameStream extends TextWebSocketHandler {
   private void cleanup(WebSocketSession session) {
     Peer peer = peers.remove(session.getId());
     if (peer == null || !peer.cleaned.compareAndSet(false, true)) return;
+    clearCursor(peer);
     game.unsubscribe(peer.id);
     peer.stopped.set(true);
     if (peer.writer != null && Thread.currentThread() != peer.writerThread)
@@ -166,6 +167,7 @@ class GameStream extends TextWebSocketHandler {
         switch (type) {
           case "subscribe" -> "Subscribe";
           case "subscribe.v2" -> "SubscribeV2";
+          case "cursor.update" -> "CursorUpdate";
           case "preview.submit" -> "PreviewSubmit";
           case "heartbeat" -> "Heartbeat";
           default -> null;
@@ -196,6 +198,11 @@ class GameStream extends TextWebSocketHandler {
     }
     if (!puzzle.equals(peer.puzzle)) {
       peer.sendError("INVALID_REQUEST", "Subscribe before sending game messages", false);
+      return;
+    }
+    if ("cursor.update".equals(type)) {
+      peer.cursorEnabled = true;
+      broadcastCursor(peer, payload.path("position"));
       return;
     }
     if ("heartbeat".equals(type)) {
@@ -267,6 +274,32 @@ class GameStream extends TextWebSocketHandler {
         .put("retryable", retryable);
   }
 
+  private void clearCursor(Peer peer) {
+    if (peer.cursorEnabled && peer.puzzle != null) broadcastCursor(peer, mapper.nullNode());
+    peer.cursorEnabled = false;
+  }
+
+  private void broadcastCursor(Peer source, JsonNode position) {
+    UUID puzzle = source.puzzle;
+    if (puzzle == null) return;
+    ObjectNode event =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", "cursor.presence")
+            .put("puzzleId", puzzle.toString())
+            .put("cursorId", source.id.toString())
+            .put("displayName", source.displayName);
+    event.set("position", position);
+    for (Peer target : peers.values()) {
+      if (target != source
+          && target.cursorEnabled
+          && puzzle.equals(target.puzzle)
+          && clock.instant().isBefore(target.expiresAt)
+          && target.queue.size() < 32) target.offer(event);
+    }
+  }
+
   private final class Peer implements GameCoordinator.Sink {
     final UUID id = UUID.randomUUID(), subject;
     final String displayName;
@@ -278,6 +311,7 @@ class GameStream extends TextWebSocketHandler {
         cleaned = new AtomicBoolean(),
         expiring = new AtomicBoolean();
     volatile UUID puzzle;
+    volatile boolean cursorEnabled;
     volatile Future<?> writer;
     volatile Thread writerThread;
     private long window = System.nanoTime();
@@ -303,9 +337,15 @@ class GameStream extends TextWebSocketHandler {
     public boolean offer(JsonNode value) {
       if (stopped.get() || overloaded.get()) return false;
       String type = value.path("type").asText();
-      if ("subscribed".equals(type) || "subscribed.v2".equals(type))
-        puzzle = UUID.fromString(value.path("snapshot").path("puzzleId").textValue());
-      if ("resyncRequired".equals(type) || "puzzleChanged".equals(type)) puzzle = null;
+      if ("subscribed".equals(type) || "subscribed.v2".equals(type)) {
+        UUID next = UUID.fromString(value.path("snapshot").path("puzzleId").textValue());
+        if (puzzle != null && !puzzle.equals(next)) clearCursor(this);
+        puzzle = next;
+      }
+      if ("resyncRequired".equals(type) || "puzzleChanged".equals(type)) {
+        clearCursor(this);
+        puzzle = null;
+      }
       return queue.offer(value.toString());
     }
 
@@ -317,6 +357,7 @@ class GameStream extends TextWebSocketHandler {
     public void slow() {
       if (!overloaded.compareAndSet(false, true)) return;
       UUID current = puzzle;
+      clearCursor(this);
       puzzle = null;
       queue.clear();
       if (current != null)

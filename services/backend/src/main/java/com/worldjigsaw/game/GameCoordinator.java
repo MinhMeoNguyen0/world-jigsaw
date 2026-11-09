@@ -189,14 +189,25 @@ class GameCoordinator {
     Turn turn = turns.get(turnId);
     if (turn == null || !turn.subject.equals(subject)) throw error("TURN_CLOSED", "Turn is closed");
     leases.info(subject, turn.id, turn.generation);
-    return mapper
-        .createObjectNode()
-        .put("schemaVersion", 1)
-        .put("puzzleId", turn.puzzle.toString())
-        .put("turnId", turn.id.toString())
-        .put("generation", turn.generation)
-        .put("draftRevision", turn.draftRevision)
-        .put("pendingMoves", rules.pendingCount(turn.draft));
+    ObjectNode summary =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("puzzleId", turn.puzzle.toString())
+            .put("turnId", turn.id.toString())
+            .put("generation", turn.generation)
+            .put("draftRevision", turn.draftRevision)
+            .put("pendingMoves", rules.pendingCount(turn.draft));
+    ArrayNode charged = summary.putArray("chargedActionIds");
+    ArrayNode movementCosts = summary.putArray("movementCosts");
+    for (DraftRules.ActionView action : rules.actions(turn.draft)) {
+      if (action.charged()) charged.add(action.actionId());
+      movementCosts
+          .addObject()
+          .put("actionId", action.actionId())
+          .put("additionalMoves", rules.additionalMoves(turn.draft, action.actionId()));
+    }
+    return summary;
   }
 
   synchronized Changed preview(UUID subject, JsonNode payload, UUID streamId) {

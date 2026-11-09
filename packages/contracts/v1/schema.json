@@ -48,7 +48,9 @@
     },
     {
       "$ref": "#/$defs/PreviewAcceptedV2"
-    }
+    },
+    { "$ref": "#/$defs/CursorUpdate" },
+    { "$ref": "#/$defs/CursorPresence" }
   ],
   "$defs": {
     "Point": {
@@ -1370,7 +1372,26 @@
         "turnId": { "type": "string", "format": "uuid" },
         "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "draftRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-        "pendingMoves": { "type": "integer", "minimum": 0, "maximum": 5 }
+        "pendingMoves": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "chargedActionIds": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" },
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "movementCosts": {
+          "type": "array",
+          "maxItems": 80,
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": { "type": "string", "format": "uuid" },
+              "additionalMoves": { "type": "integer", "minimum": 0, "maximum": 80 }
+            },
+            "required": ["actionId", "additionalMoves"],
+            "additionalProperties": false
+          }
+        }
       },
       "required": [
         "schemaVersion",
@@ -1378,7 +1399,9 @@
         "turnId",
         "generation",
         "draftRevision",
-        "pendingMoves"
+        "pendingMoves",
+        "chargedActionIds",
+        "movementCosts"
       ],
       "additionalProperties": false
     },
@@ -1829,6 +1852,69 @@
         "actions",
         "draftRevision"
       ],
+      "additionalProperties": false
+    },
+    "CursorUpdate": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "type": {
+          "const": "cursor.update"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "position"],
+      "additionalProperties": false
+    },
+    "CursorPresence": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "puzzleId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "type": {
+          "const": "cursor.presence"
+        },
+        "cursorId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["schemaVersion", "type", "puzzleId", "cursorId", "displayName", "position"],
       "additionalProperties": false
     }
   }

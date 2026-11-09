@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import { LiveGame, type LiveGameState } from '../game/live-game.ts'
 import { t } from '../i18n/translate.ts'
 import { suggestJoin } from '../game/join.ts'
+import { canMoveGroup } from './move-availability.ts'
 import { validate } from '@world-jigsaw/contracts'
 import type {
   Action,
@@ -93,6 +94,10 @@ export function imageSource(value: string, origin: string): string | null {
 export function useLiveBoard() {
   const [client] = useState(() => new LiveGame())
   const [state, setState] = useState<LiveGameState>(() => client.getState())
+  const stateRef = useRef(state)
+  const lastCursor = useRef(-Infinity)
+  const cursorPosition = useRef<Point | null>(null)
+  const cursorTimer = useRef<number | null>(null)
   const [overlay, setOverlay] = useState(true),
     [reference, setReference] = useState(false)
   const [shapeOpen, setShapeOpen] = useState(false)
@@ -103,6 +108,8 @@ export function useLiveBoard() {
     [dragging, setDragging] = useState(false)
   const [camera, setCamera] = useState({ zoom: 1, x: 0, y: 0 })
   const [summary, setSummary] = useState<DraftSummary | null>(null)
+  const [summaryFailure, setSummaryFailure] = useState<string | null>(null)
+  const [summaryAttempt, setSummaryAttempt] = useState(0)
   const [imageLoad, setImageLoad] = useState<{ source: string; loaded: boolean } | null>(null)
   const board = useRef<SVGSVGElement>(null),
     pending = useRef<Pending | null>(null)
@@ -123,6 +130,7 @@ export function useLiveBoard() {
   const turnId = game?.ownTurn?.turnId
   const generation = game?.ownTurn?.generation
   const puzzleId = game?.snapshot.puzzleId
+  const summaryKey = JSON.stringify([turnId, generation, puzzleId, proofRevision])
   useEffect(() => {
     if (
       !turnId ||
@@ -151,23 +159,66 @@ export function useLiveBoard() {
           result.draftRevision !== proofRevision
         )
           throw new Error('Stale draft summary')
-        if (active) setSummary(result)
+        const draft = client.provenDraft()
+        const chargedIds = new Set(result.chargedActionIds.map((id) => id.toLowerCase()))
+        const actionIds = new Set(draft?.map((action) => action.actionId.toLowerCase()))
+        const costIds = new Set(result.movementCosts.map((cost) => cost.actionId.toLowerCase()))
+        if (
+          client.provenDraftRevision() !== proofRevision ||
+          !draft ||
+          chargedIds.size !== result.pendingMoves ||
+          result.chargedActionIds.length !== chargedIds.size ||
+          [...chargedIds].some((id) => !actionIds.has(id)) ||
+          costIds.size !== actionIds.size ||
+          costIds.size !== result.movementCosts.length ||
+          [...costIds].some((id) => !actionIds.has(id))
+        )
+          throw new Error('Invalid draft charges')
+        if (active) {
+          setSummary(result)
+          setSummaryFailure(null)
+        }
       })
       .catch(() => {
-        if (active) setSummary(null)
+        if (active) {
+          setSummary(null)
+          setSummaryFailure(summaryKey)
+        }
       })
     return () => {
       active = false
       controller.abort()
     }
-  }, [turnId, generation, puzzleId, proofRevision, state.connection])
-  const pendingMoves = !turnId
-    ? 0
-    : summary?.turnId.toLowerCase() === turnId.toLowerCase() &&
-        summary.generation === generation &&
-        summary.draftRevision === proofRevision
-      ? summary.pendingMoves
+  }, [
+    client,
+    turnId,
+    generation,
+    puzzleId,
+    proofRevision,
+    state.connection,
+    summaryKey,
+    summaryAttempt,
+  ])
+  const currentSummary =
+    turnId &&
+    summary?.turnId.toLowerCase() === turnId.toLowerCase() &&
+    summary.puzzleId.toLowerCase() === puzzleId?.toLowerCase() &&
+    summary.generation === generation &&
+    summary.draftRevision === proofRevision
+      ? summary
       : null
+  const pendingMoves = !turnId ? 0 : (currentSummary?.pendingMoves ?? null)
+  const remaining =
+    game?.allowance && pendingMoves !== null ? game.allowance.remaining - pendingMoves : null
+  const canMove = (group: Group) =>
+    canMoveGroup(
+      game?.allowance?.remaining ?? null,
+      pendingMoves,
+      group,
+      actions,
+      !turnId ? [] : (currentSummary?.movementCosts ?? null),
+    )
+  const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
   const previews = Object.values(state.previews).flatMap((turn) =>
     turn.closed ? [] : Object.values(turn.actions),
   )
@@ -271,7 +322,7 @@ export function useLiveBoard() {
         p.restoring = true
         try {
           p.sentFor = 'restore'
-          client.preview(p.original)
+          client.preview(p.original, true)
           p.restoring = false
         } catch (e) {
           p.restoring = false
@@ -381,6 +432,10 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
+    if (!canMove(group)) {
+      if (remaining !== null && remaining > 0) setSelected(group)
+      return
+    }
     const p = point(event.clientX, event.clientY)
     if (!p) return
     event.preventDefault()
@@ -394,6 +449,26 @@ export function useLiveBoard() {
     setDragging(true)
   }
   const move = (event: PointerEvent<SVGSVGElement>) => {
+    const cursorPoint = point(event.clientX, event.clientY)
+    if (cursorPoint) {
+      cursorPosition.current = { x: Math.round(cursorPoint.x), y: Math.round(cursorPoint.y) }
+      const now = performance.now()
+      const delay = 50 - (now - lastCursor.current)
+      if (delay <= 0) {
+        if (cursorTimer.current !== null) window.clearTimeout(cursorTimer.current)
+        cursorTimer.current = null
+        lastCursor.current = now
+        client.sendCursor(cursorPosition.current)
+      } else {
+        cursorTimer.current ??= window.setTimeout(() => {
+          cursorTimer.current = null
+          if (cursorPosition.current) {
+            lastCursor.current = performance.now()
+            client.sendCursor(cursorPosition.current)
+          }
+        }, delay)
+      }
+    }
     if (pan.current) {
       const start = pan.current
       setCamera((current) => {
@@ -485,6 +560,7 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
+    if (!canMove(group)) return
     const piece = pieceMap.get(group.pieceIds[0].toLowerCase())
     if (!piece) return
     const current = pending.current
@@ -552,6 +628,8 @@ export function useLiveBoard() {
       })
     }
     const unsubscribe = client.subscribe((next) => {
+      if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
+        client.sendCursor(cursorPosition.current)
       if (next.pendingConfirm)
         sessionStorage.setItem('world-jigsaw-pending-confirm', JSON.stringify(next.pendingConfirm))
       else if (!recoveryFailed.current) sessionStorage.removeItem('world-jigsaw-pending-confirm')
@@ -574,6 +652,19 @@ export function useLiveBoard() {
           setError(next.issue)
         }
       }
+      if (next.previewRejection && !stateRef.current.previewRejection) {
+        const current = pending.current
+        if (current && current.sentFor !== 'active') {
+          pending.current = null
+          setGhost(null)
+          setDragging(false)
+          setSelected(null)
+          setError(t('game.invalidPlacement'))
+        }
+      }
+      if (stateRef.current.pendingConfirm && !next.pendingConfirm && !next.issue)
+        setError((current) => (current === t('game.invalidPlacement') ? null : current))
+      stateRef.current = next
       setState(next)
       queueMicrotask(() => {
         flushRef.current()
@@ -585,6 +676,17 @@ export function useLiveBoard() {
     return () => {
       unsubscribe()
       client.disconnect()
+    }
+  }, [client])
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (cursorPosition.current) client.sendCursor(cursorPosition.current)
+    }, 2000)
+    return () => {
+      window.clearInterval(timer)
+      if (cursorTimer.current !== null) window.clearTimeout(cursorTimer.current)
+      cursorTimer.current = null
+      cursorPosition.current = null
     }
   }, [client])
   useEffect(() => {
@@ -619,9 +721,14 @@ export function useLiveBoard() {
     const actionId = client.pendingUndoActionId() ?? client.provenDraft()?.at(-1)?.actionId
     if (actionId) {
       setSelected(null)
-      void client.undo(actionId).catch((e: unknown) => {
-        setError(String(e))
-      })
+      void client
+        .undo(actionId)
+        .then(() => {
+          setError((current) => (current === t('game.invalidPlacement') ? null : current))
+        })
+        .catch((e: unknown) => {
+          setError(String(e))
+        })
     }
   }
   const confirm = () => {
@@ -672,6 +779,13 @@ export function useLiveBoard() {
     actions,
     undoPending,
     pendingMoves,
+    remaining,
+    canMove,
+    summaryUnavailable,
+    retrySummary: () => {
+      setSummaryFailure(null)
+      setSummaryAttempt((attempt) => attempt + 1)
+    },
     proven,
     selected,
     setSelected,
@@ -708,6 +822,13 @@ export function useLiveBoard() {
     point,
     down,
     move,
+    leave: () => {
+      if (cursorTimer.current !== null) window.clearTimeout(cursorTimer.current)
+      cursorTimer.current = null
+      cursorPosition.current = null
+      lastCursor.current = -Infinity
+      client.sendCursor(null)
+    },
     up,
     abort,
     rotate,

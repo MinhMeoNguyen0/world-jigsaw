@@ -124,6 +124,28 @@ class GameStreamIntegrationTest {
     JsonNode presence = get(a, origin + "/api/v1/game/presence?puzzleId=" + puzzle, cookieA);
     assertSchema("PresenceSnapshot", presence);
     assertThat(presence.path("players").size()).isEqualTo(2);
+    ObjectNode cursor =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", "cursor.update")
+            .put("puzzleId", puzzle)
+            .putNull("position");
+    send(sa, cursor);
+    ObjectNode wrongPuzzle = cursor.deepCopy().put("puzzleId", UUID.randomUUID().toString());
+    send(sa, wrongPuzzle);
+    assertThat(la.next().path("error").path("code").asText()).isEqualTo("INVALID_REQUEST");
+    send(sb, cursor);
+    assertThat(la.next().path("position").isNull()).isTrue();
+    cursor.putObject("position").put("x", 120).put("y", 340);
+    send(sa, cursor);
+    JsonNode remoteCursor = lb.next();
+    assertSchema("CursorPresence", remoteCursor);
+    assertThat(remoteCursor.path("position").path("x").intValue()).isEqualTo(120);
+    assertThat(remoteCursor.path("position").path("y").intValue()).isEqualTo(340);
+    cursor.putNull("position");
+    send(sa, cursor);
+    assertThat(lb.next().path("position").isNull()).isTrue();
     ObjectNode unavailableSubscription = subscribe.deepCopy();
     unavailableSubscription.put("puzzleId", UUID.randomUUID().toString());
     send(sa, unavailableSubscription);
@@ -136,6 +158,8 @@ class GameStreamIntegrationTest {
     JsonNode emptySummary = get(a, origin + "/api/v1/game/turns/" + idA + "/summary", cookieA);
     assertSchema("DraftSummary", emptySummary);
     assertThat(emptySummary.path("pendingMoves").intValue()).isZero();
+    assertThat(emptySummary.path("chargedActionIds").isEmpty()).isTrue();
+    assertThat(emptySummary.path("movementCosts").isEmpty()).isTrue();
     String actionA = UUID.randomUUID().toString(), actionB = UUID.randomUUID().toString();
     JsonNode firstFrame = preview(puzzle, idA, 0, 1, action(actionA, g0, 0, 0));
     validator.parse("PreviewSubmit", firstFrame.toString());
@@ -147,6 +171,10 @@ class GameStreamIntegrationTest {
     assertSchema("DraftSummary", firstSummary);
     assertThat(firstSummary.path("draftRevision").longValue()).isEqualTo(1);
     assertThat(firstSummary.path("pendingMoves").intValue()).isEqualTo(1);
+    assertThat(firstSummary.path("chargedActionIds").get(0).asText()).isEqualTo(actionA);
+    assertThat(firstSummary.path("movementCosts").get(0).path("actionId").asText())
+        .isEqualTo(actionA);
+    assertThat(firstSummary.path("movementCosts").get(0).path("additionalMoves").asInt()).isZero();
     JsonNode readDuring = get(a, origin + "/api/v1/game/current", cookieA);
     assertThat(readDuring.path("snapshot").path("boardVersion").longValue())
         .isEqualTo(snapshot.path("boardVersion").longValue());

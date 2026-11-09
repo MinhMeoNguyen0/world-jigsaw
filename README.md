@@ -42,6 +42,11 @@ the current UTC day, and open `http://127.0.0.1:5173` in each browser. The devel
 proxies game and chat requests to their separate loopback services; it is not a public gateway.
 Use the same literal loopback host for the page throughout a session. The Hoi An-inspired fixture is generated artwork, not a photograph; see its [provenance note](apps/web/public/hoi-an-generated.NOTICE.md). Other images require appropriate rights before distribution.
 
+Players on the same puzzle can see each other's pointers while they are over the board. Pointers
+are temporary and may disappear when updates stop. If no moves remain, dragging and rotation are
+disabled; confirm or undo pending moves when prompted, or retry move availability if it cannot be
+loaded. An invalid placement leaves the last accepted preview in place.
+
 To run the Playwright smoke test you also need its browser, once per machine:
 
 ```sh
@@ -126,7 +131,8 @@ settle, provided its local lock remains valid and no successor has replaced its 
 must resubscribe after recovery. Stop the backend process before starting a replacement; after restart,
 unsaved drafts are lost, while committed Confirm results remain available by command ID.
 
-The socket accepts v1 `subscribe` or the negotiated `subscribe.v2` handoff, `preview.submit`, and `heartbeat` messages and fans out temporary
+The socket accepts v1 `subscribe` or the negotiated `subscribe.v2` handoff, `preview.submit`,
+`heartbeat`, and opt-in `cursor.update` messages, and fans out temporary
 previews, clears, committed board events and UTC puzzle changes. `POST /api/v1/game/turns` opens a
 turn; its `/confirm`, `/cancel`, and `/undo` routes settle or discard that turn. A confirmed batch,
 its quota charge, board version, event and command result commit together. Cancel reveals the latest

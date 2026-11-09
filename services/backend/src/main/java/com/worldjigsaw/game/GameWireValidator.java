@@ -28,6 +28,7 @@ class GameWireValidator {
           "ShapeChange",
           "Subscribe",
           "SubscribeV2",
+          "CursorUpdate",
           "PreviewSubmit",
           "Heartbeat");
   private static final Set<String> UNIQUE_UUID_ARRAYS =

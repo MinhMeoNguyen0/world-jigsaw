@@ -26,6 +26,10 @@ sequences within each generation; the client's submitted sequence is tracked ind
 rejecting stale submissions and is reported on rejection and v2 acceptance. A reconnect receives
 every current action in outgoing sequence order.
 
+The revision-correlated draft summary reports pending moves, charged action IDs, and an upper bound
+on additional charges for moving each action's component. Clients must correlate it with the accepted
+draft before using it to gate movement.
+
 Undo fences and clears the old generation, then re-emits surviving previews under the new generation;
 see the [shared contract](../../packages/contracts/README.md) for joined-action behavior. Cancel clears only the draft and reveals
 the latest canonical board. Confirm must match the server's current action set and turn revision,
@@ -56,3 +60,18 @@ infer acceptance from a broadcast and must reconcile an unknown result before an
 Undo uses the closed `UndoV2` payload with the observed draft revision. The service rejects the
 original `Undo` shape because it cannot fence a concurrent preview; a retry uses the same request
 ID and payload. Both initial execution and receipt recovery check the revision before mutation.
+
+A correlated `INVALID_ACTION` rejection with message `Forbidden piece overlap`, `Group outside
+workspace`, `Cannot join selected groups`, or `Not adjacent or outside snap tolerance` is definitive
+for the submitted frame: the candidate was not installed and the previous draft and revision remain intact.
+The client may continue from that acknowledged draft with a fresh sequence. Other rejections and
+unknown outcomes still require the documented reconciliation; the message is part of this private
+wire interpretation and must change together with clients if the server changes it.
+
+## Ephemeral pointers
+
+Subscribed clients opt in by sending `cursor.update` with a board-coordinate position or null. The
+stream relays `cursor.presence` only to other opted-in connections subscribed to the same puzzle. The
+server supplies an opaque connection ID and display name; no pointer data is persisted. Null clears a
+pointer. The relay may drop presence under backpressure; clients expire stale positions and clear them
+on disconnect or resynchronization. Existing clients receive no cursor messages until they opt in.

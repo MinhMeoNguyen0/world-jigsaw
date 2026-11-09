@@ -92,6 +92,7 @@ class DraftRulesTest {
         .isInstanceOf(DraftRules.RuleError.class);
     draft = rules.attach(draft, id(a), id(b), merged);
     assertThat(rules.pendingCount(draft)).isZero();
+    assertThat(rules.additionalMoves(draft, action)).isEqualTo(1);
     draft = rules.move(draft, merged, action, transform(100, 0, 0));
     assertThat(rules.pendingCount(draft)).isEqualTo(1);
     DraftRules.Draft undone = rules.undo(draft, action);
@@ -106,6 +107,32 @@ class DraftRulesTest {
     assertThat(group).isNotNull();
     assertThat(group.path("pieceIds").size()).isEqualTo(2);
     assertThat(group.path("transform").path("translation").path("x").intValue()).isEqualTo(100);
+  }
+
+  @Test
+  void joinedInsideActionsDoNotAddChargesBesideAPaidAction() throws Exception {
+    JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
+    JsonNode first = snapshot.path("groups").get(0),
+        second = snapshot.path("groups").get(1),
+        third = snapshot.path("groups").get(2);
+    String a = UUID.randomUUID().toString(),
+        b = UUID.randomUUID().toString(),
+        c = UUID.randomUUID().toString(),
+        pair = UUID.randomUUID().toString(),
+        triple = UUID.randomUUID().toString();
+    DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 2);
+    draft = rules.move(draft, id(first), a, transform(0, 0, 0));
+    draft = rules.move(draft, id(second), b, transform(0, 0, 0));
+    draft = rules.attach(draft, id(first), id(second), pair);
+    assertThat(rules.additionalMoves(draft, a)).isEqualTo(1);
+    draft = rules.move(draft, id(third), c, transform(100, 0, 0));
+    draft = rules.attach(draft, id(third), pair, triple);
+    assertThat(rules.pendingCount(draft)).isEqualTo(1);
+    assertThat(rules.additionalMoves(draft, a)).isZero();
+    assertThat(rules.additionalMoves(draft, b)).isZero();
+    assertThat(rules.additionalMoves(draft, c)).isZero();
+    draft = rules.move(draft, triple, a, transform(200, 0, 0));
+    assertThat(rules.pendingCount(draft)).isEqualTo(1);
   }
 
   @Test
@@ -276,6 +303,24 @@ class DraftRulesTest {
     assertThat(rules.pendingCount(draft)).isEqualTo(2);
     draft = rules.move(draft, merged, a, transform(100, 100, 0));
     assertThat(rules.confirm(draft, snapshot, 5).charged()).isEqualTo(2);
+  }
+
+  @Test
+  void unpaidOutsideActionsCanEachBecomeChargedAfterJoining() throws Exception {
+    JsonNode board = fixture("sample-80.json"), snapshot = board.path("snapshot");
+    JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1);
+    String a = UUID.randomUUID().toString(),
+        b = UUID.randomUUID().toString(),
+        merged = UUID.randomUUID().toString();
+    DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 5);
+    draft = rules.move(draft, id(first), a, second.path("transform"));
+    draft = rules.move(draft, id(second), b, second.path("transform"));
+    draft = rules.attach(draft, id(first), id(second), merged);
+    assertThat(rules.pendingCount(draft)).isZero();
+    assertThat(rules.additionalMoves(draft, a)).isEqualTo(2);
+    assertThat(rules.additionalMoves(draft, b)).isEqualTo(2);
+    draft = rules.move(draft, merged, a, transform(0, 0, 0));
+    assertThat(rules.pendingCount(draft)).isEqualTo(2);
   }
 
   @Test

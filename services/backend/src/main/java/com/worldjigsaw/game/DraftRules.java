@@ -305,6 +305,34 @@ class DraftRules {
     return (int) d.actions.stream().filter(a -> counted(d, a)).count();
   }
 
+  int additionalMoves(Draft d, String actionId) {
+    Action selected = action(d, uuid(actionId));
+    DraftGroup component =
+        d.groups.stream().filter(g -> g.actions.contains(selected.id)).findFirst().orElseThrow();
+    if (component.sources.size() == 1) return counted(d, selected) ? 0 : 1;
+    int eligible = 0;
+    boolean charged = false, firstEligible = false;
+    for (String id : component.actions) {
+      Action item = action(d, id);
+      if (counted(d, item)) {
+        charged = true;
+        continue;
+      }
+      JsonNode original = source(d, item.source);
+      boolean canEnter =
+          original.path("pieceIds").size() == 1
+              && !inside(
+                  reference(
+                      d, original.path("pieceIds").get(0).textValue(), original.path("transform")),
+                  d.definition.path("playSurface"));
+      if (canEnter) {
+        eligible++;
+        if (id.equals(component.actions.getFirst())) firstEligible = true;
+      }
+    }
+    return eligible + (!charged && !firstEligible ? 1 : 0);
+  }
+
   int generation(Draft d) {
     return d.generation;
   }
