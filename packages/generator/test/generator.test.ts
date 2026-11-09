@@ -332,3 +332,23 @@ test('default expanded layout enlarges the shared surface while keeping loose co
     )
   }
 })
+
+test('playable fixture has the expanded surface and a valid initial board', () => {
+  const serialized = fixture('hoi-an-expanded-60')
+  const board = JSON.parse(serialized)
+  assert.equal(
+    serialized,
+    `${JSON.stringify(generate({ ...options, image: 'fixture://hoi-an-generated', layout: 'expanded' }), null, 2)}\n`,
+  )
+  assert.deepEqual(board.definition.playSurface, {
+    min: { x: -780000, y: -520000 },
+    max: { x: 1980000, y: 1320000 },
+  })
+  assert.equal(board.definition.image, 'fixture://hoi-an-generated')
+  assert.equal(board.snapshot.groups.length, 60)
+  assert.equal(
+    board.snapshot.groups.filter((group: { finalPosition: boolean }) => group.finalPosition).length,
+    3,
+  )
+  assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
+})

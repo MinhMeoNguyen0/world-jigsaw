@@ -178,7 +178,7 @@ backend does not connect to it. A trusted operator can import a JSON document wi
 and `snapshot` fields, assigning its UTC day explicitly. For example, from `services/backend`:
 
 ```sh
-./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/hoi-an-balanced-60.json'
+./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/hoi-an-expanded-60.json'
 ```
 
 Replace the example date with the current UTC date. Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing

@@ -17,7 +17,7 @@ rewrite an existing board. `fixtures/surround-60.json` preserves that example.
 
 Pass `--layout balanced` for version `world-jigsaw-grid-7`, which spreads pieces farther vertically
 so a uniform shared-board fit uses more of a portrait viewport. The version has its own puzzle
-identity; it never changes an existing board. `fixtures/hoi-an-balanced-60.json` is the private-local
+identity; it never changes an existing board. `fixtures/hoi-an-expanded-60.json` is the private-local
 example for the web UI.
 
 The CLI defaults to `--layout expanded`; specify a legacy layout explicitly to reproduce a legacy fixture.

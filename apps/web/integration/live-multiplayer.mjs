@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 const fixture = JSON.parse(
   await readFile(
-    new URL('../../../packages/generator/fixtures/hoi-an-balanced-60.json', import.meta.url),
+    new URL('../../../packages/generator/fixtures/hoi-an-expanded-60.json', import.meta.url),
     'utf8',
   ),
 )
@@ -26,7 +26,7 @@ const current = await fetch(new URL('/api/v1/game/current', origin)).then((respo
 assert.equal(
   current.snapshot?.puzzleId,
   fixture.snapshot.puzzleId,
-  'Import the hoi-an-balanced-60 fixture into a disposable database',
+  'Import the hoi-an-expanded-60 fixture into a disposable database',
 )
 assert.equal(current.snapshot?.boardVersion, 0, 'A fresh, unmodified test board is required')
 const browser = await chromium.launch({ headless: true })
@@ -432,7 +432,7 @@ try {
     displayName,
   )
   console.log('mounted chat delivered to peer')
-  await a.route('**/hoi-an-generated.png', (route) => route.abort())
+  await a.route('**/sao-beach.jpg', (route) => route.abort())
   await a.reload()
   await status(a).filter({ hasText: 'Puzzle image is unsupported or unavailable.' }).waitFor()
   await a.locator('[data-connection=ready]').waitFor()
