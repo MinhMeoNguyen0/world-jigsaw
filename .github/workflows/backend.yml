@@ -19,7 +19,7 @@ jobs:
       run:
         working-directory: services/backend
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -28,3 +28,44 @@ jobs:
       # build runs spotlessCheck (fails on unformatted code) and all tests,
       # including the Testcontainers smoke test (Docker is preinstalled on the runner).
       - run: ./gradlew build
+      - name: Record backend artifact provenance
+        id: provenance
+        env:
+          WORKFLOW_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -eu
+          jar=build/libs/world-jigsaw-backend-0.0.1-SNAPSHOT.jar
+          test -f "$jar"
+          mkdir -p build/provenance
+          printf 'source_commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            printf 'source_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'workflow_repository=%s\nworkflow_ref=%s\nworkflow_sha=%s\nrun_id=%s\nrun_attempt=%s\n' \
+              "$WORKFLOW_REPOSITORY" "$WORKFLOW_REF" "$WORKFLOW_SHA" "$RUN_ID" "$RUN_ATTEMPT"
+            printf 'checkout_action=actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n'
+            printf 'java_action=actions/setup-java@v6\ngradle_action=gradle/actions/setup-gradle@v6\n'
+            printf 'upload_action=actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n'
+            java -version 2>&1
+            cat gradle/wrapper/gradle-wrapper.properties
+          } | tee build/provenance/manifest.txt
+          sha256sum "$jar" | tee build/provenance/SHA256SUMS
+          ./gradlew dependencies --configuration runtimeClasspath > build/provenance/runtime-dependencies.txt
+          test -s build/provenance/manifest.txt
+          test -s build/provenance/SHA256SUMS
+          test -s build/provenance/runtime-dependencies.txt
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-${{ steps.provenance.outputs.source_commit }}-${{ github.run_id }}
+          path: |
+            services/backend/build/libs/world-jigsaw-backend-0.0.1-SNAPSHOT.jar
+            services/backend/build/provenance/manifest.txt
+            services/backend/build/provenance/SHA256SUMS
+            services/backend/build/provenance/runtime-dependencies.txt
+          if-no-files-found: error
+          retention-days: 7
