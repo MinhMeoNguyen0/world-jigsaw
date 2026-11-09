@@ -563,6 +563,7 @@ for (const name of fixtures)
       height: 800000,
       image: 'fixture://original-landscape',
       placedPieces: name === 'review-60.json' ? 3 : 0,
+      layout: 'tray',
     })
     assert.deepEqual(board, load(`../../generator/fixtures/${name}`))
     const { definition, snapshot: initial } = board
@@ -641,4 +642,38 @@ test('snap tolerance is inclusive and selects the target transform exactly', () 
   rejects(() => attach(d, a.groupId, b.groupId, action(99), 999, 0), 'INVALID_ACTION')
   const joined = attach(d, a.groupId, b.groupId, action(99), 1000, 0)
   assert.deepEqual(preview(joined)[0].transform, solved)
+})
+
+test('new expanded surface charges entry while sorting outside stays free', () => {
+  const { definition, snapshot } = generate({
+    seed: 'expanded-charging',
+    columns: 10,
+    rows: 6,
+    width: 1200000,
+    height: 800000,
+    image: 'fixture://hoi-an-generated',
+    placedPieces: 0,
+  })
+  const group = snapshot.groups[0]
+  const piece = definition.pieces.find((p) => p.pieceId === group.pieceIds[0])!
+  const ref = {
+    x: piece.solvedPosition.x + piece.referencePoint.x,
+    y: piece.solvedPosition.y + piece.referencePoint.y,
+  }
+  const at = (x: number, y: number): Transform => ({
+    rotation: 0,
+    translation: { x: x - ref.x, y: y - ref.y },
+  })
+  const edge = definition.playSurface.min.x
+  const y = Math.round((definition.playSurface.min.y + definition.playSurface.max.y) / 2)
+  let draft = move(
+    begin(definition, snapshot, allowance),
+    group.groupId,
+    action(1),
+    at(edge - 1, y),
+  )
+  assert.equal(pendingCount(draft), 0)
+  draft = move(draft, group.groupId, action(1), at(edge, y))
+  assert.equal(pendingCount(draft), 1)
+  assert.equal(confirm(draft, snapshot, allowance).charged, 1)
 })

@@ -150,7 +150,9 @@ saved board. Lost Confirm replies can be retried with the same command ID and pa
 `GET /api/v1/game/commands/{commandId}`; an unknown old-puzzle command can supply `?puzzleId=`.
 Receipts and identifier tombstones are retained indefinitely in this local prototype.
 
-Puzzle shapes are fixed by the imported shared definition and cannot be changed by players.
+Puzzle shapes are fixed by the imported shared definition and cannot be changed by players. New
+default-generated puzzles use a larger play surface; already imported boards retain their existing
+boundary and move history.
 The presence endpoint reports live game subscriptions, and the turn summary reports server-calculated pending move charges.
 
 The [turn wire note](services/backend/TURN-WIRE.md) explains the local v1 join request and outgoing

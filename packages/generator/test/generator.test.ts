@@ -15,6 +15,7 @@ const options = {
   height: 800000,
   image: 'fixture://original-landscape',
   placedPieces: 3,
+  layout: 'tray' as const,
 }
 const fixture = (name: string) =>
   readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8')
@@ -205,6 +206,8 @@ test('CLI produces fixture and rejects invalid inputs', () => {
     'fixture://original-landscape',
     '--placed-pieces',
     '3',
+    '--layout',
+    'tray',
   ]
   assert.equal(
     execFileSync(process.execPath, [cli, ...args], { encoding: 'utf8' }),
@@ -269,4 +272,63 @@ test('seeded orientations use four repeatable quarter turns', () => {
   const angles = (seed: string) =>
     generate({ ...options, seed, placedPieces: 0 }).snapshot.groups.map((g) => g.transform.rotation)
   assert.notDeepEqual(angles('review-60'), angles('another-seed'))
+})
+
+test('default expanded layout enlarges the shared surface while keeping loose contours outside', () => {
+  const opts = { ...options, image: 'fixture://hoi-an-generated', placedPieces: 0 }
+  const legacy = generate({ ...opts, layout: 'balanced' })
+  const board = generate({ ...opts, layout: 'expanded' })
+  const { layout: _legacyLayout, ...defaultOptions } = opts
+  assert.deepEqual(generate(defaultOptions), board)
+  assert.deepEqual(generate(defaultOptions), generate(defaultOptions))
+  assert.equal(board.definition.shape.generatorVersion, 'world-jigsaw-grid-8')
+  assert.notEqual(board.definition.puzzleId, legacy.definition.puzzleId)
+  assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
+  const size = (r: typeof board.definition.playSurface) => ({
+    width: r.max.x - r.min.x,
+    height: r.max.y - r.min.y,
+  })
+  const surface = size(board.definition.playSurface),
+    workspace = size(board.definition.workspace)
+  const oldSurface = size(legacy.definition.playSurface),
+    oldWorkspace = size(legacy.definition.workspace)
+  assert.ok(surface.width / workspace.width > oldSurface.width / oldWorkspace.width)
+  assert.ok(surface.height / workspace.height > oldSurface.height / oldWorkspace.height)
+  const ids = board.snapshot.groups.flatMap((group) => group.pieceIds)
+  assert.equal(ids.length, board.definition.pieces.length)
+  assert.equal(new Set(ids).size, ids.length)
+  for (const group of board.snapshot.groups) {
+    const piece = board.definition.pieces.find((item) => item.pieceId === group.pieceIds[0])!
+    const angle = (group.transform.rotation * Math.PI) / 180000
+    const transform = (p: Point) => {
+      const x = p.x + piece.solvedPosition.x,
+        y = p.y + piece.solvedPosition.y
+      return {
+        x: Math.cos(angle) * x - Math.sin(angle) * y + group.transform.translation.x,
+        y: Math.sin(angle) * x + Math.cos(angle) * y + group.transform.translation.y,
+      }
+    }
+    // A cubic lies within the convex hull of its endpoints and control points.
+    const points = piece.edges
+      .flatMap((edge) => [
+        edge.start,
+        ...edge.segments.flatMap((segment) =>
+          segment.kind === 'line' ? [segment.to] : [segment.control1, segment.control2, segment.to],
+        ),
+      ])
+      .map(transform)
+    const bounds = {
+      minX: Math.min(...points.map((p) => p.x)),
+      maxX: Math.max(...points.map((p) => p.x)),
+      minY: Math.min(...points.map((p) => p.y)),
+      maxY: Math.max(...points.map((p) => p.y)),
+    }
+    const rect = board.definition.playSurface
+    assert.ok(
+      bounds.maxX < rect.min.x ||
+        bounds.minX > rect.max.x ||
+        bounds.maxY < rect.min.y ||
+        bounds.minY > rect.max.y,
+    )
+  }
 })

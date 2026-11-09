@@ -1,7 +1,7 @@
 import { generate } from './generator.ts'
 
 const usage =
-  'Usage: node src/cli.ts --seed TEXT --columns N --rows N --width N --height N --image URI [--definition-version N] [--placed-pieces N] [--layout tray|surround|balanced]'
+  'Usage: node src/cli.ts --seed TEXT --columns N --rows N --width N --height N --image URI [--definition-version N] [--placed-pieces N] [--layout tray|surround|balanced|expanded]'
 try {
   const args = process.argv.slice(2)
   if (args.length === 1 && args[0] === '--help') {
@@ -37,8 +37,8 @@ try {
       throw new Error(`${key} must be a nonnegative integer`)
     return Number(values[key])
   }
-  if (values.layout && !['tray', 'surround', 'balanced'].includes(values.layout))
-    throw new Error('layout must be tray, surround or balanced')
+  if (values.layout && !['tray', 'surround', 'balanced', 'expanded'].includes(values.layout))
+    throw new Error('layout must be tray, surround, balanced or expanded')
   const board = generate({
     seed: values.seed,
     columns: number('columns'),
@@ -48,7 +48,7 @@ try {
     image: values.image,
     definitionVersion: number('definition-version', 1),
     placedPieces: number('placed-pieces', 0),
-    layout: values.layout as 'tray' | 'surround' | 'balanced' | undefined,
+    layout: values.layout as 'tray' | 'surround' | 'balanced' | 'expanded' | undefined,
   })
   process.stdout.write(`${JSON.stringify(board, null, 2)}\n`)
 } catch (error) {
