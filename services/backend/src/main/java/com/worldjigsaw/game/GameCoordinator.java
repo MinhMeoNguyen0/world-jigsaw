@@ -368,7 +368,8 @@ class GameCoordinator {
         candidate = rules.attach(candidate, currentGroup, target, merged);
         currentGroup = merged;
       }
-      if (hasForbiddenOverlap(turn, candidate, current))
+      // Without attachments, candidate and current are unchanged since the first check.
+      if (!order.isEmpty() && hasForbiddenOverlap(turn, candidate, current))
         throw error("INVALID_ACTION", "Forbidden piece overlap");
       List<PreviewGeneration.Action> frames = serverActions(candidate);
       List<PreviewGeneration.Preview> published =
