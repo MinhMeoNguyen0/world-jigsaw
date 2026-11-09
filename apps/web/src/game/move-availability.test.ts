@@ -7,6 +7,10 @@ describe('move availability', () => {
   const first = { actionId: 'first', affectedPieceIds: ['a', 'b'] } as Action
   const second = { actionId: 'second', affectedPieceIds: ['a', 'b'] } as Action
   const other = { actionId: 'other', affectedPieceIds: ['c'] } as Action
+  const costs = (additionalMoves: number) => [
+    { actionId: 'first', additionalMoves },
+    { actionId: 'second', additionalMoves },
+  ]
 
   it('blocks interaction at zero committed moves and while availability is unknown', () => {
     expect(canMoveGroup(0, 0, group, [], [])).toBe(false)
@@ -22,19 +26,16 @@ describe('move availability', () => {
   })
 
   it('reserves enough moves for all actions in a joined group', () => {
-    expect(canMoveGroup(1, 0, group, [first, second], [])).toBe(false)
-    expect(canMoveGroup(2, 0, group, [first, second], [])).toBe(true)
-    expect(canMoveGroup(2, 1, group, [first, second, other], ['other'])).toBe(false)
+    expect(canMoveGroup(1, 0, group, [first, second], costs(2))).toBe(false)
+    expect(canMoveGroup(2, 0, group, [first, second], costs(2))).toBe(true)
+    expect(canMoveGroup(2, 1, group, [first, second, other], costs(2))).toBe(false)
     expect(canMoveGroup(1, 0, group, [other], [])).toBe(true)
   })
 
   it('does not reserve a second charge for paid joined actions', () => {
-    expect(canMoveGroup(4, 3, group, [first, second, other], ['FIRST', 'second', 'other'])).toBe(
-      true,
-    )
-    expect(canMoveGroup(3, 3, group, [first, second, other], ['first', 'second', 'other'])).toBe(
-      false,
-    )
-    expect(canMoveGroup(2, 1, group, [first, second], ['first'])).toBe(true)
+    expect(canMoveGroup(4, 3, group, [first, second, other], costs(0))).toBe(true)
+    expect(canMoveGroup(3, 3, group, [first, second, other], costs(0))).toBe(false)
+    expect(canMoveGroup(2, 1, group, [first, second], costs(1))).toBe(true)
+    expect(canMoveGroup(2, 1, group, [first, second], [])).toBe(false)
   })
 })

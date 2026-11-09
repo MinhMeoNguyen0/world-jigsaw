@@ -466,6 +466,13 @@ export interface DraftSummary {
     | [string, string, string]
     | [string, string, string, string]
     | [string, string, string, string, string]
+  /**
+   * @maxItems 80
+   */
+  movementCosts: {
+    actionId: string
+    additionalMoves: number
+  }[]
 }
 export interface PresenceSnapshot {
   schemaVersion: 1

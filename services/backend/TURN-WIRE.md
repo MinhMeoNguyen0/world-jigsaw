@@ -26,8 +26,9 @@ sequences within each generation; the client's submitted sequence is tracked ind
 rejecting stale submissions and is reported on rejection and v2 acceptance. A reconnect receives
 every current action in outgoing sequence order.
 
-The revision-correlated draft summary reports pending moves and the IDs of the actions currently
-charged. Clients must correlate it with the accepted draft before using it to gate movement.
+The revision-correlated draft summary reports pending moves, charged action IDs, and an upper bound
+on additional charges for moving each action's component. Clients must correlate it with the accepted
+draft before using it to gate movement.
 
 Undo fences and clears the old generation, then re-emits surviving previews under the new generation;
 see the [shared contract](../../packages/contracts/README.md) for joined-action behavior. Cancel clears only the draft and reveals

@@ -199,8 +199,14 @@ class GameCoordinator {
             .put("draftRevision", turn.draftRevision)
             .put("pendingMoves", rules.pendingCount(turn.draft));
     ArrayNode charged = summary.putArray("chargedActionIds");
-    for (DraftRules.ActionView action : rules.actions(turn.draft))
+    ArrayNode movementCosts = summary.putArray("movementCosts");
+    for (DraftRules.ActionView action : rules.actions(turn.draft)) {
       if (action.charged()) charged.add(action.actionId());
+      movementCosts
+          .addObject()
+          .put("actionId", action.actionId())
+          .put("additionalMoves", rules.additionalMoves(turn.draft, action.actionId()));
+    }
     return summary;
   }
 

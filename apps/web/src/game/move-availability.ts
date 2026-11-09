@@ -5,14 +5,19 @@ export function canMoveGroup(
   pendingMoves: number | null,
   group: Group,
   actions: readonly Action[],
-  chargedActionIds: readonly string[] | null,
+  movementCosts: readonly { actionId: string; additionalMoves: number }[] | null,
 ): boolean {
-  if (committedRemaining === null || pendingMoves === null || chargedActionIds === null) return false
+  if (committedRemaining === null || pendingMoves === null || movementCosts === null) return false
   const pieces = new Set(group.pieceIds.map((id) => id.toLowerCase()))
-  const charged = new Set(chargedActionIds.map((id) => id.toLowerCase()))
-  const potentialCharges = actions.filter((action) =>
-    !charged.has(action.actionId.toLowerCase()) &&
-      action.affectedPieceIds.some((id) => pieces.has(id.toLowerCase())),
-  ).length
+  const matching = actions.filter((action) =>
+    action.affectedPieceIds.some((id) => pieces.has(id.toLowerCase())),
+  )
+  const costs = new Map(
+    movementCosts.map((cost) => [cost.actionId.toLowerCase(), cost.additionalMoves]),
+  )
+  const potentialCharges = Math.max(
+    0,
+    ...matching.map((action) => costs.get(action.actionId.toLowerCase()) ?? Infinity),
+  )
   return committedRemaining - pendingMoves >= Math.max(1, potentialCharges)
 }

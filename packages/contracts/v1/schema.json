@@ -1378,6 +1378,19 @@
           "items": { "type": "string", "format": "uuid" },
           "maxItems": 5,
           "uniqueItems": true
+        },
+        "movementCosts": {
+          "type": "array",
+          "maxItems": 80,
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": { "type": "string", "format": "uuid" },
+              "additionalMoves": { "type": "integer", "minimum": 0, "maximum": 80 }
+            },
+            "required": ["actionId", "additionalMoves"],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -1387,7 +1400,8 @@
         "generation",
         "draftRevision",
         "pendingMoves",
-        "chargedActionIds"
+        "chargedActionIds",
+        "movementCosts"
       ],
       "additionalProperties": false
     },

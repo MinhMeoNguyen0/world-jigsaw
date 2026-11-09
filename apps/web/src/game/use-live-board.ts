@@ -162,12 +162,16 @@ export function useLiveBoard() {
         const draft = client.provenDraft()
         const chargedIds = new Set(result.chargedActionIds.map((id) => id.toLowerCase()))
         const actionIds = new Set(draft?.map((action) => action.actionId.toLowerCase()))
+        const costIds = new Set(result.movementCosts.map((cost) => cost.actionId.toLowerCase()))
         if (
           client.provenDraftRevision() !== proofRevision ||
           !draft ||
           chargedIds.size !== result.pendingMoves ||
           result.chargedActionIds.length !== chargedIds.size ||
-          [...chargedIds].some((id) => !actionIds.has(id))
+          [...chargedIds].some((id) => !actionIds.has(id)) ||
+          costIds.size !== actionIds.size ||
+          costIds.size !== result.movementCosts.length ||
+          [...costIds].some((id) => !actionIds.has(id))
         )
           throw new Error('Invalid draft charges')
         if (active) {
@@ -212,7 +216,7 @@ export function useLiveBoard() {
       pendingMoves,
       group,
       actions,
-      !turnId ? [] : (currentSummary?.chargedActionIds ?? null),
+      !turnId ? [] : (currentSummary?.movementCosts ?? null),
     )
   const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
   const previews = Object.values(state.previews).flatMap((turn) =>
