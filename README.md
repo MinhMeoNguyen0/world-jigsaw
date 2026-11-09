@@ -8,8 +8,9 @@ The [project handoff](docs/HANDOFF.md) maps the current architecture, operationa
 known gaps. The [documentation and recording notes](docs/demo/README.md) include playback and
 reproduction instructions. [Watch the two-player local demo](docs/demo/two-player-local.webm): two
 independent browser contexts on one computer show a remote pointer, live chat and drag preview,
-confirmation and a saved position after reload. The silent recording uses disposable local data;
-it does not demonstrate separate devices or a public deployment. The earlier [product plan](docs/PLAN.md)
+confirmation and a saved position after reload. The original [Player A](docs/demo/player-a.webm) and
+[Player B](docs/demo/player-b.webm) recordings are also available. The silent recordings use disposable
+local data; they do not demonstrate separate devices or a public deployment. The earlier [product plan](docs/PLAN.md)
 is a proposal, not the current wire contract.
 
 ## Repository layout

@@ -3,7 +3,10 @@
 [Watch or download the silent WebM recording](two-player-local.webm) (VP9, 2560 × 720,
 23.3 seconds, about 5.5 MB). Open the file in a VP9-capable browser or player such as VLC; if a
 repository viewer offers only a download, download it and open it locally. The text in the video
-identifies each step. There is no audio.
+identifies each step. There is no audio. The original recordings are available separately:
+[Player A](player-a.webm) (about 2.3 MB) and [Player B](player-b.webm) (about 2.3 MB). They are
+silent WebM recordings and start at different times; use the composite to follow the interaction
+side by side.
 
 The recording shows two independent browser contexts in one Chromium process on one computer, with
 separate sessions and disposable local game and chat databases. It is real interaction with the local
