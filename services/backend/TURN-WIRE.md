@@ -61,6 +61,13 @@ Undo uses the closed `UndoV2` payload with the observed draft revision. The serv
 original `Undo` shape because it cannot fence a concurrent preview; a retry uses the same request
 ID and payload. Both initial execution and receipt recovery check the revision before mutation.
 
+A correlated `INVALID_ACTION` rejection with message `Forbidden piece overlap`, `Group outside
+workspace`, `Cannot join selected groups`, or `Not adjacent or outside snap tolerance` is definitive
+for the submitted frame: the candidate was not installed and the previous draft and revision remain intact.
+The client may continue from that acknowledged draft with a fresh sequence. Other rejections and
+unknown outcomes still require the documented reconciliation; the message is part of this private
+wire interpretation and must change together with clients if the server changes it.
+
 ## Ephemeral pointers
 
 Subscribed clients opt in by sending `cursor.update` with a board-coordinate position or null. The
@@ -68,10 +75,3 @@ stream relays `cursor.presence` only to other opted-in connections subscribed to
 server supplies an opaque connection ID and display name; no pointer data is persisted. Null clears a
 pointer. The relay may drop presence under backpressure; clients expire stale positions and clear them
 on disconnect or resynchronization. Existing clients receive no cursor messages until they opt in.
-
-A correlated `INVALID_ACTION` rejection with message `Forbidden piece overlap`, `Group outside
-workspace`, `Cannot join selected groups`, or `Not adjacent or outside snap tolerance` is definitive
-for the submitted frame: the candidate was not installed and the previous draft and revision remain intact.
-The client may continue from that acknowledged draft with a fresh sequence. Other rejections and
-unknown outcomes still require the documented reconciliation; the message is part of this private
-wire interpretation and must change together with clients if the server changes it.

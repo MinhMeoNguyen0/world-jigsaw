@@ -459,8 +459,8 @@ export function useLiveBoard() {
         cursorTimer.current = null
         lastCursor.current = now
         client.sendCursor(cursorPosition.current)
-      } else if (cursorTimer.current === null) {
-        cursorTimer.current = window.setTimeout(() => {
+      } else {
+        cursorTimer.current ??= window.setTimeout(() => {
           cursorTimer.current = null
           if (cursorPosition.current) {
             lastCursor.current = performance.now()
