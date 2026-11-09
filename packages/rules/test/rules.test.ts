@@ -331,6 +331,51 @@ test('attachment, independent action charges, group movement and undo', () => {
   )
 })
 
+test('undo retains surviving joined adjustments and their charge in every orientation', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/review-60.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const first = snapshot.groups[0], second = snapshot.groups[1]
+  for (const rotation of [0, 90000, 180000, 270000]) {
+    let draft = begin(definition, snapshot, allowance)
+    draft = move(draft, first.groupId, action(1), solved)
+    draft = move(draft, second.groupId, action(2), solved)
+    draft = attach(draft, first.groupId, second.groupId, action(99), 0, 0)
+    const movedA = { rotation, translation: { x: 500, y: -300 } }
+    draft = move(draft, action(99), action(1), movedA)
+    const undoneB = undo(draft, action(2))
+    assert.deepEqual(undoneB.groups.find((item) => item.group.groupId === first.groupId)?.group.transform, movedA)
+    assert.deepEqual(undoneB.groups.find((item) => item.group.groupId === second.groupId)?.group.transform, second.transform)
+    assert.equal(pendingCount(undoneB), 1)
+    assert.equal(confirm(undoneB, snapshot, allowance).charged, 1)
+    assert.deepEqual(undo(draft, action(1)).groups.find((item) => item.group.groupId === second.groupId)?.group.transform, solved)
+    const movedB = { rotation, translation: { x: -700, y: 900 } }
+    draft = move(draft, action(99), action(2), movedB)
+    assert.deepEqual(undo(draft, action(2)).groups.find((item) => item.group.groupId === first.groupId)?.group.transform, movedA)
+    assert.deepEqual(undo(draft, action(1)).groups.find((item) => item.group.groupId === second.groupId)?.group.transform, movedB)
+  }
+})
+
+test('undo preserves a survivor adjustment through nested joins', () => {
+  const { definition, snapshot } = load('../../generator/fixtures/review-60.json') as {
+    definition: Definition
+    snapshot: Snapshot
+  }
+  const first = snapshot.groups[0], second = snapshot.groups[1], third = snapshot.groups[2]
+  let draft = begin(definition, snapshot, allowance)
+  for (const [index, group] of [first, second, third].entries())
+    draft = move(draft, group.groupId, action(index + 1), solved)
+  draft = attach(draft, first.groupId, second.groupId, action(98), 0, 0)
+  draft = attach(draft, action(98), third.groupId, action(99), 0, 0)
+  const moved = { rotation: 0, translation: { x: 1500, y: -2500 } }
+  draft = move(draft, action(99), action(1), moved)
+  const undone = undo(draft, action(2))
+  assert.deepEqual(undone.actions.map((item) => item.id), [action(1), action(3)])
+  assert.deepEqual(undone.groups.find((item) => item.group.groupId === first.groupId)?.group.transform, moved)
+  assert.deepEqual(undone.groups.find((item) => item.group.groupId === third.groupId)?.group.transform, solved)
+})
+
 test('undo, stale touched group and unrelated changes', () => {
   const { definition, snapshot } = load('../../generator/fixtures/sample-80.json') as {
     definition: Definition

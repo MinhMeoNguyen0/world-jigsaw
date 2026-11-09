@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,6 +59,7 @@ class DraftRules {
     List<String> actions;
     List<DraftGroup> children;
     Map<String, Action> beforeJoin;
+    Map<String, JsonNode> adjustments = new LinkedHashMap<>();
 
     DraftGroup(ObjectNode group, List<String> sources, List<String> actions) {
       this.group = group;
@@ -67,6 +69,7 @@ class DraftRules {
 
     DraftGroup copy() {
       DraftGroup copy = new DraftGroup(group.deepCopy(), new ArrayList<>(sources), new ArrayList<>(actions));
+      adjustments.forEach((id, transform) -> copy.adjustments.put(id, transform.deepCopy()));
       if (children != null) {
         copy.children = children.stream().map(DraftGroup::copy).toList();
         copy.beforeJoin = new HashMap<>();
@@ -157,8 +160,18 @@ class DraftRules {
       d.actions.add(action);
       g.actions.add(actionKey);
     }
+    applyMove(d, g, action, transform);
+    checkQuota(d);
+    return d;
+  }
+
+  private static void applyMove(Draft d, DraftGroup g, Action action, JsonNode transform) {
     checkWorkspace(d, g.group.path("pieceIds"), transform);
-    if (g.sources.size() > 1) chargeJoinedMovement(d, g, transform);
+    if (g.sources.size() > 1 && !sameTransform(g.group.path("transform"), transform)) {
+      chargeJoinedMovement(d, g, transform);
+      g.adjustments.remove(action.id);
+      g.adjustments.put(action.id, transform.deepCopy());
+    }
     g.group.set("transform", transform.deepCopy());
     JsonNode source = source(d, action.source);
     if (g.sources.size() == 1
@@ -171,8 +184,6 @@ class DraftRules {
               reference(d, source.path("pieceIds").get(0).textValue(), transform),
               d.definition.path("playSurface"));
     }
-    checkQuota(d);
-    return d;
   }
 
   Draft attach(Draft original, String movingId, String targetId, String mergedId) {
@@ -256,10 +267,17 @@ class DraftRules {
         d.groups.stream().filter(x -> x.actions.contains(a.id)).findFirst().orElseThrow();
     while (g.children != null) {
       d.groups.remove(g);
-      d.groups.addAll(g.children.stream().map(DraftGroup::copy).toList());
+      List<DraftGroup> children = g.children.stream().map(DraftGroup::copy).toList();
+      d.groups.addAll(children);
       for (int i = 0; i < d.actions.size(); i++) {
         Action previous = g.beforeJoin.get(d.actions.get(i).id);
         if (previous != null) d.actions.set(i, previous.copy());
+      }
+      for (var adjustment : g.adjustments.entrySet()) {
+        if (adjustment.getKey().equals(a.id)) continue;
+        DraftGroup child = children.stream()
+            .filter(item -> item.actions.contains(adjustment.getKey())).findFirst().orElseThrow();
+        applyMove(d, child, action(d, adjustment.getKey()), adjustment.getValue());
       }
       g = d.groups.stream().filter(x -> x.actions.contains(a.id)).findFirst().orElseThrow();
     }

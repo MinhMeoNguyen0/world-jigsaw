@@ -26,6 +26,7 @@ type DraftGroup = {
   actions: string[]
   children?: DraftGroup[]
   beforeJoin?: PendingAction[]
+  adjustments?: { actionId: string; transform: Transform }[]
 }
 type PendingAction = { id: string; source: string; entered: boolean; joinedCharge?: boolean }
 export type Draft = {
@@ -257,6 +258,25 @@ export function begin(definition: Definition, snapshot: Snapshot, allowance: All
     generation: 0,
   }
 }
+const applyMove = (d: Draft, g: DraftGroup, action: PendingAction, transform: Transform) => {
+  checkWorkspace(d, { ...g.group, transform })
+  if (g.sources.length > 1 && !equalTransform(g.group.transform, transform)) {
+    chargeJoinedMovement(d, g, transform)
+    g.adjustments = [
+      ...(g.adjustments ?? []).filter((item) => !same(item.actionId, action.id)),
+      { actionId: action.id, transform: copy(transform) },
+    ]
+  }
+  g.group.transform = copy(transform)
+  const src = original(d, action.source)
+  if (
+    g.sources.length === 1 &&
+    src.pieceIds.length === 1 &&
+    !inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface)
+  ) {
+    action.entered = inside(reference(d, src.pieceIds[0], transform), d.definition.playSurface)
+  }
+}
 /** Start an action on a canonical group, or adjust an existing draft group with its action ID. */
 export function move(draft: Draft, groupId: string, actionId: string, transform: Transform): Draft {
   checkOrientation(draft.base)
@@ -274,17 +294,7 @@ export function move(draft: Draft, groupId: string, actionId: string, transform:
     d.actions.push(action)
     g.actions.push(actionId)
   }
-  checkWorkspace(d, { ...g.group, transform })
-  if (g.sources.length > 1) chargeJoinedMovement(d, g, transform)
-  g.group.transform = copy(transform)
-  const src = original(d, action.source)
-  if (
-    g.sources.length === 1 &&
-    src.pieceIds.length === 1 &&
-    !inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface)
-  ) {
-    action.entered = inside(reference(d, src.pieceIds[0], transform), d.definition.playSurface)
-  }
+  applyMove(d, g, action, transform)
   checkQuota(d)
   return d
 }
@@ -359,8 +369,15 @@ export function undo(draft: Draft, actionId: string): Draft {
   let g = d.groups.find((g) => g.actions.some((id) => same(id, action.id)))!
   while (g.children) {
     const previous = g.beforeJoin!
-    d.groups = [...d.groups.filter((group) => group !== g), ...copy(g.children)]
+    const children = copy(g.children)
+    d.groups = [...d.groups.filter((group) => group !== g), ...children]
     d.actions = d.actions.map((item) => copy(previous.find((saved) => same(saved.id, item.id)) ?? item))
+    for (const adjustment of g.adjustments ?? []) {
+      if (same(adjustment.actionId, action.id)) continue
+      const child = children.find((item) => item.actions.some((id) => same(id, adjustment.actionId)))!
+      const survivor = d.actions.find((item) => same(item.id, adjustment.actionId))!
+      applyMove(d, child, survivor, adjustment.transform)
+    }
     g = d.groups.find((group) => group.actions.some((id) => same(id, action.id)))!
   }
   g.group = copy(original(d, action.source))
