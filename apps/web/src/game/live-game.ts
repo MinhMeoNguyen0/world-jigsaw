@@ -561,12 +561,10 @@ export class LiveGame {
       } else if (type === 'cursor.presence') {
         const cursor = checked<CursorPresence>('CursorPresence', message)
         if (!sameId(cursor.puzzleId, game.snapshot.puzzleId)) return
-        const cursors = { ...this.state.cursors }
         const previousTimer = this.cursorTimers.get(cursor.cursorId)
         if (previousTimer) clearTimeout(previousTimer)
         this.cursorTimers.delete(cursor.cursorId)
         if (cursor.position) {
-          cursors[cursor.cursorId] = cursor
           this.cursorTimers.set(
             cursor.cursorId,
             setTimeout(() => {
@@ -580,8 +578,10 @@ export class LiveGame {
         }
         this.publish({
           cursors: cursor.position
-            ? cursors
-            : Object.fromEntries(Object.entries(cursors).filter(([id]) => id !== cursor.cursorId)),
+            ? { ...this.state.cursors, [cursor.cursorId]: cursor }
+            : Object.fromEntries(
+                Object.entries(this.state.cursors).filter(([id]) => id !== cursor.cursorId),
+              ),
         })
       } else if (type === 'preview.accepted') {
         const receipt = checked<PreviewAcceptedV2>('PreviewAcceptedV2', message)

@@ -1,8 +1,5 @@
 import en from './locales/en.json'
 
-/** A flat message catalog: message key to message template. */
-export type Catalog = Readonly<Record<string, string>>
-
 /** Values substituted into `{name}` placeholders in a message template. */
 export type MessageParams = Readonly<Record<string, string | number>>
 
