@@ -26,18 +26,48 @@ class GameCommandController {
   private final LocalSessions sessions;
   private final GameWireValidator wire;
   private final GameCoordinator game;
+  private final GameStream stream;
   private final ObjectMapper mapper = new ObjectMapper();
 
-  GameCommandController(LocalSessions sessions, GameWireValidator wire, GameCoordinator game) {
+  GameCommandController(
+      LocalSessions sessions, GameWireValidator wire, GameCoordinator game, GameStream stream) {
     this.sessions = sessions;
     this.wire = wire;
     this.game = game;
+    this.stream = stream;
+  }
+
+  @GetMapping("/api/v1/game/presence")
+  ResponseEntity<Map<String, Object>> presence(
+      @RequestParam UUID puzzleId, HttpServletRequest request) {
+    subject(request, false);
+    return ResponseEntity.ok()
+        .header("Cache-Control", "no-store")
+        .body(
+            Map.of(
+                "schemaVersion",
+                1,
+                "puzzleId",
+                puzzleId.toString(),
+                "players",
+                stream.connectedPlayers(puzzleId)));
   }
 
   @PostMapping("/api/v1/game/turns")
   ResponseEntity<Map<?, ?>> begin(HttpServletRequest request) throws IOException {
     UUID subject = subject(request, true);
     return response(game.begin(subject, wire.parse("BeginTurn", body(request))));
+  }
+
+  @PostMapping("/api/v1/game/shape")
+  ResponseEntity<Map<?, ?>> shape(HttpServletRequest request) throws IOException {
+    UUID subject = subject(request, true);
+    return response(game.changeShape(subject, wire.parse("ShapeChange", body(request))));
+  }
+
+  @GetMapping("/api/v1/game/turns/{turnId}/summary")
+  ResponseEntity<Map<?, ?>> summary(@PathVariable UUID turnId, HttpServletRequest request) {
+    return response(game.draftSummary(subject(request, false), turnId));
   }
 
   @PostMapping("/api/v1/game/turns/{turnId}/confirm")

@@ -61,12 +61,20 @@ function harness() {
   let game = structuredClone(current)
   let commandReply: Promise<Response> | null = null
   let undoReply: Promise<Response> | null = null
+  let shapeReply: Promise<Response> | null = null
   let currentUnavailable = false
   const calls: string[] = []
   const undoBodies: unknown[] = []
+  const shapeBodies: unknown[] = []
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     calls.push(path)
+    if (path.endsWith('/shape')) {
+      if (!shapeReply) throw new Error('Missing shape response')
+      if (typeof init?.body !== 'string') throw new Error('Missing shape payload')
+      shapeBodies.push(JSON.parse(init.body) as unknown)
+      return shapeReply
+    }
     if (path.endsWith('/undo')) {
       if (!undoReply) throw new Error('Missing undo response')
       if (typeof init?.body !== 'string') throw new Error('Missing undo payload')
@@ -133,6 +141,7 @@ function harness() {
     sockets,
     calls,
     undoBodies,
+    shapeBodies,
     start,
     subscribe,
     setGame: (value: CurrentGame) => {
@@ -146,6 +155,9 @@ function harness() {
     },
     setUndoReply: (value: Promise<Response>) => {
       undoReply = value
+    },
+    setShapeReply: (value: Promise<Response>) => {
+      shapeReply = value
     },
   }
 }
@@ -165,6 +177,70 @@ function confirmed() {
 }
 
 describe('live game adapter', () => {
+  it('preserves an uncertain shape request for an identical retry', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({
+      schemaVersion: 1,
+      type: 'subscribed.v2',
+      snapshot: current.snapshot,
+      watermark: current.snapshot.boardVersion,
+      previews: [],
+      allowance: current.allowance,
+      ownTurn: null,
+      actions: [],
+      nextSequence: 0,
+      draftRevision: null,
+    })
+    h.setShapeReply(Promise.reject(new Error('response lost')))
+    await expect(
+      h.client.changeShape({ tabDepthPermille: 120, tabWidthPermille: 340, edgeWavePermille: 60 }),
+    ).rejects.toThrow('response lost')
+    const pending = h.client.getState().pendingShape
+    expect(pending).not.toBeNull()
+    await expect(h.client.begin()).rejects.toThrow()
+    h.setShapeReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            puzzleId,
+            requestId: pending?.requestId,
+            outcome: 'updated',
+            definitionVersion: current.definition.definitionVersion + 1,
+            boardVersion: current.snapshot.boardVersion + 1,
+          }),
+        ),
+      ),
+    )
+    await h.client.changeShape()
+    expect(h.shapeBodies).toEqual([pending, pending])
+    expect(h.client.getState().pendingShape).toBeNull()
+    expect(h.client.getState().connection).toBe('connecting')
+  })
+
+  it('refuses to change shape while the player has a draft', async () => {
+    const h = harness()
+    h.setGame({ ...current, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit({
+      schemaVersion: 1,
+      type: 'subscribed.v2',
+      snapshot: current.snapshot,
+      watermark: current.snapshot.boardVersion,
+      previews: [],
+      allowance: current.allowance,
+      ownTurn: turn,
+      actions: [],
+      nextSequence: 0,
+      draftRevision: 0,
+    })
+    await expect(
+      h.client.changeShape({ tabDepthPermille: 120, tabWidthPermille: 340, edgeWavePermille: 60 }),
+    ).rejects.toThrow('Finish or cancel')
+    expect(h.shapeBodies).toHaveLength(0)
+  })
+
   it.each([
     ['begin', null, turn],
     ['cancel', turn, null],

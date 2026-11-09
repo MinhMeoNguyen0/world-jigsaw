@@ -48,6 +48,10 @@ export interface ContractTypes {
   CancelResult: CancelResult
   CurrentGame: CurrentGame
   Session: Session
+  ShapeChange: ShapeChange
+  ShapeResult: ShapeResult
+  DraftSummary: DraftSummary
+  PresenceSnapshot: PresenceSnapshot
   ChatAssertionResponse: ChatAssertionResponse
   ChatAssertionClaims: ChatAssertionClaims
   ChatSend: ChatSend
@@ -421,6 +425,41 @@ export interface Session {
   schemaVersion: 1
   displayName: string
   expiresAt: string
+}
+export interface ShapeChange {
+  schemaVersion: 1
+  puzzleId: string
+  requestId: string
+  definitionVersion: number
+  tabDepthPermille: number
+  tabWidthPermille: number
+  edgeWavePermille: number
+}
+export interface ShapeResult {
+  schemaVersion: 1
+  puzzleId: string
+  requestId: string
+  outcome: 'updated' | 'unchanged'
+  definitionVersion: number
+  boardVersion: number
+}
+export interface DraftSummary {
+  schemaVersion: 1
+  puzzleId: string
+  turnId: string
+  generation: number
+  draftRevision: number
+  pendingMoves: number
+}
+export interface PresenceSnapshot {
+  schemaVersion: 1
+  puzzleId: string
+  /**
+   * @maxItems 100
+   */
+  players: {
+    displayName: string
+  }[]
 }
 export interface ChatAssertionResponse {
   schemaVersion: 1

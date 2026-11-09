@@ -125,7 +125,7 @@ class GamePreviewGeometryTest {
           groups.addObject().put("groupId", groupIds[i].toString()).put("revision", 0);
       group.putArray("pieceIds").add(pieceIds[i].toString());
       ObjectNode transform = group.putObject("transform");
-      int translation = snap ? (i == 0 ? 285001 : i == 2 ? 500000 : 0) : 0;
+      int translation = snap ? (i == 0 ? 277001 : i == 2 ? 500000 : 0) : 0;
       transform
           .putObject("translation")
           .put("x", axisX(rotation) * translation)
@@ -212,7 +212,7 @@ class GamePreviewGeometryTest {
       ObjectNode piece = squares.path("pieces").get(0).deepCopy();
       piece.put("pieceId", pieceId.toString());
       ((ObjectNode) piece.path("solvedPosition"))
-          .put("x", i == 12 ? -90000 : (i % 4) * 100000)
+          .put("x", i == 12 ? -82000 : (i % 4) * 100000)
           .put("y", i == 12 ? 0 : (i / 4) * 100000);
       for (JsonNode edge : piece.path("edges"))
         ((ObjectNode) edge).putNull("neighborPieceId").putNull("neighborEdgeId");
@@ -606,7 +606,7 @@ class GamePreviewGeometryTest {
           groups.addObject().put("groupId", groupIds[i].toString()).put("revision", 0);
       group.putArray("pieceIds").add(pieces[i].toString());
       ObjectNode transform = group.putObject("transform");
-      transform.putObject("translation").put("x", i == 2 ? -290001 : 0).put("y", 0);
+      transform.putObject("translation").put("x", i == 2 ? -282001 : 0).put("y", 0);
       transform.put("rotation", 0);
       group.put("finalPosition", false);
     }

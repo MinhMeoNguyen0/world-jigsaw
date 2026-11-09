@@ -22,13 +22,14 @@ with other active previews overlaid, so it cannot rely on another unconfirmed mo
   Quarter turns use exact integer arithmetic.
 - A piece's scale is the smaller dimension of its sampled contour's axis-aligned bounding box.
   Scale must be at least 1,000 units. For each pair, both polygons are inset by
-  `floor(min(scaleA, scaleB) / 10)` coordinate units, using JTS 1.20.0 fixed precision and eight
+  `floor(min(scaleA, scaleB) * 18 / 100)` coordinate units, using JTS 1.20.0 fixed precision and eight
   segments per quadrant for round buffer joins. If either original polygon intersects the interior of the other polygon’s inset, the candidate
   is rejected; touching inset boundaries are allowed. Checking both directions prevents a narrow
   protrusion disappearing from its own inset and hiding deep intrusion into the other piece. Empty inset polygons are unsupported and
-  rejected. This corresponds to up to 10% penetration for two aligned squares, but is a
+  rejected. This corresponds to up to 18% penetration for two aligned squares, but is a
   _contour-core_ rule for curved or concave shapes, not an exact penetration-distance guarantee.
-  It is deliberately distinct from the prototype's 8/100 comparison and needs play testing.
+  It follows the reviewed prototype's 18/100 tolerance in scale, but its contour sampling and
+  core check differ from the prototype's sampled-point test.
 - A snap candidate requires reciprocal neighboring edge IDs, equal quarter-turn orientations and
   Euclidean displacement of the moving piece's reference point no greater than
   `floor(min(scaleA, scaleB) / 20)`. The boundary is inclusive. The rules engine must still

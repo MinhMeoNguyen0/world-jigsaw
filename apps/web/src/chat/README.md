@@ -1,7 +1,7 @@
 # Private-local live chat adapter
 
-`LiveChat` is an unmounted transport for the independent local chat relay. It does not
-provide a chat UI or authenticate the player. In local mode, create a disposable random
+`LiveChat` is the web client's transport for the independent local chat relay. It does not
+authenticate the player. In local mode, create a disposable random
 UUID for the tab or browser session and supply it as `subject`; it can be impersonated
 and must not be a secret or real identifier. Supply `window.fetch.bind(window)` and
 `crypto.randomUUID` through the other constructor arguments.

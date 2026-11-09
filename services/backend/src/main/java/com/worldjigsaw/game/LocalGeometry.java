@@ -116,7 +116,7 @@ final class LocalGeometry {
         Shape a = shapes.get(i), b = shapes.get(j);
         if (!a.polygon.getEnvelopeInternal().intersects(b.polygon.getEnvelopeInternal())) continue;
         // Check intrusion into either piece's core so thin protrusions cannot disappear.
-        double inset = Math.floor(Math.min(a.scale, b.scale) / 10.0);
+        double inset = Math.floor(Math.min(a.scale, b.scale) * 18.0 / 100.0);
         Geometry innerA = BufferOp.bufferOp(a.polygon, -inset, BUFFER);
         Geometry innerB = BufferOp.bufferOp(b.polygon, -inset, BUFFER);
         if (innerA.isEmpty() || innerB.isEmpty()) {

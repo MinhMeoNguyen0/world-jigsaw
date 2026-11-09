@@ -21,6 +21,8 @@ import type {
   Turn,
   UndoV2,
   UndoResult,
+  ShapeChange,
+  ShapeResult,
 } from '@world-jigsaw/contracts'
 
 /** Provisional adapter for the private same-origin v1 service. It does not render a game. */
@@ -30,6 +32,7 @@ export interface LiveGameState {
   previews: Record<string, PreviewState>
   previewPending: boolean
   pendingConfirm: Confirm | null
+  pendingShape: ShapeChange | null
   unresolvedCommand: { puzzleId: string; commandId: string } | null
   issue: string | null
 }
@@ -105,6 +108,7 @@ export class LiveGame {
     previews: {},
     previewPending: false,
     pendingConfirm: null,
+    pendingShape: null,
     unresolvedCommand: null,
     issue: null,
   }
@@ -122,6 +126,7 @@ export class LiveGame {
   private cancelRequest: Cancel | null = null
   private undoRequest: UndoV2 | null = null
   private confirmBusy: { payload: Confirm; epoch: number } | null = null
+  private shapeBusy = false
   private readonly deps: LiveGameDependencies
 
   constructor(deps: LiveGameDependencies = defaults()) {
@@ -130,6 +135,29 @@ export class LiveGame {
 
   getState(): LiveGameState {
     return structuredClone(this.state)
+  }
+
+  /** Return only actions whose latest revision this client has proven. */
+  provenDraft(): Action[] | null {
+    if (
+      this.state.connection !== 'ready' ||
+      !this.state.game?.ownTurn ||
+      this.uncertainDraft ||
+      this.inFlight ||
+      this.state.pendingConfirm ||
+      this.state.pendingShape ||
+      this.state.unresolvedCommand ||
+      this.undoRequest ||
+      this.cancelRequest ||
+      this.draftRevision === null
+    )
+      return null
+    return structuredClone(this.acceptedActions)
+  }
+
+  /** The server revision associated with the locally proven action set. */
+  provenDraftRevision(): number | null {
+    return this.provenDraft() === null ? null : this.draftRevision
   }
 
   subscribe(listener: (state: LiveGameState) => void): () => void {
@@ -467,7 +495,9 @@ export class LiveGame {
         ) {
           this.inFlight = null
           this.uncertainDraft = true
-          this.resync(`Preview rejected: ${rejection.error.code}; resynchronizing.`)
+          this.resync(
+            `Preview rejected: ${rejection.error.code}: ${rejection.error.message}; resynchronizing.`,
+          )
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
       } else if (type === 'boardChanged') {
         const result = applyBoardChanged(
@@ -541,7 +571,7 @@ export class LiveGame {
 
   async begin(): Promise<Turn> {
     const game = this.readyGame()
-    if (this.state.pendingConfirm || this.state.unresolvedCommand)
+    if (this.state.pendingConfirm || this.state.pendingShape || this.state.unresolvedCommand)
       throw new Error('Resolve the pending confirmation first')
     if (game.ownTurn) return game.ownTurn
     this.beginRequest ??= {
@@ -579,6 +609,7 @@ export class LiveGame {
     const turn = this.turn()
     if (
       this.state.pendingConfirm ||
+      this.state.pendingShape ||
       this.state.unresolvedCommand ||
       this.uncertainDraft ||
       this.inFlight ||
@@ -633,6 +664,7 @@ export class LiveGame {
   async undo(actionId: string): Promise<UndoResult> {
     if (
       this.state.pendingConfirm ||
+      this.state.pendingShape ||
       this.state.unresolvedCommand ||
       (this.uncertainDraft && !this.undoRequest) ||
       this.inFlight ||
@@ -706,7 +738,12 @@ export class LiveGame {
   }
 
   async cancel(): Promise<CancelResult> {
-    if (this.state.pendingConfirm || this.state.unresolvedCommand || this.undoRequest)
+    if (
+      this.state.pendingConfirm ||
+      this.state.pendingShape ||
+      this.state.unresolvedCommand ||
+      this.undoRequest
+    )
       throw new Error('Resolve the pending operation first')
     if (!this.cancelRequest) {
       const turn = this.turn()
@@ -768,11 +805,81 @@ export class LiveGame {
     return result
   }
 
+  /** Retry an unknown outcome with the same request ID and payload. */
+  async changeShape(
+    values?: Pick<ShapeChange, 'tabDepthPermille' | 'tabWidthPermille' | 'edgeWavePermille'>,
+  ): Promise<ShapeResult> {
+    if (!this.state.pendingShape) {
+      const game = this.readyGame()
+      if (
+        !values ||
+        game.ownTurn ||
+        this.state.pendingConfirm ||
+        this.state.unresolvedCommand ||
+        this.inFlight ||
+        this.cancelRequest ||
+        this.undoRequest
+      )
+        throw new Error('Finish or cancel the current draft before changing shape')
+      const payload: ShapeChange = {
+        schemaVersion: 1,
+        puzzleId: game.snapshot.puzzleId,
+        requestId: this.deps.id(),
+        definitionVersion: game.definition.definitionVersion,
+        ...values,
+      }
+      checked<ShapeChange>('ShapeChange', payload)
+      this.publish({ pendingShape: payload, issue: null })
+      // Listeners may synchronously replace the pending request or disconnect.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (this.state.pendingShape !== payload || this.state.connection !== 'ready')
+        throw new Error('Connection changed before shape change')
+    }
+    const payload = this.state.pendingShape
+    if (this.shapeBusy) throw new Error('Shape change already in progress')
+    this.shapeBusy = true
+    try {
+      const result = await this.request<ShapeResult>('/api/v1/game/shape', 'ShapeResult', payload)
+      if (
+        !sameId(result.puzzleId, payload.puzzleId) ||
+        !sameId(result.requestId, payload.requestId)
+      )
+        throw new Error('Shape response mismatch')
+      if (this.state.pendingShape === payload) {
+        this.publish({ pendingShape: null, issue: null })
+        if (result.outcome === 'updated' && this.state.connection !== 'disconnected')
+          this.resync('Shape updated; synchronizing the shared board.')
+      }
+      return result
+    } catch (error) {
+      if (this.state.pendingShape === payload) {
+        if (error instanceof GameRequestError && error.definitive) {
+          this.publish({ pendingShape: null, issue: String(error) })
+          if (error.code === 'STALE_REVISION' && this.state.connection === 'ready')
+            this.resync('Puzzle shape changed; refreshing the board.')
+        } else this.publish({ issue: `Shape outcome unknown: ${String(error)}` })
+      }
+      throw error
+    } finally {
+      this.shapeBusy = false
+    }
+  }
+
+  restorePendingShape(payload: ShapeChange) {
+    checked<ShapeChange>('ShapeChange', payload)
+    if (this.state.pendingShape) throw new Error('A shape change is already pending')
+    this.publish({
+      pendingShape: structuredClone(payload),
+      issue: 'Resolve the restored shape change before editing.',
+    })
+  }
+
   async confirm(): Promise<CommandResult> {
     if (!this.state.pendingConfirm) {
       this.turn()
       if (
         this.state.unresolvedCommand ||
+        this.state.pendingShape ||
         this.uncertainDraft ||
         this.inFlight ||
         this.undoRequest ||

@@ -121,6 +121,9 @@ class GameStreamIntegrationTest {
     assertThat(initialA.path("snapshot")).isEqualTo(initialB.path("snapshot"));
     assertThat(initialA.path("watermark").longValue())
         .isEqualTo(snapshot.path("boardVersion").longValue());
+    JsonNode presence = get(a, origin + "/api/v1/game/presence?puzzleId=" + puzzle, cookieA);
+    assertSchema("PresenceSnapshot", presence);
+    assertThat(presence.path("players").size()).isEqualTo(2);
     ObjectNode unavailableSubscription = subscribe.deepCopy();
     unavailableSubscription.put("puzzleId", UUID.randomUUID().toString());
     send(sa, unavailableSubscription);
@@ -130,6 +133,9 @@ class GameStreamIntegrationTest {
     assertSchema("Turn", turnA);
     assertSchema("Turn", turnB);
     String idA = turnA.path("turnId").textValue(), idB = turnB.path("turnId").textValue();
+    JsonNode emptySummary = get(a, origin + "/api/v1/game/turns/" + idA + "/summary", cookieA);
+    assertSchema("DraftSummary", emptySummary);
+    assertThat(emptySummary.path("pendingMoves").intValue()).isZero();
     String actionA = UUID.randomUUID().toString(), actionB = UUID.randomUUID().toString();
     JsonNode firstFrame = preview(puzzle, idA, 0, 1, action(actionA, g0, 0, 0));
     validator.parse("PreviewSubmit", firstFrame.toString());
@@ -137,6 +143,10 @@ class GameStreamIntegrationTest {
     JsonNode firstReceived = la.next();
     assertPreview(firstReceived, idA);
     assertPreview(lb.next(), idA);
+    JsonNode firstSummary = get(a, origin + "/api/v1/game/turns/" + idA + "/summary", cookieA);
+    assertSchema("DraftSummary", firstSummary);
+    assertThat(firstSummary.path("draftRevision").longValue()).isEqualTo(1);
+    assertThat(firstSummary.path("pendingMoves").intValue()).isEqualTo(1);
     JsonNode readDuring = get(a, origin + "/api/v1/game/current", cookieA);
     assertThat(readDuring.path("snapshot").path("boardVersion").longValue())
         .isEqualTo(snapshot.path("boardVersion").longValue());
@@ -198,6 +208,11 @@ class GameStreamIntegrationTest {
     send(reconnectWhileActive, withCursor);
     JsonNode handoff = extra.next();
     assertThat(handoff.path("type").asText()).isEqualTo("subscribed");
+    assertThat(
+            get(a, origin + "/api/v1/game/presence?puzzleId=" + puzzle, cookieA)
+                .path("players")
+                .size())
+        .isEqualTo(2);
     assertThat(handoff.path("previews").size()).isEqualTo(2);
     assertThat(handoff.path("previews").get(0).path("sequence").longValue())
         .isLessThan(handoff.path("previews").get(1).path("sequence").longValue());

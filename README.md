@@ -20,7 +20,7 @@ The [puzzle generator](packages/generator/README.md) produces standalone definit
 
 The [local rules package](packages/rules/README.md) computes draft puzzle interactions without saving or transmitting them.
 
-The [shared v1 contract](packages/contracts/README.md) describes the integration baseline; the schemas do not implement a running multiplayer service.
+The [shared v1 contract](packages/contracts/README.md) describes the wire used by the local services and web client.
 
 ## Local setup
 
@@ -36,6 +36,11 @@ Then, from the repository root:
 pnpm install
 pnpm dev        # start the web app at http://localhost:5173
 ```
+
+For a playable private-local game, start the game and chat services below, import a puzzle for
+the current UTC day, and open `http://127.0.0.1:5173` in each browser. The development server
+proxies game and chat requests to their separate loopback services; it is not a public gateway.
+Use the same literal loopback host for the page throughout a session. The Hoi An-inspired fixture is generated artwork, not a photograph; see its [provenance note](apps/web/public/hoi-an-generated.NOTICE.md). Other images require appropriate rights before distribution.
 
 To run the Playwright smoke test you also need its browser, once per machine:
 
@@ -129,12 +134,18 @@ saved board. Lost Confirm replies can be retried with the same command ID and pa
 `GET /api/v1/game/commands/{commandId}`; an unknown old-puzzle command can supply `?puzzleId=`.
 Receipts and identifier tombstones are retained indefinitely in this local prototype.
 
+Shape settings change the current shared definition. The service rejects a change while any player
+has an active draft, validates the new contours against the whole saved board, records the old and
+new definition versions, and asks connected clients to resynchronize. A lost reply can be retried
+with the same request ID and payload. Shape editing is available for supported generated grid
+definitions; unsupported legacy definitions remain readable. The presence endpoint reports live
+game subscriptions, and the turn summary reports server-calculated pending move charges.
+
 The [turn wire note](services/backend/TURN-WIRE.md) explains the local v1 join request and outgoing
 sequence semantics. The [geometry note](services/backend/LOCAL-GEOMETRY.md) documents provisional
-collision and snap rules. The current frontend is not integrated with these endpoints; its actual
-mouse and touch controls still need the owning frontend worker's end-to-end validation. Chat is not
-integrated. The separate [preview demo](services/backend/PREVIEW-INTEGRATION.md) is not the game
-service.
+collision and snap rules. The web client uses acknowledged previews and Confirm commands and
+connects to the independent live chat relay. The separate [preview demo](services/backend/PREVIEW-INTEGRATION.md)
+is not the game service.
 
 Run formatting checks and tests from `services/backend`:
 
@@ -153,15 +164,21 @@ backend does not connect to it. A trusted operator can import a JSON document wi
 and `snapshot` fields, assigning its UTC day explicitly. For example, from `services/backend`:
 
 ```sh
-./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/review-60.json'
+./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/hoi-an-balanced-60.json'
 ```
 
-Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing
+Replace the example date with the current UTC date. Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing
 board. A matching reserved puzzle identity can be used for its first import. Remove the import arguments on subsequent starts. The fixture is synthetic, not production
 puzzle content. Import verifies the v1 JSON schemas, canonical SHA-256 checksum, definition and
 snapshot identity, bounds, contour continuity, reciprocal edge geometry and complete unique piece
 membership. It commits the definition and canonical board together. It does not verify all geometry,
 collision or game rules; generated content needs further validation before production use.
+
+With a fresh disposable database and the Hoi An fixture imported, start the game, chat and web
+services and run `pnpm --filter @world-jigsaw/web test:integration` to exercise two independent
+browser sessions. Run `pnpm --filter @world-jigsaw/web test:shape-integration` separately against a
+fresh import to exercise shared shape changes, recovery and races. Both tests change the imported
+board; do not point either at data you want to keep.
 
 `GET /api/v1/game/current` returns today's UTC definition and canonical snapshot, server time and
 UTC close time. If today's puzzle has not been imported, it returns `PUZZLE_UNAVAILABLE` (503),

@@ -25,6 +25,7 @@ class GameWireValidator {
           "ConfirmV2",
           "Cancel",
           "UndoV2",
+          "ShapeChange",
           "Subscribe",
           "SubscribeV2",
           "PreviewSubmit",

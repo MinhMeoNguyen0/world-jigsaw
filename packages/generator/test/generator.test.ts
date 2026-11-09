@@ -116,6 +116,70 @@ test('review placements and rotated tray references lie in their intended zones'
     new Set([0, 90000, 180000, 270000]),
   )
 })
+test('surround layout is shared, reproducible and distributes loose pieces around the picture', () => {
+  const board = generate({ ...options, layout: 'surround' })
+  assert.equal(`${JSON.stringify(board, null, 2)}\n`, fixture('surround-60'))
+  const hoiAn = generate({ ...options, image: 'fixture://hoi-an-generated', layout: 'surround' })
+  assert.equal(`${JSON.stringify(hoiAn, null, 2)}\n`, fixture('hoi-an-surround-60'))
+  assert.notEqual(hoiAn.definition.puzzleId, board.definition.puzzleId)
+  assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
+  assert.notEqual(board.definition.puzzleId, generate(options).definition.puzzleId)
+  const centers = board.snapshot.groups.slice(3).map((group) => {
+    const piece = board.definition.pieces.find((item) => item.pieceId === group.pieceIds[0])!
+    const ref = globalPoint(piece.referencePoint, piece.solvedPosition)
+    const angle = (group.transform.rotation * Math.PI) / 180000
+    return {
+      x: Math.round(
+        Math.cos(angle) * ref.x - Math.sin(angle) * ref.y + group.transform.translation.x,
+      ),
+      y: Math.round(
+        Math.sin(angle) * ref.x + Math.cos(angle) * ref.y + group.transform.translation.y,
+      ),
+    }
+  })
+  assert.ok(centers.some((p) => p.x < 0))
+  assert.ok(centers.some((p) => p.x > options.width))
+  assert.ok(centers.some((p) => p.y < 0))
+  assert.ok(centers.some((p) => p.y > options.height))
+  for (const [i, center] of centers.entries()) {
+    assert.equal(isInsideSurface(center, board.definition.playSurface), false)
+    assert.equal(isInsideSurface(center, board.definition.workspace), true)
+    for (const other of centers.slice(i + 1))
+      assert.ok(Math.hypot(center.x - other.x, center.y - other.y) >= 200000)
+  }
+})
+test('balanced layout preserves a shared board with a taller spread for mobile fit', () => {
+  const opts = { ...options, image: 'fixture://hoi-an-generated' }
+  const original = generate({ ...opts, layout: 'surround' })
+  const board = generate({ ...opts, layout: 'balanced' })
+  assert.equal(`${JSON.stringify(board, null, 2)}\n`, fixture('hoi-an-balanced-60'))
+  assert.notEqual(board.definition.puzzleId, original.definition.puzzleId)
+  assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
+  const size = (b: typeof board) => ({
+    width: b.definition.workspace.max.x - b.definition.workspace.min.x,
+    height: b.definition.workspace.max.y - b.definition.workspace.min.y,
+  })
+  assert.ok(size(board).height / size(board).width > size(original).height / size(original).width)
+  const centers = board.snapshot.groups.slice(3).map((group, i) => {
+    const piece = board.definition.pieces[i + 3]
+    const ref = globalPoint(piece.referencePoint, piece.solvedPosition)
+    const angle = (group.transform.rotation * Math.PI) / 180000
+    return {
+      x: Math.round(
+        Math.cos(angle) * ref.x - Math.sin(angle) * ref.y + group.transform.translation.x,
+      ),
+      y: Math.round(
+        Math.sin(angle) * ref.x + Math.cos(angle) * ref.y + group.transform.translation.y,
+      ),
+    }
+  })
+  for (const [i, center] of centers.entries()) {
+    assert.equal(isInsideSurface(center, board.definition.playSurface), false)
+    assert.equal(isInsideSurface(center, board.definition.workspace), true)
+    for (const other of centers.slice(i + 1))
+      assert.ok(Math.hypot(center.x - other.x, center.y - other.y) >= 200000)
+  }
+})
 test('canonical JSON and SHA-256 match a worked example', () => {
   const canonical = canonicalJson({ z: [1, true, null], a: 'a\n"' })
   assert.equal(canonical, '{"a":"a\\n\\\"","z":[1,true,null]}')

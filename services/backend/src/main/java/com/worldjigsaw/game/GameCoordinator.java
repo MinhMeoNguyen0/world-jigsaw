@@ -30,6 +30,7 @@ class GameCoordinator {
   private final JdbcTemplate jdbc;
   private final Clock clock;
   private final GameWriterGuard writer;
+  private GameShapeService shapes;
   private final Map<UUID, Turn> turns = new HashMap<>();
   private final List<JsonNode> events = new ArrayList<>();
   private boolean resyncRequired;
@@ -108,6 +109,24 @@ class GameCoordinator {
     this.currentDay = clock.instant().atZone(java.time.ZoneOffset.UTC).toLocalDate();
   }
 
+  @org.springframework.beans.factory.annotation.Autowired
+  void setShapeService(GameShapeService shapes) {
+    this.shapes = shapes;
+  }
+
+  synchronized JsonNode changeShape(UUID subject, JsonNode payload) {
+    drainLeaseClears();
+    UUID puzzle = BoardValidator.id(payload, "puzzleId");
+    JsonNode cached = shapes.lookup(subject, payload);
+    if (cached != null) return cached;
+    if (turns.values().stream().anyMatch(turn -> turn.puzzle.equals(puzzle)))
+      throw new HttpFailure(
+          "PIECE_BUSY", "Finish or cancel all active drafts before changing shape");
+    JsonNode result = shapes.apply(subject, payload);
+    if ("updated".equals(result.path("outcome").asText())) forceResyncAll("gap");
+    return result;
+  }
+
   synchronized Started begin(UUID subject, UUID puzzle) {
     drainLeaseClears();
     JsonNode current = current(subject, puzzle);
@@ -163,6 +182,21 @@ class GameCoordinator {
 
   synchronized Changed preview(UUID subject, JsonNode payload) {
     return preview(subject, payload, null);
+  }
+
+  synchronized JsonNode draftSummary(UUID subject, UUID turnId) {
+    drainLeaseClears();
+    Turn turn = turns.get(turnId);
+    if (turn == null || !turn.subject.equals(subject)) throw error("TURN_CLOSED", "Turn is closed");
+    leases.info(subject, turn.id, turn.generation);
+    return mapper
+        .createObjectNode()
+        .put("schemaVersion", 1)
+        .put("puzzleId", turn.puzzle.toString())
+        .put("turnId", turn.id.toString())
+        .put("generation", turn.generation)
+        .put("draftRevision", turn.draftRevision)
+        .put("pendingMoves", rules.pendingCount(turn.draft));
   }
 
   synchronized Changed preview(UUID subject, JsonNode payload, UUID streamId) {
