@@ -110,7 +110,10 @@ try {
   })
   await b.waitForFunction(
     (expected) =>
-      document.querySelector('[data-remote-cursor]')?.getAttribute('transform')?.startsWith(expected),
+      document
+        .querySelector('[data-remote-cursor]')
+        ?.getAttribute('transform')
+        ?.startsWith(expected),
     trailing,
     { timeout: 5000 },
   )

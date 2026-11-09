@@ -3,10 +3,25 @@ import type { Action, Group } from '@world-jigsaw/contracts'
 import { canMoveGroup } from './move-availability.ts'
 
 describe('move availability', () => {
-  const group = { pieceIds: ['a', 'b'] } as Group
-  const first = { actionId: 'first', affectedPieceIds: ['a', 'b'] } as Action
-  const second = { actionId: 'second', affectedPieceIds: ['a', 'b'] } as Action
-  const other = { actionId: 'other', affectedPieceIds: ['c'] } as Action
+  const transform = { translation: { x: 0, y: 0 }, rotation: 0 }
+  const group: Group = {
+    groupId: 'group',
+    revision: 0,
+    pieceIds: ['a', 'b'],
+    transform,
+    finalPosition: false,
+  }
+  const action = (actionId: string, affectedPieceIds: [string, ...string[]]): Action => ({
+    actionId,
+    kind: 'group',
+    targetId: 'group',
+    affectedPieceIds,
+    baseRevisions: [{ groupId: 'group', revision: 0 }],
+    intendedTransform: transform,
+  })
+  const first = action('first', ['a', 'b'])
+  const second = action('second', ['a', 'b'])
+  const other = action('other', ['c'])
   const costs = (additionalMoves: number) => [
     { actionId: 'first', additionalMoves },
     { actionId: 'second', additionalMoves },

@@ -174,8 +174,7 @@ class GameStreamIntegrationTest {
     assertThat(firstSummary.path("chargedActionIds").get(0).asText()).isEqualTo(actionA);
     assertThat(firstSummary.path("movementCosts").get(0).path("actionId").asText())
         .isEqualTo(actionA);
-    assertThat(firstSummary.path("movementCosts").get(0).path("additionalMoves").asInt())
-        .isZero();
+    assertThat(firstSummary.path("movementCosts").get(0).path("additionalMoves").asInt()).isZero();
     JsonNode readDuring = get(a, origin + "/api/v1/game/current", cookieA);
     assertThat(readDuring.path("snapshot").path("boardVersion").longValue())
         .isEqualTo(snapshot.path("boardVersion").longValue());
