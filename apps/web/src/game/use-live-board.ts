@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import { LiveGame, type LiveGameState } from '../game/live-game.ts'
 import { t } from '../i18n/translate.ts'
 import { suggestJoin } from '../game/join.ts'
+import { canMoveGroup } from './move-availability.ts'
 import { validate } from '@world-jigsaw/contracts'
 import type {
   Action,
@@ -93,6 +94,9 @@ export function imageSource(value: string, origin: string): string | null {
 export function useLiveBoard() {
   const [client] = useState(() => new LiveGame())
   const [state, setState] = useState<LiveGameState>(() => client.getState())
+  const stateRef = useRef(state)
+  const lastCursor = useRef(0)
+  const cursorPosition = useRef<Point | null>(null)
   const [overlay, setOverlay] = useState(true),
     [reference, setReference] = useState(false)
   const [shapeOpen, setShapeOpen] = useState(false)
@@ -168,6 +172,10 @@ export function useLiveBoard() {
         summary.draftRevision === proofRevision
       ? summary.pendingMoves
       : null
+  const remaining =
+    game?.allowance && pendingMoves !== null ? game.allowance.remaining - pendingMoves : null
+  const canMove = (group: Group) =>
+    canMoveGroup(game?.allowance?.remaining ?? null, pendingMoves, group, actions)
   const previews = Object.values(state.previews).flatMap((turn) =>
     turn.closed ? [] : Object.values(turn.actions),
   )
@@ -271,7 +279,7 @@ export function useLiveBoard() {
         p.restoring = true
         try {
           p.sentFor = 'restore'
-          client.preview(p.original)
+          client.preview(p.original, true)
           p.restoring = false
         } catch (e) {
           p.restoring = false
@@ -381,6 +389,7 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
+    if (!canMove(group)) return
     const p = point(event.clientX, event.clientY)
     if (!p) return
     event.preventDefault()
@@ -394,6 +403,13 @@ export function useLiveBoard() {
     setDragging(true)
   }
   const move = (event: PointerEvent<SVGSVGElement>) => {
+    const cursorPoint = point(event.clientX, event.clientY)
+    const now = performance.now()
+    if (cursorPoint && now - lastCursor.current >= 50) {
+      lastCursor.current = now
+      cursorPosition.current = { x: Math.round(cursorPoint.x), y: Math.round(cursorPoint.y) }
+      client.sendCursor(cursorPosition.current)
+    }
     if (pan.current) {
       const start = pan.current
       setCamera((current) => {
@@ -485,6 +501,7 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
+    if (!canMove(group)) return
     const piece = pieceMap.get(group.pieceIds[0].toLowerCase())
     if (!piece) return
     const current = pending.current
@@ -552,6 +569,8 @@ export function useLiveBoard() {
       })
     }
     const unsubscribe = client.subscribe((next) => {
+      if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
+        client.sendCursor(null)
       if (next.pendingConfirm)
         sessionStorage.setItem('world-jigsaw-pending-confirm', JSON.stringify(next.pendingConfirm))
       else if (!recoveryFailed.current) sessionStorage.removeItem('world-jigsaw-pending-confirm')
@@ -574,6 +593,17 @@ export function useLiveBoard() {
           setError(next.issue)
         }
       }
+      if (next.previewRejection && !stateRef.current.previewRejection) {
+        const current = pending.current
+        if (current && current.sentFor !== 'active') {
+          pending.current = null
+          setGhost(null)
+          setDragging(false)
+          setSelected(null)
+          setError(t('game.invalidPlacement'))
+        }
+      }
+      stateRef.current = next
       setState(next)
       queueMicrotask(() => {
         flushRef.current()
@@ -585,6 +615,14 @@ export function useLiveBoard() {
     return () => {
       unsubscribe()
       client.disconnect()
+    }
+  }, [client])
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (cursorPosition.current) client.sendCursor(cursorPosition.current)
+    }, 2000)
+    return () => {
+      window.clearInterval(timer)
     }
   }, [client])
   useEffect(() => {
@@ -672,6 +710,8 @@ export function useLiveBoard() {
     actions,
     undoPending,
     pendingMoves,
+    remaining,
+    canMove,
     proven,
     selected,
     setSelected,
@@ -708,6 +748,10 @@ export function useLiveBoard() {
     point,
     down,
     move,
+    leave: () => {
+      cursorPosition.current = null
+      client.sendCursor(null)
+    },
     up,
     abort,
     rotate,

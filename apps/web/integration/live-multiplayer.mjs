@@ -88,6 +88,11 @@ async function dragTo(page, groupId, pieceId, target, hold = false, preview = fa
 try {
   await ready(a)
   await ready(b)
+  const boardBox = await a.locator('svg.board').boundingBox()
+  assert.ok(boardBox)
+  await a.mouse.move(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2)
+  await b.locator('[data-remote-cursor]').waitFor({ state: 'attached', timeout: 10000 })
+  console.log('peer saw pointer in another browser session')
   await a.getByRole('button', { name: /Live chat/ }).click()
   await b.getByRole('button', { name: /Live chat/ }).click()
   await a.getByRole('textbox', { name: 'Message' }).fill('Chat survives board changes')
@@ -104,6 +109,33 @@ try {
   console.log('peer saw preview while pointer held')
   await a.mouse.up()
   await settle(a, 1)
+  await b.evaluate(() => {
+    window.previewObservations = []
+    const main = document.querySelector('main')
+    const record = () =>
+      window.previewObservations.push({
+        connection: main.dataset.connection,
+        previews: document.querySelectorAll('[data-preview-action]').length,
+      })
+    record()
+    new MutationObserver(record).observe(main, { attributes: true, childList: true, subtree: true })
+  })
+  const sourceBox = await a.locator(`[data-preview-piece-ids="${pieces[0]}"] > path`).boundingBox()
+  const targetBox = await a.locator(`[data-group-id="${ids[1]}"] > path`).boundingBox()
+  assert.ok(sourceBox && targetBox)
+  await a.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
+  await a.mouse.down()
+  await a.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+    steps: 12,
+  })
+  await a.mouse.up()
+  await status(a)
+    .filter({ hasText: "That piece can't be placed there. Try another spot." })
+    .waitFor()
+  assert.equal(await b.locator('[data-preview-action]').count(), 1)
+  const observations = await b.evaluate(() => window.previewObservations)
+  assert.ok(observations.every((sample) => sample.connection === 'ready' && sample.previews === 1))
+  console.log('invalid placement preserved the peer preview and connection')
   await dragTo(a, ids[1], pieces[1], { x: 800000, y: 200000 }, true)
   await b.locator(`[data-preview-piece-ids="${pieces[1]}"]`).waitFor({ state: 'attached' })
   await a.locator('svg.board').dispatchEvent('pointercancel', { pointerId: 1 })
@@ -208,30 +240,26 @@ try {
   console.log('five independent previews visible to peer')
   const sixth = fixture.snapshot.groups[5]
   await dragTo(b, sixth.groupId, sixth.pieceIds[0], { x: 1350000, y: 800000 })
-  await status(b).filter({ hasText: 'QUOTA_EXCEEDED' }).waitFor({ timeout: 20000 })
-  await b.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+  await status(b).filter({ hasText: 'All available moves are in this batch' }).waitFor()
   await settle(b, 5)
-  // An intermediate position outside the play surface can be accepted as a free
-  // sort before the charged destination is rejected. Undo it if it was observed.
-  if (await a.locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`).count()) {
-    const sixthUndo = b.waitForResponse(
-      (response) => response.url().includes('/undo') && response.request().method() === 'POST',
-    )
-    await b.getByRole('button', { name: 'Undo last change' }).click()
-    assert.equal((await sixthUndo).status(), 200)
-    await a
-      .locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`)
-      .waitFor({ state: 'detached' })
-    await b.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
-    await settle(b, 5)
-  }
+  assert.equal(await a.locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`).count(), 0)
   assert.equal(await a.locator('[data-preview-action]').count(), 5)
-  console.log('sixth charged move rejected; five accepted actions retained')
+  console.log('sixth move blocked; five accepted actions retained')
   await b.getByRole('button', { name: 'Confirm changes' }).click()
   await b.waitForFunction(
     () =>
       document.querySelector('.pill-count')?.textContent?.includes('0 left') &&
       document.querySelector('.pill-count')?.textContent?.includes('0 pending'),
+  )
+  const sixthTransform = await b
+    .locator(`[data-group-id="${sixth.groupId}"]`)
+    .getAttribute('transform')
+  await dragTo(b, sixth.groupId, sixth.pieceIds[0], { x: 1350000, y: 800000 })
+  await status(b).filter({ hasText: 'No moves left today' }).waitFor()
+  assert.equal(await b.locator('[data-local-ghost]').count(), 0)
+  assert.equal(
+    await b.locator(`[data-group-id="${sixth.groupId}"]`).getAttribute('transform'),
+    sixthTransform,
   )
   await a.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
   await b.getByText('Chat survives board changes').waitFor()

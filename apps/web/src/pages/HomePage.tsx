@@ -69,6 +69,7 @@ export function HomePage() {
     actions,
     undoPending,
     pendingMoves,
+    canMove,
     proven,
     selected,
     error,
@@ -103,6 +104,7 @@ export function HomePage() {
     imageError,
     down,
     move,
+    leave,
     up,
     abort,
     rotate,
@@ -367,6 +369,7 @@ export function HomePage() {
               }
             }}
             onPointerMove={move}
+            onPointerLeave={leave}
             onPointerUp={up}
             onPointerCancel={abort}
             onContextMenu={(event) => {
@@ -492,6 +495,36 @@ export function HomePage() {
                 />
               </g>
             )}
+            {Object.values(state.cursors).map(
+              (cursor) =>
+                cursor.position && (
+                  <g
+                    key={cursor.cursorId}
+                    data-remote-cursor={cursor.cursorId}
+                    transform={`translate(${String(cursor.position.x)} ${String(cursor.position.y)}) scale(${String(width / camera.zoom / 1000)})`}
+                    pointerEvents="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M 0 0 L 0 23 L 6 17 L 11 27 L 15 25 L 10 15 L 19 15 Z"
+                      fill="#ae563d"
+                      stroke="white"
+                      strokeWidth="2"
+                    />
+                    <text
+                      x="20"
+                      y="24"
+                      fontSize="16"
+                      fill="#49372f"
+                      stroke="white"
+                      strokeWidth="3"
+                      paintOrder="stroke"
+                    >
+                      {cursor.displayName}
+                    </text>
+                  </g>
+                ),
+            )}
           </svg>
           {reference && supportedImage && (
             <div className="reference-card">
@@ -524,8 +557,12 @@ export function HomePage() {
               <br />
             </>
           )}
-          {error ??
+          {(state.connection === 'ready' && game?.allowance?.remaining === 0
+            ? t('game.noMoves')
+            : null) ??
+            error ??
             state.issue ??
+            (remaining === 0 ? t('game.movesInBatch') : null) ??
             t(state.connection === 'ready' ? 'probe.ready' : 'live.connecting')}
         </div>
       </section>
@@ -553,7 +590,10 @@ export function HomePage() {
             if (selected) rotate(selected)
           }}
           disabled={
-            !selected || state.connection !== 'ready' || (!!game?.ownTurn && proven === null)
+            !selected ||
+            !canMove(selected) ||
+            state.connection !== 'ready' ||
+            (!!game?.ownTurn && proven === null)
           }
           aria-label={t('home.rotate')}
           title={t('home.rotate')}

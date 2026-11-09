@@ -64,6 +64,8 @@ export interface ContractTypes {
   SubscribedV2: SubscribedV2
   PreviewAcceptedV2: PreviewAcceptedV2
   ConfirmV2: ConfirmV2
+  CursorUpdate: CursorUpdate
+  CursorPresence: CursorPresence
 }
 export interface Point {
   x: number
@@ -546,4 +548,18 @@ export interface ConfirmV2 {
    */
   actions: [Action, ...Action[]]
   draftRevision: number
+}
+export interface CursorUpdate {
+  schemaVersion: 1
+  puzzleId: string
+  type: 'cursor.update'
+  position: Point | null
+}
+export interface CursorPresence {
+  schemaVersion: 1
+  puzzleId: string
+  type: 'cursor.presence'
+  cursorId: string
+  displayName: string
+  position: Point | null
 }

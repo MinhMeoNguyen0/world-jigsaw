@@ -23,6 +23,8 @@ import type {
   UndoResult,
   ShapeChange,
   ShapeResult,
+  CursorPresence,
+  Point,
 } from '@world-jigsaw/contracts'
 
 /** Provisional adapter for the private same-origin v1 service. It does not render a game. */
@@ -31,6 +33,8 @@ export interface LiveGameState {
   game: CurrentGame | null
   previews: Record<string, PreviewState>
   previewPending: boolean
+  previewRejection: PreviewRejected | null
+  cursors: Record<string, CursorPresence>
   pendingConfirm: Confirm | null
   pendingShape: ShapeChange | null
   unresolvedCommand: { puzzleId: string; commandId: string } | null
@@ -51,6 +55,7 @@ interface Flight {
   action: Action
   proof: DraftProof | null
   recover: boolean
+  resyncOnCollision: boolean
 }
 export interface LiveGameDependencies {
   fetch: typeof fetch
@@ -115,12 +120,15 @@ export class LiveGame {
     game: null,
     previews: {},
     previewPending: false,
+    previewRejection: null,
+    cursors: {},
     pendingConfirm: null,
     pendingShape: null,
     unresolvedCommand: null,
     issue: null,
   }
   private listeners = new Set<(state: LiveGameState) => void>()
+  private cursorTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private socket: Socket | null = null
   private epoch = 0
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
@@ -219,7 +227,13 @@ export class LiveGame {
       this.lostPreview = this.inFlight
     }
     this.inFlight = null
-    this.publish({ connection: 'connecting', previews: {}, previewPending: false })
+    this.publish({
+      connection: 'connecting',
+      previews: {},
+      cursors: {},
+      previewPending: false,
+      previewRejection: null,
+    })
     if (epoch !== this.epoch) return
     try {
       await this.request('/api/v1/session', 'Session', {})
@@ -271,6 +285,7 @@ export class LiveGame {
         this.stopSocket()
         this.publish({
           connection: 'disconnected',
+          cursors: {},
           previews: {},
           previewPending: false,
           issue: 'Connection lost; reconnect to resynchronize.',
@@ -303,10 +318,12 @@ export class LiveGame {
     }
     this.inFlight = null
     this.stopSocket()
-    this.publish({ connection: 'disconnected', previews: {}, previewPending: false })
+    this.publish({ connection: 'disconnected', previews: {}, cursors: {}, previewPending: false })
   }
 
   private stopSocket() {
+    for (const timer of this.cursorTimers.values()) clearTimeout(timer)
+    this.cursorTimers.clear()
     const socket = this.socket
     this.socket = null
     if (socket) {
@@ -317,7 +334,7 @@ export class LiveGame {
 
   private resync(reason: string) {
     const epoch = this.epoch
-    this.publish({ issue: reason, connection: 'resyncing', previews: {} })
+    this.publish({ issue: reason, connection: 'resyncing', previews: {}, cursors: {} })
     if (epoch !== this.epoch) return
     void this.connect().catch(() => {
       // connect() has already published the error.
@@ -541,6 +558,31 @@ export class LiveGame {
             ? 'Recovered draft is uncertain; cancel it before editing.'
             : null,
         })
+      } else if (type === 'cursor.presence') {
+        const cursor = checked<CursorPresence>('CursorPresence', message)
+        if (!sameId(cursor.puzzleId, game.snapshot.puzzleId)) return
+        const cursors = { ...this.state.cursors }
+        const previousTimer = this.cursorTimers.get(cursor.cursorId)
+        if (previousTimer) clearTimeout(previousTimer)
+        this.cursorTimers.delete(cursor.cursorId)
+        if (cursor.position) {
+          cursors[cursor.cursorId] = cursor
+          this.cursorTimers.set(
+            cursor.cursorId,
+            setTimeout(() => {
+              this.cursorTimers.delete(cursor.cursorId)
+              const current = Object.fromEntries(
+                Object.entries(this.state.cursors).filter(([id]) => id !== cursor.cursorId),
+              )
+              this.publish({ cursors: current })
+            }, 7000),
+          )
+        }
+        this.publish({
+          cursors: cursor.position
+            ? cursors
+            : Object.fromEntries(Object.entries(cursors).filter(([id]) => id !== cursor.cursorId)),
+        })
       } else if (type === 'preview.accepted') {
         const receipt = checked<PreviewAcceptedV2>('PreviewAcceptedV2', message)
         const turn = game.ownTurn
@@ -609,11 +651,26 @@ export class LiveGame {
           sameId(rejection.turnId, game.ownTurn.turnId) &&
           sameId(this.inFlight.actionId, rejection.actionId)
         ) {
+          const flight = this.inFlight
           this.inFlight = null
-          this.uncertainDraft = true
-          this.resync(
-            `Preview rejected: ${rejection.error.code}: ${rejection.error.message}; resynchronizing.`,
-          )
+          if (
+            rejection.error.code === 'INVALID_ACTION' &&
+            [
+              'Forbidden piece overlap',
+              'Group outside workspace',
+              'Cannot join selected groups',
+              'Not adjacent or outside snap tolerance',
+            ].includes(rejection.error.message) &&
+            !flight.recover &&
+            !flight.resyncOnCollision
+          ) {
+            this.publish({ previewPending: false, previewRejection: rejection })
+          } else {
+            this.uncertainDraft = true
+            this.resync(
+              `Preview rejected: ${rejection.error.code}: ${rejection.error.message}; resynchronizing.`,
+            )
+          }
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
       } else if (type === 'boardChanged') {
         const result = applyBoardChanged(
@@ -679,6 +736,23 @@ export class LiveGame {
     return this.state.game
   }
 
+  /** Cursor positions are ephemeral, optional hints in board coordinates. */
+  sendCursor(position: Point | null) {
+    if (this.state.connection !== 'ready' || !this.socket || !this.state.game) return
+    try {
+      this.socket.send(
+        JSON.stringify({
+          schemaVersion: 1,
+          type: 'cursor.update',
+          puzzleId: this.state.game.snapshot.puzzleId,
+          position,
+        }),
+      )
+    } catch {
+      // Presence is best effort and does not affect a game command.
+    }
+  }
+
   private turn(): Turn {
     const turn = this.readyGame().ownTurn
     if (!turn) throw new Error('No active turn')
@@ -721,7 +795,7 @@ export class LiveGame {
   }
 
   /** Keep the action ID returned by newAction when adjusting the same move. */
-  preview(action: Action) {
+  preview(action: Action, resyncOnCollision = false) {
     const turn = this.turn()
     if (
       this.state.pendingConfirm ||
@@ -747,8 +821,9 @@ export class LiveGame {
       action: structuredClone(action),
       proof: this.draftProof,
       recover: false,
+      resyncOnCollision,
     }
-    this.publish({ previewPending: true, issue: null })
+    this.publish({ previewPending: true, previewRejection: null, issue: null })
     if (epoch !== this.epoch || socket !== this.socket)
       throw new Error('Connection changed before preview')
     try {

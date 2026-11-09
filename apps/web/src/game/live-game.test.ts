@@ -800,6 +800,89 @@ describe('versioned subscription and preview receipts', () => {
     expect(next.sent).toHaveLength(2)
   })
 
+  it.each([
+    'Forbidden piece overlap',
+    'Group outside workspace',
+    'Cannot join selected groups',
+    'Not adjacent or outside snap tolerance',
+  ])('keeps the accepted draft and connection on placement rejection: %s', async (message) => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.client.preview(action)
+    socket.emit({
+      schemaVersion: 1,
+      type: 'preview.rejected',
+      puzzleId,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 1,
+      actionId: action.actionId,
+      error: {
+        code: 'INVALID_ACTION',
+        message,
+        requestId: action.actionId,
+        retryable: false,
+      },
+    })
+    expect(h.sockets).toHaveLength(1)
+    expect(h.client.getState().connection).toBe('ready')
+    expect(h.client.getState().previewPending).toBe(false)
+    expect(h.client.provenDraft()).toEqual([action])
+    h.client.preview(action)
+    socket.emit(accepted(2, 2))
+    expect(h.client.provenDraft()).toEqual([action])
+  })
+
+  it('still resynchronizes when an interrupted drag restoration is rejected', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.client.preview(action, true)
+    socket.emit({
+      schemaVersion: 1,
+      type: 'preview.rejected',
+      puzzleId,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 1,
+      actionId: action.actionId,
+      error: {
+        code: 'INVALID_ACTION',
+        message: 'Forbidden piece overlap',
+        requestId: action.actionId,
+        retryable: false,
+      },
+    })
+    expect(h.client.getState().connection).not.toBe('ready')
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+  })
+
+  it('shows and clears scoped remote cursor presence without touching the draft', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    const cursor = {
+      schemaVersion: 1,
+      type: 'cursor.presence',
+      puzzleId,
+      cursorId: action.actionId,
+      displayName: 'Player',
+      position: { x: 12, y: 34 },
+    }
+    socket.emit(cursor)
+    expect(h.client.getState().cursors[action.actionId]?.position).toEqual({ x: 12, y: 34 })
+    socket.emit({ ...cursor, position: null })
+    expect(h.client.getState().cursors).toEqual({})
+    expect(h.client.getState().connection).toBe('ready')
+  })
+
   it('preserves acknowledged work after a rejected confirmation', async () => {
     const h = harness()
     const socket = await h.start()

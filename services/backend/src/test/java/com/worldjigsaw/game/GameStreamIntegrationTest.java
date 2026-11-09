@@ -124,6 +124,28 @@ class GameStreamIntegrationTest {
     JsonNode presence = get(a, origin + "/api/v1/game/presence?puzzleId=" + puzzle, cookieA);
     assertSchema("PresenceSnapshot", presence);
     assertThat(presence.path("players").size()).isEqualTo(2);
+    ObjectNode cursor =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", "cursor.update")
+            .put("puzzleId", puzzle)
+            .putNull("position");
+    send(sa, cursor);
+    ObjectNode wrongPuzzle = cursor.deepCopy().put("puzzleId", UUID.randomUUID().toString());
+    send(sa, wrongPuzzle);
+    assertThat(la.next().path("error").path("code").asText()).isEqualTo("INVALID_REQUEST");
+    send(sb, cursor);
+    assertThat(la.next().path("position").isNull()).isTrue();
+    cursor.putObject("position").put("x", 120).put("y", 340);
+    send(sa, cursor);
+    JsonNode remoteCursor = lb.next();
+    assertSchema("CursorPresence", remoteCursor);
+    assertThat(remoteCursor.path("position").path("x").intValue()).isEqualTo(120);
+    assertThat(remoteCursor.path("position").path("y").intValue()).isEqualTo(340);
+    cursor.putNull("position");
+    send(sa, cursor);
+    assertThat(lb.next().path("position").isNull()).isTrue();
     ObjectNode unavailableSubscription = subscribe.deepCopy();
     unavailableSubscription.put("puzzleId", UUID.randomUUID().toString());
     send(sa, unavailableSubscription);
