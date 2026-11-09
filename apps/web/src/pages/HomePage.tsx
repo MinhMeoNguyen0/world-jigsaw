@@ -70,6 +70,8 @@ export function HomePage() {
     undoPending,
     pendingMoves,
     canMove,
+    summaryUnavailable,
+    retrySummary,
     proven,
     selected,
     error,
@@ -557,11 +559,12 @@ export function HomePage() {
               <br />
             </>
           )}
-          {(state.connection === 'ready' && game?.allowance?.remaining === 0
-            ? t('game.noMoves')
-            : null) ??
-            error ??
+          {error ??
             state.issue ??
+            (summaryUnavailable ? t('game.summaryUnavailable') : null) ??
+            (state.connection === 'ready' && game?.allowance?.remaining === 0
+              ? t('game.noMoves')
+              : null) ??
             (remaining === 0 ? t('game.movesInBatch') : null) ??
             t(state.connection === 'ready' ? 'probe.ready' : 'live.connecting')}
         </div>
@@ -583,6 +586,11 @@ export function HomePage() {
           {t('probe.reconnect')}
         </button>
       )}
+      {summaryUnavailable && (
+        <button className="reconnect" type="button" onClick={retrySummary}>
+          {t('game.retrySummary')}
+        </button>
+      )}
       <div className="canvas-controls" aria-label={t('home.canvasControls')}>
         <button
           type="button"
@@ -591,7 +599,7 @@ export function HomePage() {
           }}
           disabled={
             !selected ||
-            !canMove(selected) ||
+            !canMove ||
             state.connection !== 'ready' ||
             (!!game?.ownTurn && proven === null)
           }

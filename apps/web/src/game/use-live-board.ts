@@ -107,6 +107,8 @@ export function useLiveBoard() {
     [dragging, setDragging] = useState(false)
   const [camera, setCamera] = useState({ zoom: 1, x: 0, y: 0 })
   const [summary, setSummary] = useState<DraftSummary | null>(null)
+  const [summaryFailure, setSummaryFailure] = useState<string | null>(null)
+  const [summaryAttempt, setSummaryAttempt] = useState(0)
   const [imageLoad, setImageLoad] = useState<{ source: string; loaded: boolean } | null>(null)
   const board = useRef<SVGSVGElement>(null),
     pending = useRef<Pending | null>(null)
@@ -127,6 +129,7 @@ export function useLiveBoard() {
   const turnId = game?.ownTurn?.turnId
   const generation = game?.ownTurn?.generation
   const puzzleId = game?.snapshot.puzzleId
+  const summaryKey = JSON.stringify([turnId, generation, puzzleId, proofRevision])
   useEffect(() => {
     if (
       !turnId ||
@@ -155,27 +158,34 @@ export function useLiveBoard() {
           result.draftRevision !== proofRevision
         )
           throw new Error('Stale draft summary')
-        if (active) setSummary(result)
+        if (active) {
+          setSummary(result)
+          setSummaryFailure(null)
+        }
       })
       .catch(() => {
-        if (active) setSummary(null)
+        if (active) {
+          setSummary(null)
+          setSummaryFailure(summaryKey)
+        }
       })
     return () => {
       active = false
       controller.abort()
     }
-  }, [turnId, generation, puzzleId, proofRevision, state.connection])
+  }, [turnId, generation, puzzleId, proofRevision, state.connection, summaryKey, summaryAttempt])
   const pendingMoves = !turnId
     ? 0
     : summary?.turnId.toLowerCase() === turnId.toLowerCase() &&
+        summary.puzzleId.toLowerCase() === puzzleId?.toLowerCase() &&
         summary.generation === generation &&
         summary.draftRevision === proofRevision
       ? summary.pendingMoves
       : null
   const remaining =
     game?.allowance && pendingMoves !== null ? game.allowance.remaining - pendingMoves : null
-  const canMove = (group: Group) =>
-    canMoveGroup(game?.allowance?.remaining ?? null, pendingMoves, group, actions)
+  const canMove = canMoveGroup(game?.allowance?.remaining ?? null, pendingMoves)
+  const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
   const previews = Object.values(state.previews).flatMap((turn) =>
     turn.closed ? [] : Object.values(turn.actions),
   )
@@ -389,7 +399,7 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
-    if (!canMove(group)) return
+    if (!canMove) return
     const p = point(event.clientX, event.clientY)
     if (!p) return
     event.preventDefault()
@@ -501,7 +511,7 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
-    if (!canMove(group)) return
+    if (!canMove) return
     const piece = pieceMap.get(group.pieceIds[0].toLowerCase())
     if (!piece) return
     const current = pending.current
@@ -712,6 +722,11 @@ export function useLiveBoard() {
     pendingMoves,
     remaining,
     canMove,
+    summaryUnavailable,
+    retrySummary: () => {
+      setSummaryFailure(null)
+      setSummaryAttempt((attempt) => attempt + 1)
+    },
     proven,
     selected,
     setSelected,
