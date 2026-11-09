@@ -7,6 +7,12 @@ const fixture = JSON.parse(
     'utf8',
   ),
 )
+const balanced = JSON.parse(
+  await readFile(
+    new URL('../../../packages/generator/fixtures/hoi-an-balanced-60.json', import.meta.url),
+    'utf8',
+  ),
+)
 const ids = fixture.snapshot.groups.slice(0, 5).map((g) => g.groupId)
 const pieces = fixture.snapshot.groups.slice(0, 5).map((g) => g.pieceIds[0])
 const origin = new URL(process.env.WORLD_JIGSAW_TEST_ORIGIN ?? 'http://127.0.0.1:5173')
@@ -88,6 +94,26 @@ async function dragTo(page, groupId, pieceId, target, hold = false, preview = fa
 try {
   await ready(a)
   await ready(b)
+  const zoomIn = a.getByRole('button', { name: 'Zoom in' })
+  const zoomOut = a.getByRole('button', { name: 'Zoom out' })
+  const fit = a.getByRole('button', { name: 'Fit whole canvas' })
+  for (let i = 0; i < 10 && (await zoomIn.isEnabled()); i++) await zoomIn.click()
+  assert.equal(await zoomIn.isDisabled(), true)
+  const pictureWidth = await a.locator('[data-picture-overlay]').evaluate((image) => {
+    return Number(image.getAttribute('width')) * image.getScreenCTM().a
+  })
+  const oldWorkspace = balanced.definition.workspace
+  const oldScale = Math.min(
+    1280 / (oldWorkspace.max.x - oldWorkspace.min.x),
+    599 / (oldWorkspace.max.y - oldWorkspace.min.y),
+  )
+  const oldPictureWidth =
+    (balanced.definition.imageBounds.max.x - balanced.definition.imageBounds.min.x) * oldScale * 6
+  assert.ok(pictureWidth > oldPictureWidth * 1.05, 'maximum zoom enlarges the picture')
+  await zoomOut.click()
+  assert.equal(await zoomIn.isEnabled(), true)
+  await fit.click()
+  assert.equal(await zoomOut.isDisabled(), true)
   const boardBox = await a.locator('svg.board').boundingBox()
   assert.ok(boardBox)
   await a.mouse.move(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2)

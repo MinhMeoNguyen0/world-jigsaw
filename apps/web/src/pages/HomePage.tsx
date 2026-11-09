@@ -7,6 +7,8 @@ import { matrix, useLiveBoard } from '../game/use-live-board.ts'
 import { t } from '../i18n/translate.ts'
 import './HomePage.css'
 
+const MAX_ZOOM = 7.2
+
 // The reviewed page's movable pill stays within the visible viewport.
 const clampPill = (position: { x: number; y: number }) => ({
   x: Math.max(0, Math.min(window.innerWidth - 250, position.x)),
@@ -192,7 +194,7 @@ export function HomePage() {
     const transform = selected?.transform ?? group?.transform
     if (factor > 1 && focusId) zoomFocus.current = focusId
     setCamera((current) => {
-      const zoom = Math.max(1, Math.min(6, current.zoom * factor))
+      const zoom = Math.max(1, Math.min(MAX_ZOOM, current.zoom * factor))
       if (factor > 1 && piece && transform && workspace) {
         const x = piece.solvedPosition.x + piece.referencePoint.x,
           y = piece.solvedPosition.y + piece.referencePoint.y
@@ -587,7 +589,7 @@ export function HomePage() {
           onClick={() => {
             zoomCanvas(1.8)
           }}
-          disabled={camera.zoom >= 6}
+          disabled={camera.zoom >= MAX_ZOOM}
           aria-label={t('home.zoomIn')}
           title={t('home.zoomIn')}
         >
