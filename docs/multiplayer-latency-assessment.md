@@ -1,5 +1,35 @@
 # Multiplayer latency assessment
 
+## Pointer coordinate reuse
+
+During an active drag, each pointer move previously converted the same screen position into board
+coordinates twice: once for the cursor and again for the drag. The handler now reuses the first
+result, while retrying the conversion for the drag if the first matrix lookup was unavailable.
+Panning, the movement threshold, release and interruption handling remain on their existing paths.
+This removes one matrix lookup and inversion per ordinary active pointer move; it does not establish
+a measurable or perceptible speedup. The earlier local frame measurements below did not identify
+coordinate conversion as a bottleneck, and no new input-to-paint or peer-delay measurements were
+made for this change.
+
+The focused hook-level tests check cursor and drag coordinates, a missing matrix and retry, pan,
+movement threshold, release and interrupted-drag recovery. They use mocked browser primitives and
+do not measure actual rendering or networking. Restoring the old duplicate conversion made the
+one-lookup assertion fail; that counterfactual verifies the removed work, not a frame-time benefit.
+An isolated two-browser profile is still needed to assess any impact on game feel.
+
+For this change, the focused Vitest file (three tests), targeted ESLint, web app TypeScript
+`--noEmit` check, and Prettier check of the changed files passed:
+
+```sh
+pnpm --filter @world-jigsaw/web exec vitest run src/game/use-live-board.test.tsx --maxWorkers=1
+pnpm --filter @world-jigsaw/web exec eslint src/game/use-live-board.test.tsx src/game/use-live-board.ts --max-warnings 0
+pnpm --filter @world-jigsaw/web exec tsc --noEmit --incremental false -p tsconfig.app.json
+pnpm exec prettier --check apps/web/src/game/use-live-board.ts apps/web/src/game/use-live-board.test.tsx docs/multiplayer-latency-assessment.md
+```
+
+The production frontend build passed before this change; it is not validation of the changed code.
+The full suite and two-player interaction remain unrun for this change.
+
 This is a loopback laboratory measurement of the private-local prototype, not a worldwide latency
 claim. The earlier [preview assessment](multiplayer-preview-assessment.md) identified a reconnect
 on the first Begin and removed a reconnect on a known collision; it did not measure frame times.
@@ -85,6 +115,28 @@ receive timing, and a bounded JFR profile for server call stacks. Repeat across 
 real pointer input, devices, and network conditions before drawing broader conclusions.
 
 ## Alternatives and boundaries
+
+Many games display an immediate local prediction while the server remains authoritative and reconcile
+when they disagree. This game's drag ghost already hides network and server wait for the mover; a
+peer sees only accepted previews. Interpolating remote positions could make irregular updates look
+smoother, but introduces display delay, and extrapolation can be wrong around collisions
+([client prediction](https://gafferongames.com/post/what_every_programmer_needs_to_know_about_game_networking/),
+[snapshot interpolation](https://gafferongames.com/post/snapshot_interpolation/)). The first Begin
+also reconnects the initiating tab to keep same-identity tabs in sync; avoiding that interruption
+requires a safe replacement for the invalidation, not simply removing it.
+
+Chat uses a separate service, database, and HTTP POST/SSE connection; it verifies identity with the
+game service. It does not carry game previews, although both features can compete for browser,
+network, and host resources. WebRTC data channels can be configured for unordered or limited-retry
+messages, but require connection negotiation and may need a relay
+([data channels](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel),
+[connectivity](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity)).
+WebTransport offers reliable streams and unreliable datagrams over HTTP/3, with server and secure
+context requirements; datagrams may be lost or reordered
+([WebTransport](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport_API),
+[datagrams](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport/datagrams)). Neither
+alternative alone preserves this game's server-side validation and recovery guarantees. Evaluate
+transport changes only after measuring real network conditions and identifying a transport bottleneck.
 
 Caching stable SVG paths or reducing React rendering may help local frames, but these samples do
 not establish that as the dominant cost; React recommends measuring production builds and using
