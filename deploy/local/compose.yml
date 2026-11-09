@@ -1,0 +1,95 @@
+# A separate project from the development databases in the repository root.
+name: world-jigsaw-local-stack
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/local/web.Dockerfile
+    ports:
+      - "127.0.0.1:8088:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  game:
+    build:
+      context: ../..
+      dockerfile: deploy/local/game.Dockerfile
+    # The app services share loopback with the gateway, preserving the existing
+    # loopback-only identity and origin boundary. Only the gateway publishes a port.
+    network_mode: "service:web"
+    depends_on:
+      web:
+        condition: service_started
+      game-db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://game-db:5432/worldjigsaw
+      SPRING_DATASOURCE_USERNAME: worldjigsaw
+      SPRING_DATASOURCE_PASSWORD: worldjigsaw
+    volumes:
+      - writer-lock:/work
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  chat:
+    build:
+      context: ../..
+      dockerfile: deploy/local/chat.Dockerfile
+    network_mode: "service:web"
+    depends_on:
+      web:
+        condition: service_started
+      game:
+        condition: service_healthy
+      chat-db:
+        condition: service_healthy
+    environment:
+      CHAT_DATABASE_URL: jdbc:postgresql://chat-db:5432/worldjigsaw_chat
+      CHAT_DATABASE_USER: worldjigsaw_chat
+      CHAT_DATABASE_PASSWORD: worldjigsaw_chat
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  game-db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: worldjigsaw
+      POSTGRES_USER: worldjigsaw
+      POSTGRES_PASSWORD: worldjigsaw
+    volumes:
+      - game-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worldjigsaw -d worldjigsaw"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chat-db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: worldjigsaw_chat
+      POSTGRES_USER: worldjigsaw_chat
+      POSTGRES_PASSWORD: worldjigsaw_chat
+    volumes:
+      - chat-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worldjigsaw_chat -d worldjigsaw_chat"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  game-db-data:
+  chat-db-data:
+  writer-lock:
