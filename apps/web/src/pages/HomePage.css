@@ -54,7 +54,7 @@ input:focus-visible,
   top: 0;
   left: 0;
   right: 0;
-  height: 68px;
+  height: 60px;
   padding: 0 28px;
   display: flex;
   align-items: center;
@@ -121,7 +121,7 @@ input:focus-visible,
 .board-wrap::before {
   content: '';
   position: absolute;
-  inset: 76px 10px 61px;
+  inset: 66px 10px 53px;
   border: 1px solid #b1a38c;
   border-radius: 10px;
   background: #e8e0d2ad;
@@ -159,7 +159,7 @@ input:focus-visible,
   position: absolute;
   right: 12px;
   top: 80px;
-  width: 150px;
+  width: 180px;
   padding: 6px;
   background: #fff;
   border-radius: 4px;
@@ -260,7 +260,7 @@ input:focus-visible,
 .footer {
   position: absolute;
   bottom: 0;
-  height: 53px;
+  height: 47px;
   left: 0;
   right: 0;
   padding: 0 25px;
@@ -525,7 +525,7 @@ input:focus-visible,
 }
 @media (max-width: 700px) {
   .topbar {
-    height: 58px;
+    height: 52px;
     padding: 0 14px;
   }
   .brand h1 {
@@ -546,7 +546,7 @@ input:focus-visible,
   }
   .reference-card {
     top: 68px;
-    width: 110px;
+    width: 135px;
   }
   .feedback {
     top: 64px;
@@ -590,7 +590,7 @@ input:focus-visible,
   }
   .reference-card {
     top: 52px;
-    width: 90px;
+    width: 110px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -644,43 +644,9 @@ input:focus-visible,
 .overlay-toggle span {
   font-size: 17px;
 }
-.shape-settings {
-  position: absolute;
-  z-index: 9;
-  top: 76px;
-  right: 14px;
-  display: grid;
-  gap: 14px;
-  width: 240px;
-  padding: 16px;
-  border: 1px solid #d2d5cb;
-  border-radius: 12px;
-  background: #fbfbf6;
-  box-shadow: 0 8px 24px #58615033;
-  font-size: 12px;
-}
-.shape-setting {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 7px 12px;
-}
-.shape-settings input {
-  grid-column: 1 / -1;
-  width: 100%;
-  margin: 0;
-  accent-color: #718a77;
-}
-.shape-settings output {
-  color: #718a77;
-  font-variant-numeric: tabular-nums;
-}
 @media (max-width: 700px) {
   .board-wrap::before {
-    top: 64px;
-  }
-  .shape-settings {
-    top: 64px;
+    top: 58px;
   }
 }
 @media (max-height: 500px) {
@@ -692,9 +658,6 @@ input:focus-visible,
   .board-wrap::before {
     top: 54px;
     bottom: 50px;
-  }
-  .shape-settings {
-    top: 54px;
   }
 }
 .board.is-zoomed {
@@ -847,13 +810,13 @@ input:focus-visible,
 /* Keep the shared canvas between the reviewed header and footer at every viewport. */
 .board {
   position: absolute;
-  top: 68px;
-  height: calc(100% - 121px);
+  top: 60px;
+  height: calc(100% - 107px);
 }
 @media (max-width: 700px) {
   .board {
-    top: 58px;
-    height: calc(100% - 111px);
+    top: 52px;
+    height: calc(100% - 99px);
   }
 }
 @media (max-height: 500px) {
@@ -867,20 +830,4 @@ input:focus-visible,
   top: 80px;
   right: 24px;
   z-index: 12;
-}
-
-.shape-settings p {
-  margin: 0;
-  color: #72766e;
-  line-height: 1.4;
-}
-.shape-apply {
-  min-height: 36px;
-  border: 0;
-  border-radius: 20px;
-  background: #718a77;
-  color: #fff;
-}
-.shape-apply:disabled {
-  opacity: 0.45;
 }

@@ -50,7 +50,7 @@ pnpm dev        # start the web app at http://localhost:5173
 For a playable private-local game, start the game and chat services below, import a puzzle for
 the current UTC day, and open `http://127.0.0.1:5173` in each browser. The development server
 proxies game and chat requests to their separate loopback services; it is not a public gateway.
-Use the same literal loopback host for the page throughout a session. The Hoi An-inspired fixture is generated artwork, not a photograph; see its [provenance note](apps/web/public/hoi-an-generated.NOTICE.md). Other images require appropriate rights before distribution.
+Use the same literal loopback host for the page throughout a session. The Hoi An fixture identifier displays the Sao Beach image by Massimo Ripani, sourced from [Fine Art America](https://fineartamerica.com/featured/sao-beach-phu-quoc-vietnam-massimo-ripani.html?product=puzzle). Image rights must be confirmed before distribution.
 
 Players on the same puzzle can see each other's pointers while they are over the board. Pointers
 are temporary and may disappear when updates stop. If no moves remain, dragging and rotation are
@@ -150,12 +150,8 @@ saved board. Lost Confirm replies can be retried with the same command ID and pa
 `GET /api/v1/game/commands/{commandId}`; an unknown old-puzzle command can supply `?puzzleId=`.
 Receipts and identifier tombstones are retained indefinitely in this local prototype.
 
-Shape settings change the current shared definition. The service rejects a change while any player
-has an active draft, validates the new contours against the whole saved board, records the old and
-new definition versions, and asks connected clients to resynchronize. A lost reply can be retried
-with the same request ID and payload. Shape editing is available for supported generated grid
-definitions; unsupported legacy definitions remain readable. The presence endpoint reports live
-game subscriptions, and the turn summary reports server-calculated pending move charges.
+Puzzle shapes are fixed by the imported shared definition and cannot be changed by players.
+The presence endpoint reports live game subscriptions, and the turn summary reports server-calculated pending move charges.
 
 The [turn wire note](services/backend/TURN-WIRE.md) explains the local v1 join request and outgoing
 sequence semantics. The [geometry note](services/backend/LOCAL-GEOMETRY.md) documents provisional
@@ -192,9 +188,7 @@ collision or game rules; generated content needs further validation before produ
 
 With a fresh disposable database and the Hoi An fixture imported, start the game, chat and web
 services and run `pnpm --filter @world-jigsaw/web test:integration` to exercise two independent
-browser sessions. Run `pnpm --filter @world-jigsaw/web test:shape-integration` separately against a
-fresh import to exercise shared shape changes, recovery and races. Both tests change the imported
-board; do not point either at data you want to keep.
+browser sessions. This test changes the imported board; do not point it at data you want to keep.
 The reviewed collision-pair regression uses a separate disposable database imported with
 `hoi-an-surround-60.json` and runs with `pnpm --filter @world-jigsaw/web test:collision-integration`.
 

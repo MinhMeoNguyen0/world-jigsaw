@@ -12,8 +12,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:integration": "node integration/live-multiplayer.mjs",
-    "test:collision-integration": "node integration/collision-review.mjs",
-    "test:shape-integration": "node integration/shape-multiplayer.mjs && node integration/shape-recovery.mjs && node integration/shape-race.mjs"
+    "test:collision-integration": "node integration/collision-review.mjs"
   },
   "dependencies": {
     "@world-jigsaw/contracts": "workspace:*",

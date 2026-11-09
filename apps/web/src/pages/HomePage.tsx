@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react'
 import type { Rect } from '@world-jigsaw/contracts'
 import { ChatPanel } from '../chat/ChatPanel.tsx'
 import { PlayerStrip } from '../game/PlayerStrip.tsx'
-import { ShapePanel } from '../game/ShapePanel.tsx'
 import { matrix, useLiveBoard } from '../game/use-live-board.ts'
 import { t } from '../i18n/translate.ts'
 import './HomePage.css'
@@ -80,8 +79,6 @@ export function HomePage() {
     setOverlay,
     reference,
     setReference,
-    shapeOpen,
-    setShapeOpen,
     ghost,
     dragging,
     board,
@@ -113,12 +110,11 @@ export function HomePage() {
     cancel,
     undo,
     confirm,
-    changeShape,
   } = useLiveBoard()
   const [time, setTime] = useState('—')
   const [pillPosition, setPillPosition] = useState(() => ({
     x: Math.max(0, window.innerWidth / 2 - 125),
-    y: Math.max(55, window.innerHeight - (window.innerHeight <= 500 ? 44 : 53) - 70),
+    y: Math.max(55, window.innerHeight - (window.innerHeight <= 500 ? 44 : 47) - 70),
   }))
   const pillDrag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const pillMoved = useRef(false)
@@ -148,7 +144,7 @@ export function HomePage() {
           ? clampPill(position)
           : clampPill({
               x: window.innerWidth / 2 - 125,
-              y: window.innerHeight - (window.innerHeight <= 500 ? 44 : 53) - 70,
+              y: window.innerHeight - (window.innerHeight <= 500 ? 44 : 47) - 70,
             }),
       )
       setCamera({ zoom: 1, x: 0, y: 0 })
@@ -284,33 +280,8 @@ export function HomePage() {
           >
             {t('home.view')}
           </button>
-          <button
-            className="header-action shape-button"
-            type="button"
-            aria-label={t('home.shapeSettings')}
-            aria-expanded={shapeOpen}
-            onClick={() => {
-              setShapeOpen(!shapeOpen)
-            }}
-          >
-            {t('home.shapeShort')}
-          </button>
         </div>
       </header>
-      {shapeOpen && game && (
-        <ShapePanel
-          key={`${game.snapshot.puzzleId}:${String(game.definition.definitionVersion)}`}
-          shape={game.definition.shape}
-          disabled={
-            state.connection !== 'ready' ||
-            !!game.ownTurn ||
-            !!state.pendingConfirm ||
-            !!state.pendingShape ||
-            !!state.unresolvedCommand
-          }
-          apply={changeShape}
-        />
-      )}
       <section className="workspace">
         <div className="board-wrap">
           <svg
@@ -614,7 +585,7 @@ export function HomePage() {
         <button
           type="button"
           onClick={() => {
-            zoomCanvas(1.6)
+            zoomCanvas(1.8)
           }}
           disabled={camera.zoom >= 6}
           aria-label={t('home.zoomIn')}
@@ -625,7 +596,7 @@ export function HomePage() {
         <button
           type="button"
           onClick={() => {
-            zoomCanvas(1 / 1.6)
+            zoomCanvas(1 / 1.8)
           }}
           disabled={camera.zoom <= 1}
           aria-label={t('home.zoomOut')}
@@ -733,18 +704,6 @@ export function HomePage() {
           {t('symbol.confirm')}
         </button>
       </div>
-      {state.pendingShape && (
-        <div className="recovery-controls">
-          <button
-            type="button"
-            onClick={() => {
-              changeShape()
-            }}
-          >
-            {t('game.retryShape')}
-          </button>
-        </div>
-      )}
       {state.pendingConfirm && (
         <div className="recovery-controls">
           <button type="button" onClick={confirm}>
