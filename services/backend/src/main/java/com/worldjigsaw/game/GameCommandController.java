@@ -59,12 +59,6 @@ class GameCommandController {
     return response(game.begin(subject, wire.parse("BeginTurn", body(request))));
   }
 
-  @PostMapping("/api/v1/game/shape")
-  ResponseEntity<Map<?, ?>> shape(HttpServletRequest request) throws IOException {
-    UUID subject = subject(request, true);
-    return response(game.changeShape(subject, wire.parse("ShapeChange", body(request))));
-  }
-
   @GetMapping("/api/v1/game/turns/{turnId}/summary")
   ResponseEntity<Map<?, ?>> summary(@PathVariable UUID turnId, HttpServletRequest request) {
     return response(game.draftSummary(subject(request, false), turnId));

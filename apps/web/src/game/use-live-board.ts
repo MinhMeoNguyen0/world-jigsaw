@@ -11,7 +11,6 @@ import type {
   DraftSummary,
   Group,
   Piece,
-  ShapeChange,
   Transform,
 } from '@world-jigsaw/contracts'
 
@@ -70,7 +69,7 @@ function turnAt(tr: Transform, center: Point): Transform {
 
 export function imageSource(value: string, origin: string): string | null {
   if (value === 'fixture://original-landscape') return '/original-landscape.svg'
-  if (value === 'fixture://hoi-an-generated') return '/hoi-an-generated.png'
+  if (value === 'fixture://hoi-an-generated') return '/sao-beach.jpg'
   try {
     if (/%|\\/.test(value) || /(^|\/)\.{1,2}(\/|$)/.test(value)) return null
     const url = new URL(value, origin)
@@ -100,7 +99,6 @@ export function useLiveBoard() {
   const cursorTimer = useRef<number | null>(null)
   const [overlay, setOverlay] = useState(true),
     [reference, setReference] = useState(false)
-  const [shapeOpen, setShapeOpen] = useState(false)
   const [selected, setSelected] = useState<Group | null>(null),
     [, setAccepted] = useState(false),
     [error, setError] = useState<string | null>(null)
@@ -618,9 +616,7 @@ export function useLiveBoard() {
       const saved = sessionStorage.getItem('world-jigsaw-pending-confirm')
       if (saved && !client.getState().pendingConfirm)
         client.restorePendingConfirm(JSON.parse(saved) as Confirm)
-      const savedShape = sessionStorage.getItem('world-jigsaw-pending-shape')
-      if (savedShape && !client.getState().pendingShape)
-        client.restorePendingShape(JSON.parse(savedShape) as ShapeChange)
+      sessionStorage.removeItem('world-jigsaw-pending-shape')
     } catch (e) {
       recoveryFailed.current = true
       queueMicrotask(() => {
@@ -633,9 +629,6 @@ export function useLiveBoard() {
       if (next.pendingConfirm)
         sessionStorage.setItem('world-jigsaw-pending-confirm', JSON.stringify(next.pendingConfirm))
       else if (!recoveryFailed.current) sessionStorage.removeItem('world-jigsaw-pending-confirm')
-      if (next.pendingShape)
-        sessionStorage.setItem('world-jigsaw-pending-shape', JSON.stringify(next.pendingShape))
-      else if (!recoveryFailed.current) sessionStorage.removeItem('world-jigsaw-pending-shape')
       if (next.connection !== 'ready' || next.issue || next.pendingConfirm) setAccepted(false)
       if (next.connection === 'ready' && !next.issue && !next.previewPending && !pending.current) {
         setAccepted((client.provenDraft()?.length ?? 0) > 0)
@@ -756,22 +749,6 @@ export function useLiveBoard() {
         setError(String(e))
       })
   }
-  const changeShape = (
-    values?: Pick<ShapeChange, 'tabDepthPermille' | 'tabWidthPermille' | 'edgeWavePermille'>,
-  ) => {
-    if (recoveryFailed.current) return
-    try {
-      if (state.pendingShape)
-        sessionStorage.setItem('world-jigsaw-pending-shape', JSON.stringify(state.pendingShape))
-    } catch (e) {
-      setError(String(e))
-      return
-    }
-    setError(null)
-    void client.changeShape(values).catch((e: unknown) => {
-      setError(String(e))
-    })
-  }
   return {
     state,
     client,
@@ -795,8 +772,6 @@ export function useLiveBoard() {
     setOverlay,
     reference,
     setReference,
-    shapeOpen,
-    setShapeOpen,
     ghost,
     dragging,
     board,
@@ -835,6 +810,5 @@ export function useLiveBoard() {
     cancel,
     undo,
     confirm,
-    changeShape,
   }
 }

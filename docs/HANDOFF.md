@@ -57,8 +57,7 @@ operational constraints, not application requirements.
 - Local loopback identity and service boundaries are prototypes. Public authentication, TLS/proxy
   setup, authorization, abuse controls, chat moderation and deployment security need design and review.
   Multi-host/high-availability operation is unsupported. Do not expose the local services publicly.
-- The generated Hoi An-inspired image is fictional, not a photograph; see its
-  [notice](../apps/web/public/hoi-an-generated.NOTICE.md). Review distribution rights before public use.
+- See the [README](../README.md#local-setup) for the current fixture image and distribution guidance.
 - Cursor updates are best effort and expire; reconnects and preview acknowledgement can be visible.
   Invalid placements preserve the last accepted preview; unsupported legacy arbitrary-angle boards
   remain readable but cannot be manipulated. The [latency assessment](multiplayer-latency-assessment.md)

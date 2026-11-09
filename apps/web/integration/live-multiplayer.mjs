@@ -3,6 +3,12 @@ import { readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 const fixture = JSON.parse(
   await readFile(
+    new URL('../../../packages/generator/fixtures/hoi-an-expanded-60.json', import.meta.url),
+    'utf8',
+  ),
+)
+const balanced = JSON.parse(
+  await readFile(
     new URL('../../../packages/generator/fixtures/hoi-an-balanced-60.json', import.meta.url),
     'utf8',
   ),
@@ -26,7 +32,7 @@ const current = await fetch(new URL('/api/v1/game/current', origin)).then((respo
 assert.equal(
   current.snapshot?.puzzleId,
   fixture.snapshot.puzzleId,
-  'Import the hoi-an-balanced-60 fixture into a disposable database',
+  'Import the hoi-an-expanded-60 fixture into a disposable database',
 )
 assert.equal(current.snapshot?.boardVersion, 0, 'A fresh, unmodified test board is required')
 const browser = await chromium.launch({ headless: true })
@@ -88,6 +94,26 @@ async function dragTo(page, groupId, pieceId, target, hold = false, preview = fa
 try {
   await ready(a)
   await ready(b)
+  const zoomIn = a.getByRole('button', { name: 'Zoom in' })
+  const zoomOut = a.getByRole('button', { name: 'Zoom out' })
+  const fit = a.getByRole('button', { name: 'Fit whole canvas' })
+  for (let i = 0; i < 10 && (await zoomIn.isEnabled()); i++) await zoomIn.click()
+  assert.equal(await zoomIn.isDisabled(), true)
+  const pictureWidth = await a.locator('[data-picture-overlay]').evaluate((image) => {
+    return Number(image.getAttribute('width')) * image.getScreenCTM().a
+  })
+  const oldWorkspace = balanced.definition.workspace
+  const oldScale = Math.min(
+    1280 / (oldWorkspace.max.x - oldWorkspace.min.x),
+    599 / (oldWorkspace.max.y - oldWorkspace.min.y),
+  )
+  const oldPictureWidth =
+    (balanced.definition.imageBounds.max.x - balanced.definition.imageBounds.min.x) * oldScale * 6
+  assert.ok(pictureWidth > oldPictureWidth * 1.05, 'maximum zoom enlarges the picture')
+  await zoomOut.click()
+  assert.equal(await zoomIn.isEnabled(), true)
+  await fit.click()
+  assert.equal(await zoomOut.isDisabled(), true)
   const boardBox = await a.locator('svg.board').boundingBox()
   assert.ok(boardBox)
   await a.mouse.move(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2)
@@ -432,7 +458,7 @@ try {
     displayName,
   )
   console.log('mounted chat delivered to peer')
-  await a.route('**/hoi-an-generated.png', (route) => route.abort())
+  await a.route('**/sao-beach.jpg', (route) => route.abort())
   await a.reload()
   await status(a).filter({ hasText: 'Puzzle image is unsupported or unavailable.' }).waitFor()
   await a.locator('[data-connection=ready]').waitFor()

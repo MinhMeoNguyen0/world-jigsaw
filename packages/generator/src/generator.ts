@@ -19,7 +19,7 @@ export interface Options {
   image: string
   definitionVersion?: number
   placedPieces?: number
-  layout?: 'tray' | 'surround' | 'balanced'
+  layout?: 'tray' | 'surround' | 'balanced' | 'expanded'
 }
 export interface GeneratedBoard {
   definition: Definition
@@ -28,6 +28,7 @@ export interface GeneratedBoard {
 const VERSION = 'world-jigsaw-grid-3'
 const SURROUND_VERSION = 'world-jigsaw-grid-6'
 const BALANCED_VERSION = 'world-jigsaw-grid-7'
+const EXPANDED_VERSION = 'world-jigsaw-grid-8'
 const digest = (s: string) => createHash('sha256').update(s).digest('hex')
 function uuid(s: string): string {
   const h = digest(s).slice(0, 32).split('')
@@ -119,9 +120,16 @@ function localSegments(segments: ContourSegment[], origin: Point): Edge['segment
 
 export function generate(options: Options): GeneratedBoard {
   const { seed, columns, rows, width, height, image } = options
-  const surroundLayout = options.layout === 'surround' || options.layout === 'balanced'
-  const generatorVersion =
-    options.layout === 'balanced' ? BALANCED_VERSION : surroundLayout ? SURROUND_VERSION : VERSION
+  const layout = options.layout ?? 'expanded'
+  const expanded = layout === 'expanded'
+  const surroundLayout = layout !== 'tray'
+  const generatorVersion = expanded
+    ? EXPANDED_VERSION
+    : layout === 'balanced'
+      ? BALANCED_VERSION
+      : surroundLayout
+        ? SURROUND_VERSION
+        : VERSION
   const version = options.definitionVersion ?? 1,
     placed = options.placedPieces ?? 0
   if (
@@ -216,12 +224,12 @@ export function generate(options: Options): GeneratedBoard {
   const surround: Point[] = []
   const step = Math.ceil(Math.max(width / columns, height / rows) * 1.8)
   // Match the reviewed inset picture: a separate central play surface surrounds it.
-  const marginX = Math.round(width * 0.35),
-    marginY = Math.round(height * 0.3666666667)
+  const marginX = Math.round(width * (expanded ? 0.65 : 0.35)),
+    marginY = Math.round(height * (expanded ? 0.65 : 0.3666666667))
   const halfX = Math.ceil((width / 2 + marginX) / step),
     halfY = Math.max(
       Math.ceil((height / 2 + marginY) / step),
-      options.layout === 'balanced' ? halfX : 0,
+      layout === 'balanced' || expanded ? halfX : 0,
     )
   let ring = 1
   while (surround.length < pieces.length) {

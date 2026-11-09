@@ -7,6 +7,7 @@ describe('puzzle image sources', () => {
     expect(imageSource('/images/imported.png', origin)).toBe('/images/imported.png')
     expect(imageSource(`${origin}/art/custom.webp`, origin)).toBe('/art/custom.webp')
     expect(imageSource('fixture://original-landscape', origin)).toBe('/original-landscape.svg')
+    expect(imageSource('fixture://hoi-an-generated', origin)).toBe('/sao-beach.jpg')
   })
   it.each([
     'https://example.com/a.png',

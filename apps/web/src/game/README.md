@@ -10,11 +10,7 @@ Send another preview only after `previewPending` clears. The server broadcasts p
 
 `confirm()` creates a command only after the latest submission is acknowledged, and sends the exact accepted action set and revision. A concurrent same-session mutation makes the server reject a stale confirmation. A successful response is durable. Retain `pendingConfirm` for an unknown response and retry the same payload or use `resolveConfirm()`; pending, unknown, and expired do not mean success. A consumer that needs reload recovery must persist `pendingConfirm` and call `restorePendingConfirm()` before allowing edits. Clear it only after a known confirmed or rejected result. `cancel()` retries the same request ID after an ambiguous response. Cancel can report another tab's confirming command; use `resolveCancelCommand()` before editing. Confirmed allowance comes from the service, not local move counting.
 
-`changeShape()` sends versioned shared shape settings only when the local draft is settled. Persist
-`pendingShape` and restore it with `restorePendingShape()` after a reload when the response is
-uncertain; retry the same payload until its result is known. The service serializes shape changes
-with drafts and resynchronizes clients after a successful update. A revision-correlated turn summary
-provides pending charges, charged action IDs, and a movement charge bound for each draft action.
+The player interface does not expose shape changes; the imported definition remains authoritative. A revision-correlated turn summary provides pending charges, charged action IDs, and a movement charge bound for each draft action.
 
 The v2 stream extension is negotiated by `subscribe.v2`; existing v1 messages remain closed and continue to work. Identity changes invalidate affected v2 subscriptions, which reconnect for a fresh atomic handoff. Unsupported or regressing messages and board event gaps also trigger resynchronization. Image rights and the provisional geometry policy still require attention before release.
 
