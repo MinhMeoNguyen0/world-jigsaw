@@ -98,7 +98,9 @@ try {
   await b.locator('[data-preview-action]').first().waitFor({ state: 'attached', timeout: 20000 })
   await a.locator('[data-preview-pending=false]').waitFor()
   await a.locator('svg.board').dispatchEvent('contextmenu', { button: 2 })
-  assert.ok((await a.locator('[data-local-ghost]').getAttribute('transform')).includes('rotate(90)'))
+  assert.ok(
+    (await a.locator('[data-local-ghost]').getAttribute('transform')).includes('rotate(90)'),
+  )
   console.log('peer saw preview while pointer held')
   await a.mouse.up()
   await settle(a, 1)
@@ -106,10 +108,13 @@ try {
   await b.locator(`[data-preview-piece-ids="${pieces[1]}"]`).waitFor({ state: 'attached' })
   await a.locator('svg.board').dispatchEvent('pointercancel', { pointerId: 1 })
   await a.mouse.up()
-  await a.waitForFunction((id) =>
-    document.querySelector('.pill-count')?.textContent?.includes('1 pending') &&
-    !document.querySelector('.pill-confirm')?.disabled &&
-    !document.querySelector(`[data-preview-piece-ids="${id}"]`), pieces[1])
+  await a.waitForFunction(
+    (id) =>
+      document.querySelector('.pill-count')?.textContent?.includes('1 pending') &&
+      !document.querySelector('.pill-confirm')?.disabled &&
+      !document.querySelector(`[data-preview-piece-ids="${id}"]`),
+    pieces[1],
+  )
   await b.locator(`[data-preview-piece-ids="${pieces[1]}"]`).waitFor({ state: 'detached' })
   assert.ok(await b.locator(`[data-preview-piece-ids="${pieces[0]}"]`).count())
   await a.getByRole('button', { name: 'Cancel batch' }).click()
@@ -120,13 +125,18 @@ try {
   let undoAttempts = 0
   const rejectUndo = async (route) => {
     undoAttempts++
-    await route.fulfill({ status: 409, json: {
-      schemaVersion: 1,
-      error: {
-        code: 'INVALID_ACTION', message: 'Undo would cause forbidden piece overlap',
-        requestId: '00000000-0000-4000-8000-000000000099', retryable: false,
+    await route.fulfill({
+      status: 409,
+      json: {
+        schemaVersion: 1,
+        error: {
+          code: 'INVALID_ACTION',
+          message: 'Undo would cause forbidden piece overlap',
+          requestId: '00000000-0000-4000-8000-000000000099',
+          retryable: false,
+        },
       },
-    } })
+    })
   }
   await a.route('**/api/v1/game/turns/*/undo', rejectUndo)
   await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 }, true)
@@ -156,12 +166,19 @@ try {
   assert.equal(await a.getByRole('button', { name: 'Rotate selected piece' }).isDisabled(), true)
   await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 })
   await settle(a, 1)
-  const beforeInterruptedMove = await b.locator(`[data-preview-piece-ids="${pieces[0]}"]`).getAttribute('transform')
+  const beforeInterruptedMove = await b
+    .locator(`[data-preview-piece-ids="${pieces[0]}"]`)
+    .getAttribute('transform')
   await dragTo(a, ids[0], pieces[0], { x: 800000, y: 200000 }, true, true)
-  await b.waitForFunction(({ piece, before }) => {
-    const value = document.querySelector(`[data-preview-piece-ids="${piece}"]`)?.getAttribute('transform')
-    return value && value !== before
-  }, { piece: pieces[0], before: beforeInterruptedMove })
+  await b.waitForFunction(
+    ({ piece, before }) => {
+      const value = document
+        .querySelector(`[data-preview-piece-ids="${piece}"]`)
+        ?.getAttribute('transform')
+      return value && value !== before
+    },
+    { piece: pieces[0], before: beforeInterruptedMove },
+  )
   await dragTo(b, ids[1], pieces[1], { x: 500000, y: 200000 })
   await settle(b, 1)
   await a.locator('svg.board').dispatchEvent('pointercancel', { pointerId: 1 })
@@ -202,7 +219,9 @@ try {
     )
     await b.getByRole('button', { name: 'Undo last change' }).click()
     assert.equal((await sixthUndo).status(), 200)
-    await a.locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`).waitFor({ state: 'detached' })
+    await a
+      .locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`)
+      .waitFor({ state: 'detached' })
     await b.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
     await settle(b, 5)
   }
@@ -238,9 +257,15 @@ try {
   assert.ok(match)
   const nearTransform = `translate(${Number(match[1]) + 5000} ${match[2]})`
   await dragTo(a, ids[0], pieces[0], { groupId: ids[1], offsetX: 5000 }, true)
-  await b.waitForFunction(({ piece, transform }) =>
-    document.querySelector(`[data-preview-piece-ids="${piece}"]`)?.getAttribute('transform')?.includes(transform),
-    { piece: pieces[0], transform: nearTransform }, { timeout: 20000 })
+  await b.waitForFunction(
+    ({ piece, transform }) =>
+      document
+        .querySelector(`[data-preview-piece-ids="${piece}"]`)
+        ?.getAttribute('transform')
+        ?.includes(transform),
+    { piece: pieces[0], transform: nearTransform },
+    { timeout: 20000 },
+  )
   await a.mouse.up()
   await settle(a, 1)
   const peerPreview = b.locator('[data-preview-piece-ids]')
@@ -315,18 +340,26 @@ try {
   console.log('all four initial orientations rotated and canceled')
   await a.getByRole('button', { name: /Live chat/ }).click()
   await b.getByRole('button', { name: /Live chat/ }).click()
-  const displayName = await a.evaluate(async () => (await (await fetch('/api/v1/session', { method: 'POST' })).json()).displayName)
+  const displayName = await a.evaluate(
+    async () => (await (await fetch('/api/v1/session', { method: 'POST' })).json()).displayName,
+  )
   await a.getByRole('textbox', { name: 'Message' }).fill('A real shared message')
   await a.getByRole('button', { name: 'Send', exact: true }).click()
   await b.getByText('A real shared message').waitFor()
-  assert.equal(await b.getByText('A real shared message').locator('..').locator('strong').textContent(), displayName)
+  assert.equal(
+    await b.getByText('A real shared message').locator('..').locator('strong').textContent(),
+    displayName,
+  )
   await a.reload()
   await a.locator('[data-connection=ready]').waitFor()
   await a.getByRole('button', { name: /Live chat/ }).click()
   await a.getByRole('textbox', { name: 'Message' }).fill('Same player after reload')
   await a.getByRole('button', { name: 'Send', exact: true }).click()
   await b.getByText('Same player after reload').waitFor()
-  assert.equal(await b.getByText('Same player after reload').locator('..').locator('strong').textContent(), displayName)
+  assert.equal(
+    await b.getByText('Same player after reload').locator('..').locator('strong').textContent(),
+    displayName,
+  )
   console.log('mounted chat delivered to peer')
   await a.route('**/hoi-an-generated.png', (route) => route.abort())
   await a.reload()

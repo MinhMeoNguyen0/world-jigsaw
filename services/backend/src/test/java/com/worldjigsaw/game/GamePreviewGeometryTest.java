@@ -113,32 +113,70 @@ class GamePreviewGeometryTest {
       UUID a = UUID.randomUUID(), b = UUID.randomUUID();
       int sequence = 0;
       if (overlap)
-        fixture.game().preview(subject, turn.turnId(), 0, ++sequence,
-            squareAction(UUID.randomUUID(), fixture, 2, 400000, 0, false));
-      fixture.game().preview(subject, turn.turnId(), 0, ++sequence, squareAction(a, fixture, 0, 0, 0, false));
-      fixture.game().preview(subject, turn.turnId(), 0, ++sequence, squareAction(b, fixture, 1, 0, 0, false));
-      var joined = fixture.game().preview(subject, turn.turnId(), 0, ++sequence,
-          squareAction(a, fixture, 0, 0, 0, true));
-      UUID joinedId = joined.previews().stream().map(PreviewGeneration.Preview::action)
-          .filter(action -> action.actionId().equals(a)).findFirst().orElseThrow().targetId();
+        fixture
+            .game()
+            .preview(
+                subject,
+                turn.turnId(),
+                0,
+                ++sequence,
+                squareAction(UUID.randomUUID(), fixture, 2, 400000, 0, false));
+      fixture
+          .game()
+          .preview(subject, turn.turnId(), 0, ++sequence, squareAction(a, fixture, 0, 0, 0, false));
+      fixture
+          .game()
+          .preview(subject, turn.turnId(), 0, ++sequence, squareAction(b, fixture, 1, 0, 0, false));
+      var joined =
+          fixture
+              .game()
+              .preview(
+                  subject, turn.turnId(), 0, ++sequence, squareAction(a, fixture, 0, 0, 0, true));
+      UUID joinedId =
+          joined.previews().stream()
+              .map(PreviewGeneration.Preview::action)
+              .filter(action -> action.actionId().equals(a))
+              .findFirst()
+              .orElseThrow()
+              .targetId();
       int distance = overlap ? 100000 : -100000;
-      var moved = new PreviewGeneration.Action(a, "piece", joinedId,
-          List.of(fixture.pieces()[0], fixture.pieces()[1]),
-          List.of(new PreviewGeneration.BaseRevision(fixture.groups()[0], 0),
-              new PreviewGeneration.BaseRevision(fixture.groups()[1], 0)),
-          new PreviewGeneration.Transform(new PreviewGeneration.Point(distance, 0), 0));
+      var moved =
+          new PreviewGeneration.Action(
+              a,
+              "piece",
+              joinedId,
+              List.of(fixture.pieces()[0], fixture.pieces()[1]),
+              List.of(
+                  new PreviewGeneration.BaseRevision(fixture.groups()[0], 0),
+                  new PreviewGeneration.BaseRevision(fixture.groups()[1], 0)),
+              new PreviewGeneration.Transform(new PreviewGeneration.Point(distance, 0), 0));
       fixture.game().preview(subject, turn.turnId(), 0, ++sequence, moved);
-      ObjectNode undo = new ObjectMapper().createObjectNode().put("schemaVersion", 1)
-          .put("puzzleId", fixture.puzzle().toString()).put("turnId", turn.turnId().toString())
-          .put("requestId", UUID.randomUUID().toString()).put("turnRevision", 0)
-          .put("generation", 0).put("draftRevision", sequence).put("actionId", b.toString());
+      ObjectNode undo =
+          new ObjectMapper()
+              .createObjectNode()
+              .put("schemaVersion", 1)
+              .put("puzzleId", fixture.puzzle().toString())
+              .put("turnId", turn.turnId().toString())
+              .put("requestId", UUID.randomUUID().toString())
+              .put("turnRevision", 0)
+              .put("generation", 0)
+              .put("draftRevision", sequence)
+              .put("actionId", b.toString());
       if (overlap) {
         assertThatThrownBy(() -> fixture.game().undo(subject, undo))
-            .isInstanceOf(DraftRules.RuleError.class).hasMessageContaining("overlap");
+            .isInstanceOf(DraftRules.RuleError.class)
+            .hasMessageContaining("overlap");
         assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).hasSize(3);
       } else {
         JsonNode result = fixture.game().undo(subject, undo);
-        assertThat(result.path("actions").get(0).path("intendedTransform").path("translation").path("x").intValue())
+        assertThat(
+                result
+                    .path("actions")
+                    .get(0)
+                    .path("intendedTransform")
+                    .path("translation")
+                    .path("x")
+                    .intValue())
             .isEqualTo(distance);
         assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).hasSize(1);
       }

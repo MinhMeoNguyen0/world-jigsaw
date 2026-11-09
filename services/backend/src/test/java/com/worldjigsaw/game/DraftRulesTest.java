@@ -111,17 +111,22 @@ class DraftRulesTest {
   @Test
   void undoJoinedActionRestoresOtherDraftsAndLaterIndependentMoves() throws Exception {
     JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
-    JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1),
+    JsonNode first = snapshot.path("groups").get(0),
+        second = snapshot.path("groups").get(1),
         third = snapshot.path("groups").get(2);
-    String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(),
-        c = UUID.randomUUID().toString(), merged = UUID.randomUUID().toString();
+    String a = UUID.randomUUID().toString(),
+        b = UUID.randomUUID().toString(),
+        c = UUID.randomUUID().toString(),
+        merged = UUID.randomUUID().toString();
     DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 5);
     draft = rules.move(draft, id(first), a, transform(100, 0, 0));
     draft = rules.move(draft, id(second), b, transform(0, 0, 0));
     draft = rules.attach(draft, id(first), id(second), merged);
     draft = rules.move(draft, id(third), c, transform(200, 0, 0));
     DraftRules.Draft undone = rules.undo(draft, a);
-    assertThat(rules.actions(undone)).extracting(DraftRules.ActionView::actionId).containsExactly(b, c);
+    assertThat(rules.actions(undone))
+        .extracting(DraftRules.ActionView::actionId)
+        .containsExactly(b, c);
     assertThat(rules.groupTransform(undone, id(second))).isEqualTo(transform(0, 0, 0));
     assertThat(rules.groupTransform(undone, id(third))).isEqualTo(transform(200, 0, 0));
     assertThat(rules.groupTransform(undone, id(first))).isEqualTo(first.path("transform"));
@@ -132,7 +137,8 @@ class DraftRulesTest {
     JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
     JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1);
     for (int rotation : new int[] {0, 90000, 180000, 270000}) {
-      String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(),
+      String a = UUID.randomUUID().toString(),
+          b = UUID.randomUUID().toString(),
           merged = UUID.randomUUID().toString();
       DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 5);
       draft = rules.move(draft, id(first), a, transform(0, 0, 0));
@@ -158,10 +164,13 @@ class DraftRulesTest {
   @Test
   void joinedAdjustmentSurvivesSplittingNestedJoins() throws Exception {
     JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
-    JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1),
+    JsonNode first = snapshot.path("groups").get(0),
+        second = snapshot.path("groups").get(1),
         third = snapshot.path("groups").get(2);
-    String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(),
-        c = UUID.randomUUID().toString(), pair = UUID.randomUUID().toString(),
+    String a = UUID.randomUUID().toString(),
+        b = UUID.randomUUID().toString(),
+        c = UUID.randomUUID().toString(),
+        pair = UUID.randomUUID().toString(),
         triple = UUID.randomUUID().toString();
     DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 5);
     draft = rules.move(draft, id(first), a, transform(0, 0, 0));
@@ -172,7 +181,9 @@ class DraftRulesTest {
     ObjectNode moved = transform(1500, -2500, 0);
     draft = rules.move(draft, triple, a, moved);
     DraftRules.Draft undone = rules.undo(draft, b);
-    assertThat(rules.actions(undone)).extracting(DraftRules.ActionView::actionId).containsExactly(a, c);
+    assertThat(rules.actions(undone))
+        .extracting(DraftRules.ActionView::actionId)
+        .containsExactly(a, c);
     assertThat(rules.groupTransform(undone, id(first))).isEqualTo(moved);
     assertThat(rules.groupTransform(undone, id(third))).isEqualTo(transform(0, 0, 0));
   }
@@ -180,12 +191,15 @@ class DraftRulesTest {
   @Test
   void equalTransformReplayPreservesSurvivorAcrossNestedUndo() throws Exception {
     JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
-    JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1),
+    JsonNode first = snapshot.path("groups").get(0),
+        second = snapshot.path("groups").get(1),
         third = snapshot.path("groups").get(2);
     for (int rotation : new int[] {0, 90000, 180000, 270000}) {
       for (boolean reverse : new boolean[] {false, true}) {
-        String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(),
-            c = UUID.randomUUID().toString(), pair = UUID.randomUUID().toString(),
+        String a = UUID.randomUUID().toString(),
+            b = UUID.randomUUID().toString(),
+            c = UUID.randomUUID().toString(),
+            pair = UUID.randomUUID().toString(),
             triple = UUID.randomUUID().toString();
         String removed = reverse ? a : b, survivor = reverse ? b : a;
         JsonNode removedGroup = reverse ? first : second, survivorGroup = reverse ? second : first;

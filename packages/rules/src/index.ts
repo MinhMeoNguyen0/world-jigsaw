@@ -258,7 +258,13 @@ export function begin(definition: Definition, snapshot: Snapshot, allowance: All
     generation: 0,
   }
 }
-const applyMove = (d: Draft, g: DraftGroup, action: PendingAction, transform: Transform, replay: boolean) => {
+const applyMove = (
+  d: Draft,
+  g: DraftGroup,
+  action: PendingAction,
+  transform: Transform,
+  replay: boolean,
+) => {
   checkWorkspace(d, { ...g.group, transform })
   if (g.sources.length > 1) {
     const changed = !equalTransform(g.group.transform, transform)
@@ -346,9 +352,11 @@ export function attach(
   }
   checkWorkspace(d, group)
   const children = [copy(moving), copy(target)]
-  const beforeJoin = copy(d.actions.filter((action) =>
-    [...moving.actions, ...target.actions].some((id) => same(id, action.id)),
-  ))
+  const beforeJoin = copy(
+    d.actions.filter((action) =>
+      [...moving.actions, ...target.actions].some((id) => same(id, action.id)),
+    ),
+  )
   for (const action of d.actions)
     if ([...moving.actions, ...target.actions].some((id) => same(id, action.id)))
       action.joinedCharge = counted(d, action)
@@ -373,10 +381,14 @@ export function undo(draft: Draft, actionId: string): Draft {
     const previous = g.beforeJoin!
     const children = copy(g.children)
     d.groups = [...d.groups.filter((group) => group !== g), ...children]
-    d.actions = d.actions.map((item) => copy(previous.find((saved) => same(saved.id, item.id)) ?? item))
+    d.actions = d.actions.map((item) =>
+      copy(previous.find((saved) => same(saved.id, item.id)) ?? item),
+    )
     for (const adjustment of g.adjustments ?? []) {
       if (same(adjustment.actionId, action.id)) continue
-      const child = children.find((item) => item.actions.some((id) => same(id, adjustment.actionId)))!
+      const child = children.find((item) =>
+        item.actions.some((id) => same(id, adjustment.actionId)),
+      )!
       const survivor = d.actions.find((item) => same(item.id, adjustment.actionId))!
       applyMove(d, child, survivor, adjustment.transform, true)
     }

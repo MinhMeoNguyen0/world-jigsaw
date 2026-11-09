@@ -332,23 +332,47 @@ export class LiveGame {
       !sameId(proof.turn.turnId, payload.turnId) ||
       proof.turn.generation !== payload.generation ||
       proof.turn.turnRevision !== payload.turnRevision ||
-      proof.revision !== payload.draftRevision ||
-      !proof.actions.some((action) => sameId(action.actionId, payload.actionId))
+      proof.revision !== payload.draftRevision
     )
       return null
-    const removed = proof.actions.find((action) => sameId(action.actionId, payload.actionId))!
+    const removed = proof.actions.find((action) => sameId(action.actionId, payload.actionId))
+    if (!removed) return null
     const previous = proof.actions.filter((action) => !sameId(action.actionId, payload.actionId))
-    if (!survivors && previous.some((action) => action.affectedPieceIds.some((id) =>
-      removed.affectedPieceIds.some((piece) => sameId(id, piece))))) return null
-    if (survivors && (survivors.length !== previous.length || survivors.some((action) => {
-      const old = previous.find((item) => sameId(item.actionId, action.actionId))
-      if (!old) return true
-      const joined = old.affectedPieceIds.some((id) => removed.affectedPieceIds.some((piece) => sameId(id, piece)))
-      if (!joined) return canonical(old) !== canonical(action)
-      return action.affectedPieceIds.some((id) => !old.affectedPieceIds.some((piece) => sameId(id, piece))) ||
-        action.baseRevisions.some((revision) => !old.baseRevisions.some((base) =>
-          sameId(base.groupId, revision.groupId) && base.revision === revision.revision))
-    }) || new Set(survivors.map((action) => action.actionId.toLowerCase())).size !== survivors.length)) return null
+    if (
+      !survivors &&
+      previous.some((action) =>
+        action.affectedPieceIds.some((id) =>
+          removed.affectedPieceIds.some((piece) => sameId(id, piece)),
+        ),
+      )
+    )
+      return null
+    if (
+      survivors &&
+      (survivors.length !== previous.length ||
+        survivors.some((action) => {
+          const old = previous.find((item) => sameId(item.actionId, action.actionId))
+          if (!old) return true
+          const joined = old.affectedPieceIds.some((id) =>
+            removed.affectedPieceIds.some((piece) => sameId(id, piece)),
+          )
+          if (!joined) return canonical(old) !== canonical(action)
+          return (
+            action.affectedPieceIds.some(
+              (id) => !old.affectedPieceIds.some((piece) => sameId(id, piece)),
+            ) ||
+            action.baseRevisions.some(
+              (revision) =>
+                !old.baseRevisions.some(
+                  (base) =>
+                    sameId(base.groupId, revision.groupId) && base.revision === revision.revision,
+                ),
+            )
+          )
+        }) ||
+        new Set(survivors.map((action) => action.actionId.toLowerCase())).size !== survivors.length)
+    )
+      return null
     return {
       turn: {
         ...proof.turn,
@@ -374,14 +398,17 @@ export class LiveGame {
     const flight = this.lostPreview
     const proof = flight?.proof
     if (
-      !flight?.recover || !proof || !reply.ownTurn ||
+      !flight?.recover ||
+      !proof ||
+      !reply.ownTurn ||
       !sameId(proof.turn.puzzleId, reply.ownTurn.puzzleId) ||
       !sameId(proof.turn.turnId, reply.ownTurn.turnId) ||
       proof.turn.generation !== reply.ownTurn.generation ||
       proof.turn.turnRevision !== reply.ownTurn.turnRevision ||
       reply.draftRevision !== flight.draftRevision + 1 ||
       reply.nextSequence !== flight.sequence + 1
-    ) return false
+    )
+      return false
     const normalize = (action: Action) => ({
       ...action,
       actionId: action.actionId.toLowerCase(),
@@ -481,7 +508,8 @@ export class LiveGame {
             canonical(candidate.actions) === canonical(reply.actions),
           )
         this.uncertainDraft =
-          !matches(proof) && !matches(undoneProof) &&
+          !matches(proof) &&
+          !matches(undoneProof) &&
           !(this.lostPreview?.recover && matches(this.lostPreview.proof)) &&
           !this.matchesInterruptedPreview(reply) &&
           (reply.actions.length > 0 || Boolean(this.lostPreview?.recover))
@@ -713,8 +741,12 @@ export class LiveGame {
     const epoch = this.epoch
     this.lostPreview = null
     this.inFlight = {
-      sequence, actionId: action.actionId, draftRevision: this.draftRevision,
-      action: structuredClone(action), proof: this.draftProof, recover: false,
+      sequence,
+      actionId: action.actionId,
+      draftRevision: this.draftRevision,
+      action: structuredClone(action),
+      proof: this.draftProof,
+      recover: false,
     }
     this.publish({ previewPending: true, issue: null })
     if (epoch !== this.epoch || socket !== this.socket)

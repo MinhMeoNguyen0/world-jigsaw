@@ -154,9 +154,11 @@ class GameCoordinatorTest {
         .containsExactlyInAnyOrder(piece(g0), piece(g1));
     assertThat(joined.previews().get(1).action().targetId())
         .isEqualTo(joined.previews().get(0).action().targetId());
-    JsonNode undoJoined = game.undo(b, undoPayload(puzzle, second.turnId(), 1, 1, 5, joinedA, UUID.randomUUID()));
+    JsonNode undoJoined =
+        game.undo(b, undoPayload(puzzle, second.turnId(), 1, 1, 5, joinedA, UUID.randomUUID()));
     assertThat(undoJoined.path("actions").size()).isEqualTo(1);
-    assertThat(undoJoined.path("actions").get(0).path("actionId").asText()).isEqualTo(joinedB.toString());
+    assertThat(undoJoined.path("actions").get(0).path("actionId").asText())
+        .isEqualTo(joinedB.toString());
     assertThat(game.subscribe(puzzle).previews()).hasSize(1);
     assertThat(
             game.cancel(b, cancelPayload(puzzle, second.turnId(), 2, 2, UUID.randomUUID()))

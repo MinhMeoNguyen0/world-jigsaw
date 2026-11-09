@@ -500,7 +500,10 @@ test('undo returns the one selected action identity', () => {
   assert.equal(validate('Undo', undo).valid, true)
   assert.equal(validate('UndoResult', { ...undo, actions: [] }).valid, true)
   assert.equal(validate('UndoResult', { ...undo, actions: [], actionId: null }).valid, false)
-  const actions = Array.from({ length: 81 }, (_, n) => ({ ...confirm.actions[0], actionId: id(n + 2000) }))
+  const actions = Array.from({ length: 81 }, (_, n) => ({
+    ...confirm.actions[0],
+    actionId: id(n + 2000),
+  }))
   assert.equal(validate('UndoResult', { ...undo, actions: actions.slice(0, 6) }).valid, true)
   assert.equal(validate('UndoResult', { ...undo, actions: actions.slice(0, 80) }).valid, true)
   assert.equal(validate('UndoResult', { ...undo, actions }).valid, false)

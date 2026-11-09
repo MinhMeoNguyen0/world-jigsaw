@@ -21,16 +21,24 @@ class GameWireValidatorTest {
 
   @Test
   void undoReceiptAcceptsUpToEightySurvivors() throws Exception {
-    ObjectNode schema = (ObjectNode) mapper.readTree(getClass().getResourceAsStream("/contracts/v1/schema.json"));
+    ObjectNode schema =
+        (ObjectNode) mapper.readTree(getClass().getResourceAsStream("/contracts/v1/schema.json"));
     schema.remove("oneOf");
     schema.put("$ref", "#/$defs/UndoResult");
     var validator = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7).getSchema(schema);
-    JsonNode fixture = mapper.readTree(Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
-    ObjectNode result = mapper.createObjectNode().put("schemaVersion", 1)
-        .put("puzzleId", fixture.path("confirm").path("puzzleId").textValue())
-        .put("turnId", fixture.path("confirm").path("turnId").textValue())
-        .put("requestId", UUID.randomUUID().toString()).put("turnRevision", 1)
-        .put("generation", 1).put("actionId", UUID.randomUUID().toString());
+    JsonNode fixture =
+        mapper.readTree(
+            Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
+    ObjectNode result =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("puzzleId", fixture.path("confirm").path("puzzleId").textValue())
+            .put("turnId", fixture.path("confirm").path("turnId").textValue())
+            .put("requestId", UUID.randomUUID().toString())
+            .put("turnRevision", 1)
+            .put("generation", 1)
+            .put("actionId", UUID.randomUUID().toString());
     ArrayNode actions = result.putArray("actions");
     for (int i = 0; i < 81; i++) {
       ObjectNode action = fixture.path("confirm").path("actions").get(0).deepCopy();

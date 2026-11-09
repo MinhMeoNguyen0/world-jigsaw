@@ -518,7 +518,12 @@ export function HomePage() {
           )}
         </div>
         <div className="feedback" aria-live="polite" role="status">
-          {imageError && <>{imageError}<br /></>}
+          {imageError && (
+            <>
+              {imageError}
+              <br />
+            </>
+          )}
           {error ??
             state.issue ??
             t(state.connection === 'ready' ? 'probe.ready' : 'live.connecting')}
@@ -648,7 +653,12 @@ export function HomePage() {
         </button>
         <button
           className="pill-action"
-          disabled={(!actions.length && !undoPending) || dragging || state.previewPending || state.connection !== 'ready'}
+          disabled={
+            (!actions.length && !undoPending) ||
+            dragging ||
+            state.previewPending ||
+            state.connection !== 'ready'
+          }
           onClick={undo}
           aria-label={t('home.undo')}
         >

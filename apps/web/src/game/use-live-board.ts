@@ -73,8 +73,16 @@ export function imageSource(value: string, origin: string): string | null {
   try {
     if (/%|\\/.test(value) || /(^|\/)\.{1,2}(\/|$)/.test(value)) return null
     const url = new URL(value, origin)
-    if (url.origin !== origin || url.username || url.password || url.search || url.hash ||
-      !/^\/(?!api(?:\/|$))(?:[a-z0-9_-]+\/)*[a-z0-9_.-]+\.(?:png|jpe?g|webp|gif|avif|svg)$/i.test(url.pathname))
+    if (
+      url.origin !== origin ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^\/(?!api(?:\/|$))(?:[a-z0-9_-]+\/)*[a-z0-9_.-]+\.(?:png|jpe?g|webp|gif|avif|svg)$/i.test(
+        url.pathname,
+      )
+    )
       return null
     return url.pathname
   } catch {
@@ -196,14 +204,23 @@ export function useLiveBoard() {
   useEffect(() => {
     if (!source) return
     const img = new Image()
-    img.onload = () => { setImageLoad({ source, loaded: true }) }
-    img.onerror = () => { setImageLoad({ source, loaded: false }) }
+    img.onload = () => {
+      setImageLoad({ source, loaded: true })
+    }
+    img.onerror = () => {
+      setImageLoad({ source, loaded: false })
+    }
     img.src = source
-    return () => { img.onload = null; img.onerror = null }
+    return () => {
+      img.onload = null
+      img.onerror = null
+    }
   }, [source])
   const supportedImage = source && imageLoad?.source === source && imageLoad.loaded ? source : null
-  const imageError = game && (!source || (imageLoad?.source === source && !imageLoad.loaded))
-    ? t('game.imageUnavailable') : null
+  const imageError =
+    game && (!source || (imageLoad?.source === source && !imageLoad.loaded))
+      ? t('game.imageUnavailable')
+      : null
   const point = (x: number, y: number): Point | null => {
     const m = board.current?.getScreenCTM()
     if (!m) return null
@@ -218,7 +235,8 @@ export function useLiveBoard() {
     if (p.interrupted) {
       if (p.undoStarted && !p.restoring) {
         p.restoring = true
-        void client.undo(p.action.actionId)
+        void client
+          .undo(p.action.actionId)
           .then(() => {
             pending.current = null
             setGhost(null)
@@ -339,7 +357,8 @@ export function useLiveBoard() {
     restoring: false,
     undoStarted: false,
     original:
-      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ?? null,
+      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
+      null,
     action:
       actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
       client.newAction({
@@ -545,7 +564,7 @@ export function useLiveBoard() {
       }
       if (next.connection === 'resyncing' && next.issue?.startsWith('Preview rejected:')) {
         const current = pending.current
-        if (current && current.sentFor === 'active' && !current.interrupted) {
+        if (current?.sentFor === 'active' && !current.interrupted) {
           if (!current.active) current.sent = ''
         } else {
           pending.current = null

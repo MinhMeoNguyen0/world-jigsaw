@@ -69,7 +69,8 @@ try {
       ws.on('framereceived', (e) => {
         try {
           const m = JSON.parse(e.payload)
-          if (m.type === 'preview.accepted' || m.type === 'preview.rejected') received.push({ ...m, connection })
+          if (m.type === 'preview.accepted' || m.type === 'preview.rejected')
+            received.push({ ...m, connection })
         } catch {}
       })
     })
@@ -148,8 +149,14 @@ try {
       await p.mouse.move(data.x, data.y)
       await p.mouse.down()
       if (mode === 'owner' && fraction === 0.18) {
-        await p.mouse.move(data.targetBox.x + data.targetBox.w / 2, data.targetBox.y + data.targetBox.h / 2)
-        await wait(() => received.some((m) => m.type === 'preview.rejected'), 'intermediate rejection')
+        await p.mouse.move(
+          data.targetBox.x + data.targetBox.w / 2,
+          data.targetBox.y + data.targetBox.h / 2,
+        )
+        await wait(
+          () => received.some((m) => m.type === 'preview.rejected'),
+          'intermediate rejection',
+        )
         await p.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
       }
       await p.mouse.move(data.tx, data.ty, { steps: 20 })
@@ -171,7 +178,10 @@ try {
       const reply = await wait(
         () =>
           received.find(
-            (m) => m.connection === final.connection && m.sequence === final.sequence && m.actionId === final.action.actionId,
+            (m) =>
+              m.connection === final.connection &&
+              m.sequence === final.sequence &&
+              m.actionId === final.action.actionId,
           ),
         'receipt matching final sequence',
       )
@@ -213,8 +223,11 @@ try {
       // A final rejection can begin resynchronization after the earlier ready check.
       // Wait for the draft to become cancelable instead of skipping cleanup mid-transition.
       const deadline = Date.now() + 30000
-      while (Date.now() < deadline && !(await cancel.isEnabled()) &&
-        (await observer.locator('[data-preview-action]').count()) > 0)
+      while (
+        Date.now() < deadline &&
+        !(await cancel.isEnabled()) &&
+        (await observer.locator('[data-preview-action]').count()) > 0
+      )
         await p.waitForTimeout(100)
       if (await cancel.isEnabled().catch(() => false)) {
         const response = p.waitForResponse(

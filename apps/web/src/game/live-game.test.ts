@@ -626,17 +626,28 @@ describe('versioned subscription and preview receipts', () => {
       const second = fixture.confirm.actions[1] as Confirm['actions'][number]
       h.client.preview(second)
       socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
-      const moved = { ...action, intendedTransform: {
-        ...action.intendedTransform,
-        translation: { ...action.intendedTransform.translation, x: action.intendedTransform.translation.x + 1000 },
-      } }
+      const moved = {
+        ...action,
+        intendedTransform: {
+          ...action.intendedTransform,
+          translation: {
+            ...action.intendedTransform.translation,
+            x: action.intendedTransform.translation.x + 1000,
+          },
+        },
+      }
       h.client.preview(moved)
       h.client.recoverInterruptedPreview()
       socket.drop()
       await h.client.connect()
       const next = socketAt(h.sockets, 1)
       next.open()
-      next.emit(handoff(outcome === 'unchanged' ? [action, second] : [moved, second], outcome === 'unchanged' ? 2 : outcome === 'accepted' ? 3 : 4))
+      next.emit(
+        handoff(
+          outcome === 'unchanged' ? [action, second] : [moved, second],
+          outcome === 'unchanged' ? 2 : outcome === 'accepted' ? 3 : 4,
+        ),
+      )
       if (outcome === 'concurrent') expect(h.client.provenDraft()).toBeNull()
       else expect(h.client.provenDraft()).toEqual([outcome === 'accepted' ? moved : action, second])
     },
@@ -1019,8 +1030,14 @@ describe('versioned subscription and preview receipts', () => {
       const joined = {
         ...action,
         targetId: second.targetId,
-        affectedPieceIds: [...action.affectedPieceIds, ...second.affectedPieceIds] as typeof action.affectedPieceIds,
-        baseRevisions: [...action.baseRevisions, ...second.baseRevisions] as typeof action.baseRevisions,
+        affectedPieceIds: [
+          ...action.affectedPieceIds,
+          ...second.affectedPieceIds,
+        ] as typeof action.affectedPieceIds,
+        baseRevisions: [
+          ...action.baseRevisions,
+          ...second.baseRevisions,
+        ] as typeof action.baseRevisions,
       }
       const joinedSecond = { ...joined, actionId: second.actionId, kind: second.kind }
       h.client.preview(joined)
@@ -1028,17 +1045,29 @@ describe('versioned subscription and preview receipts', () => {
       const response = deferred<Response>()
       h.setUndoReply(response.promise)
       const pending = h.client.undo(action.actionId)
-      const newTurn = { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 }
-      const result = new Response(JSON.stringify({
-        schemaVersion: 1, puzzleId, turnId: turn.turnId,
-        requestId: '00000000-0000-4000-8000-000000000001',
-        turnRevision: newTurn.turnRevision, generation: newTurn.generation,
-        actionId: action.actionId, actions: [second],
-      }))
+      const newTurn = {
+        ...turn,
+        generation: turn.generation + 1,
+        turnRevision: turn.turnRevision + 1,
+      }
+      const result = new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          puzzleId,
+          turnId: turn.turnId,
+          requestId: '00000000-0000-4000-8000-000000000001',
+          turnRevision: newTurn.turnRevision,
+          generation: newTurn.generation,
+          actionId: action.actionId,
+          actions: [second],
+        }),
+      )
       h.setGame({ ...current, ownTurn: newTurn })
       if (order === 'handoff first') {
         socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
-        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
         socketAt(h.sockets, 1).open()
         socketAt(h.sockets, 1).emit({ ...handoff([second], 4), ownTurn: newTurn, nextSequence: 0 })
         expect(h.client.provenDraft()).toBeNull()
@@ -1046,9 +1075,15 @@ describe('versioned subscription and preview receipts', () => {
       response.resolve(result)
       await pending
       const index = order === 'handoff first' ? 2 : 1
-      await vi.waitFor(() => expect(h.sockets).toHaveLength(index + 1))
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(index + 1)
+      })
       socketAt(h.sockets, index).open()
-      socketAt(h.sockets, index).emit({ ...handoff([second], 4), ownTurn: newTurn, nextSequence: 0 })
+      socketAt(h.sockets, index).emit({
+        ...handoff([second], 4),
+        ownTurn: newTurn,
+        nextSequence: 0,
+      })
       expect(h.client.provenDraft()).toEqual([second])
     },
   )
@@ -1062,12 +1097,22 @@ describe('versioned subscription and preview receipts', () => {
     h.setUndoReply(Promise.reject(new TypeError('lost response')))
     await expect(h.client.undo(action.actionId)).rejects.toThrow('lost response')
     expect(h.client.pendingUndoActionId()).toBe(action.actionId)
-    h.setUndoReply(Promise.resolve(new Response(JSON.stringify({
-      schemaVersion: 1, puzzleId, turnId: turn.turnId,
-      requestId: '00000000-0000-4000-8000-000000000001',
-      turnRevision: turn.turnRevision + 1, generation: turn.generation + 1,
-      actionId: action.actionId, actions: [],
-    }))))
+    h.setUndoReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            puzzleId,
+            turnId: turn.turnId,
+            requestId: '00000000-0000-4000-8000-000000000001',
+            turnRevision: turn.turnRevision + 1,
+            generation: turn.generation + 1,
+            actionId: action.actionId,
+            actions: [],
+          }),
+        ),
+      ),
+    )
     await h.client.undo(action.actionId)
     expect(h.undoBodies[1]).toEqual(h.undoBodies[0])
   })
@@ -1090,19 +1135,40 @@ describe('versioned subscription and preview receipts', () => {
     })
     for (const [index, item] of sorts.entries()) {
       h.client.preview(item)
-      socket.emit({ ...accepted(index, index + 1), actionId: item.actionId, actions: sorts.slice(0, index + 1) })
+      socket.emit({
+        ...accepted(index, index + 1),
+        actionId: item.actionId,
+        actions: sorts.slice(0, index + 1),
+      })
     }
-    const last = sorts[6]!
-    const newTurn = { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 }
+    const last = sorts[6]
+    if (!last) throw new Error('Expected seven sort actions')
+    const newTurn = {
+      ...turn,
+      generation: turn.generation + 1,
+      turnRevision: turn.turnRevision + 1,
+    }
     h.setGame({ ...current, ownTurn: newTurn })
-    h.setUndoReply(Promise.resolve(new Response(JSON.stringify({
-      schemaVersion: 1, puzzleId, turnId: turn.turnId,
-      requestId: '00000000-0000-4000-8000-000000000001',
-      turnRevision: newTurn.turnRevision, generation: newTurn.generation,
-      actionId: last.actionId, actions: sorts.slice(0, 6),
-    }))))
+    h.setUndoReply(
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            puzzleId,
+            turnId: turn.turnId,
+            requestId: '00000000-0000-4000-8000-000000000001',
+            turnRevision: newTurn.turnRevision,
+            generation: newTurn.generation,
+            actionId: last.actionId,
+            actions: sorts.slice(0, 6),
+          }),
+        ),
+      ),
+    )
     await h.client.undo(last.actionId)
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     const next = socketAt(h.sockets, 1)
     next.open()
     next.emit({ ...handoff(sorts.slice(0, 6), 8), ownTurn: newTurn, nextSequence: 0 })
