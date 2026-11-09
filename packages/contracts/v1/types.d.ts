@@ -456,6 +456,16 @@ export interface DraftSummary {
   generation: number
   draftRevision: number
   pendingMoves: number
+  /**
+   * @maxItems 5
+   */
+  chargedActionIds:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
 }
 export interface PresenceSnapshot {
   schemaVersion: 1

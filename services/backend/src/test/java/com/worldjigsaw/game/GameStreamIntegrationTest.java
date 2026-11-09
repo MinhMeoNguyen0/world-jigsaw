@@ -158,6 +158,7 @@ class GameStreamIntegrationTest {
     JsonNode emptySummary = get(a, origin + "/api/v1/game/turns/" + idA + "/summary", cookieA);
     assertSchema("DraftSummary", emptySummary);
     assertThat(emptySummary.path("pendingMoves").intValue()).isZero();
+    assertThat(emptySummary.path("chargedActionIds").isEmpty()).isTrue();
     String actionA = UUID.randomUUID().toString(), actionB = UUID.randomUUID().toString();
     JsonNode firstFrame = preview(puzzle, idA, 0, 1, action(actionA, g0, 0, 0));
     validator.parse("PreviewSubmit", firstFrame.toString());
@@ -169,6 +170,7 @@ class GameStreamIntegrationTest {
     assertSchema("DraftSummary", firstSummary);
     assertThat(firstSummary.path("draftRevision").longValue()).isEqualTo(1);
     assertThat(firstSummary.path("pendingMoves").intValue()).isEqualTo(1);
+    assertThat(firstSummary.path("chargedActionIds").get(0).asText()).isEqualTo(actionA);
     JsonNode readDuring = get(a, origin + "/api/v1/game/current", cookieA);
     assertThat(readDuring.path("snapshot").path("boardVersion").longValue())
         .isEqualTo(snapshot.path("boardVersion").longValue());

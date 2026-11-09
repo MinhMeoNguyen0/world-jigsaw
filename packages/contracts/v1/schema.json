@@ -1372,7 +1372,13 @@
         "turnId": { "type": "string", "format": "uuid" },
         "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "draftRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-        "pendingMoves": { "type": "integer", "minimum": 0, "maximum": 5 }
+        "pendingMoves": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "chargedActionIds": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" },
+          "maxItems": 5,
+          "uniqueItems": true
+        }
       },
       "required": [
         "schemaVersion",
@@ -1380,7 +1386,8 @@
         "turnId",
         "generation",
         "draftRevision",
-        "pendingMoves"
+        "pendingMoves",
+        "chargedActionIds"
       ],
       "additionalProperties": false
     },

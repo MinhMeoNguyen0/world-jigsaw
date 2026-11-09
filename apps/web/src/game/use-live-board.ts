@@ -158,6 +158,17 @@ export function useLiveBoard() {
           result.draftRevision !== proofRevision
         )
           throw new Error('Stale draft summary')
+        const draft = client.provenDraft()
+        const chargedIds = new Set(result.chargedActionIds.map((id) => id.toLowerCase()))
+        const actionIds = new Set(draft?.map((action) => action.actionId.toLowerCase()))
+        if (
+          client.provenDraftRevision() !== proofRevision ||
+          !draft ||
+          chargedIds.size !== result.pendingMoves ||
+          result.chargedActionIds.length !== chargedIds.size ||
+          [...chargedIds].some((id) => !actionIds.has(id))
+        )
+          throw new Error('Invalid draft charges')
         if (active) {
           setSummary(result)
           setSummaryFailure(null)
@@ -173,19 +184,35 @@ export function useLiveBoard() {
       active = false
       controller.abort()
     }
-  }, [turnId, generation, puzzleId, proofRevision, state.connection, summaryKey, summaryAttempt])
-  const pendingMoves = !turnId
-    ? 0
-    : summary?.turnId.toLowerCase() === turnId.toLowerCase() &&
-        summary.puzzleId.toLowerCase() === puzzleId?.toLowerCase() &&
-        summary.generation === generation &&
-        summary.draftRevision === proofRevision
-      ? summary.pendingMoves
+  }, [
+    client,
+    turnId,
+    generation,
+    puzzleId,
+    proofRevision,
+    state.connection,
+    summaryKey,
+    summaryAttempt,
+  ])
+  const currentSummary =
+    turnId &&
+    summary?.turnId.toLowerCase() === turnId.toLowerCase() &&
+    summary.puzzleId.toLowerCase() === puzzleId?.toLowerCase() &&
+    summary.generation === generation &&
+    summary.draftRevision === proofRevision
+      ? summary
       : null
+  const pendingMoves = !turnId ? 0 : (currentSummary?.pendingMoves ?? null)
   const remaining =
     game?.allowance && pendingMoves !== null ? game.allowance.remaining - pendingMoves : null
   const canMove = (group: Group) =>
-    canMoveGroup(game?.allowance?.remaining ?? null, pendingMoves, group, actions)
+    canMoveGroup(
+      game?.allowance?.remaining ?? null,
+      pendingMoves,
+      group,
+      actions,
+      !turnId ? [] : (currentSummary?.chargedActionIds ?? null),
+    )
   const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
   const previews = Object.values(state.previews).flatMap((turn) =>
     turn.closed ? [] : Object.values(turn.actions),

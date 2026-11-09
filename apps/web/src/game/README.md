@@ -14,7 +14,7 @@ Send another preview only after `previewPending` clears. The server broadcasts p
 `pendingShape` and restore it with `restorePendingShape()` after a reload when the response is
 uncertain; retry the same payload until its result is known. The service serializes shape changes
 with drafts and resynchronizes clients after a successful update. A revision-correlated turn summary
-provides projected pending charges without guessing from local gestures.
+provides projected pending charges and charged action IDs without guessing from local gestures.
 
 The v2 stream extension is negotiated by `subscribe.v2`; existing v1 messages remain closed and continue to work. Identity changes invalidate affected v2 subscriptions, which reconnect for a fresh atomic handoff. Unsupported or regressing messages and board event gaps also trigger resynchronization. Image rights and the provisional geometry policy still require attention before release.
 
