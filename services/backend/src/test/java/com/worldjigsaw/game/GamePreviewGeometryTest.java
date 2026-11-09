@@ -22,6 +22,56 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class GamePreviewGeometryTest {
   @Test
+  void rejectedUnjoinedMoveKeepsTheLastAcceptedPreviewAndCanBeRetried() throws Exception {
+    var fixture = squareFixture(0, false);
+    UUID firstSubject = UUID.randomUUID(), secondSubject = UUID.randomUUID();
+    var first = fixture.game().begin(firstSubject, fixture.puzzle());
+    var second = fixture.game().begin(secondSubject, fixture.puzzle());
+    fixture
+        .game()
+        .preview(
+            firstSubject,
+            first.turnId(),
+            0,
+            1,
+            squareAction(UUID.randomUUID(), fixture, 0, -200000, 0, false));
+    UUID action = UUID.randomUUID();
+    fixture
+        .game()
+        .preview(
+            secondSubject,
+            second.turnId(),
+            0,
+            1,
+            squareAction(action, fixture, 1, -10000, 0, false));
+    var accepted = fixture.game().subscribe(fixture.puzzle()).previews();
+
+    assertThatThrownBy(() ->
+            fixture
+                .game()
+                .preview(
+                    secondSubject,
+                    second.turnId(),
+                    0,
+                    2,
+                    squareAction(action, fixture, 1, -100000, 0, false)))
+        .isInstanceOf(DraftRules.RuleError.class)
+        .hasMessageContaining("overlap");
+    assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).isEqualTo(accepted);
+    assertThat(
+            fixture
+                .game()
+                .preview(
+                    secondSubject,
+                    second.turnId(),
+                    0,
+                    2,
+                    squareAction(action, fixture, 1, -5000, 0, false))
+                .previews())
+        .hasSize(1);
+  }
+
+  @Test
   void previewCannotOccupyAnotherPlayersSavedPosition() throws Exception {
     for (int rotation : new int[] {0, 90000, 180000, 270000}) {
       var fixture = squareFixture(rotation, false);

@@ -61,7 +61,8 @@ operational constraints, not application requirements.
   [notice](../apps/web/public/hoi-an-generated.NOTICE.md). Review distribution rights before public use.
 - Cursor updates are best effort and expire; reconnects and preview acknowledgement can be visible.
   Invalid placements preserve the last accepted preview; unsupported legacy arbitrary-angle boards
-  remain readable but cannot be manipulated. There is no general latency or frame-time benchmark.
+  remain readable but cannot be manipulated. The [latency assessment](multiplayer-latency-assessment.md)
+  is a limited loopback measurement, not a general latency or frame-time benchmark.
 - The [product plan](PLAN.md) is an earlier design proposal, not an implementation or wire contract.
   It retains decisions and future work; use the README and component docs for current behavior. The
   plan's dashboard, archive, identity and scaling proposals should not be assumed to be implemented.
