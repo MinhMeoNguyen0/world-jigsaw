@@ -11,4 +11,13 @@ Dimensions are integer thousandths of puzzle-space units, not pixels; specify th
 
 Initial loose pieces occupy a deterministic shared outer workspace, separated on a grid and at seeded random quarter-turn rotations (0, 90, 180 or 270 degrees). A `placed-pieces` count places the first row-major pieces at their solved positions as independent groups; they are not permanently locked. It only changes the initial snapshot, not the immutable definition. The review seed uses three placed pieces. This is generator version `world-jigsaw-grid-3`; its changed initialization requires a new immutable definition and identity, not an update to an active board. Initial state is supplied once to the authority, not generated independently per client. All transforms rotate solved coordinates about the puzzle-space origin, then translate.
 
+Pass `--layout surround` to generate version `world-jigsaw-grid-6`, which places the shared loose
+pieces around all sides of the picture. The layout participates in puzzle identity and does not
+rewrite an existing board. `fixtures/surround-60.json` preserves that example.
+
+Pass `--layout balanced` for version `world-jigsaw-grid-7`, which spreads pieces farther vertically
+so a uniform shared-board fit uses more of a portrait viewport. The version has its own puzzle
+identity; it never changes an existing board. `fixtures/hoi-an-balanced-60.json` is the private-local
+example for the web UI.
+
 `fixtures/original-landscape.svg` is original geometric artwork created for this repository; no external image or license is involved. `fixture://original-landscape` is a placeholder identifier, not a hosted URL. The 60-piece review and 80-piece examples can be reproduced by the commands in `fixtures/README.md`; they have no implied production image distribution or import contract.

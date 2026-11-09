@@ -20,7 +20,14 @@ export class RuleError extends Error {
     this.code = code
   }
 }
-type DraftGroup = { group: Group; sources: string[]; actions: string[] }
+type DraftGroup = {
+  group: Group
+  sources: string[]
+  actions: string[]
+  children?: DraftGroup[]
+  beforeJoin?: PendingAction[]
+  adjustments?: { actionId: string; transform: Transform }[]
+}
 type PendingAction = { id: string; source: string; entered: boolean; joinedCharge?: boolean }
 export type Draft = {
   definition: Definition
@@ -251,6 +258,33 @@ export function begin(definition: Definition, snapshot: Snapshot, allowance: All
     generation: 0,
   }
 }
+const applyMove = (
+  d: Draft,
+  g: DraftGroup,
+  action: PendingAction,
+  transform: Transform,
+  replay: boolean,
+) => {
+  checkWorkspace(d, { ...g.group, transform })
+  if (g.sources.length > 1) {
+    const changed = !equalTransform(g.group.transform, transform)
+    if (changed) chargeJoinedMovement(d, g, transform)
+    if (changed || replay)
+      g.adjustments = [
+        ...(g.adjustments ?? []).filter((item) => !same(item.actionId, action.id)),
+        { actionId: action.id, transform: copy(transform) },
+      ]
+  }
+  g.group.transform = copy(transform)
+  const src = original(d, action.source)
+  if (
+    g.sources.length === 1 &&
+    src.pieceIds.length === 1 &&
+    !inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface)
+  ) {
+    action.entered = inside(reference(d, src.pieceIds[0], transform), d.definition.playSurface)
+  }
+}
 /** Start an action on a canonical group, or adjust an existing draft group with its action ID. */
 export function move(draft: Draft, groupId: string, actionId: string, transform: Transform): Draft {
   checkOrientation(draft.base)
@@ -268,17 +302,7 @@ export function move(draft: Draft, groupId: string, actionId: string, transform:
     d.actions.push(action)
     g.actions.push(actionId)
   }
-  checkWorkspace(d, { ...g.group, transform })
-  if (g.sources.length > 1) chargeJoinedMovement(d, g, transform)
-  g.group.transform = copy(transform)
-  const src = original(d, action.source)
-  if (
-    g.sources.length === 1 &&
-    src.pieceIds.length === 1 &&
-    !inside(reference(d, src.pieceIds[0], src.transform), d.definition.playSurface)
-  ) {
-    action.entered = inside(reference(d, src.pieceIds[0], transform), d.definition.playSurface)
-  }
+  applyMove(d, g, action, transform, false)
   checkQuota(d)
   return d
 }
@@ -327,6 +351,12 @@ export function attach(
     finalPosition: false,
   }
   checkWorkspace(d, group)
+  const children = [copy(moving), copy(target)]
+  const beforeJoin = copy(
+    d.actions.filter((action) =>
+      [...moving.actions, ...target.actions].some((id) => same(id, action.id)),
+    ),
+  )
   for (const action of d.actions)
     if ([...moving.actions, ...target.actions].some((id) => same(id, action.id)))
       action.joinedCharge = counted(d, action)
@@ -336,6 +366,8 @@ export function attach(
     group,
     sources: [...moving.sources, ...target.sources],
     actions: [...moving.actions, ...target.actions],
+    children,
+    beforeJoin,
   })
   checkQuota(d)
   return d
@@ -344,12 +376,28 @@ export function undo(draft: Draft, actionId: string): Draft {
   checkOrientation(draft.base)
   const d = copy(draft),
     action = d.actions.find((a) => same(a.id, actionId)) ?? fail('INVALID_ACTION', 'Unknown action')
-  const g = d.groups.find((g) => g.actions.some((id) => same(id, action.id)))!
-  if (g.sources.length !== 1 || g.actions.length !== 1)
-    return fail('INVALID_ACTION', 'Joined action cannot be undone')
+  let g = d.groups.find((g) => g.actions.some((id) => same(id, action.id)))!
+  while (g.children) {
+    const previous = g.beforeJoin!
+    const children = copy(g.children)
+    d.groups = [...d.groups.filter((group) => group !== g), ...children]
+    d.actions = d.actions.map((item) =>
+      copy(previous.find((saved) => same(saved.id, item.id)) ?? item),
+    )
+    for (const adjustment of g.adjustments ?? []) {
+      if (same(adjustment.actionId, action.id)) continue
+      const child = children.find((item) =>
+        item.actions.some((id) => same(id, adjustment.actionId)),
+      )!
+      const survivor = d.actions.find((item) => same(item.id, adjustment.actionId))!
+      applyMove(d, child, survivor, adjustment.transform, true)
+    }
+    g = d.groups.find((group) => group.actions.some((id) => same(id, action.id)))!
+  }
   g.group = copy(original(d, action.source))
   g.actions = []
   d.actions = d.actions.filter((a) => !same(a.id, actionId))
+  checkQuota(d)
   d.generation++
   return d
 }

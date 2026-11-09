@@ -125,6 +125,42 @@ class LocalGeometryTest {
   }
 
   @Test
+  void reviewedRotatedContoursPermitShallowOverlapButRejectStacking() throws Exception {
+    JsonNode board =
+        mapper.readTree(
+            Path.of("../../packages/generator/fixtures/hoi-an-surround-60.json").toFile());
+    String source = "b5aab6b4-44e8-5359-babb-5429aa97d18f";
+    String target = "0d5f9eed-91de-529e-b324-840c45029401";
+    ObjectNode definition = mapper.createObjectNode();
+    ArrayNode pieces = definition.putArray("pieces");
+    for (JsonNode piece : board.path("definition").path("pieces"))
+      if (piece.path("pieceId").asText().equals(source)
+          || piece.path("pieceId").asText().equals(target)) pieces.add(piece);
+    assertThat(pieces.size()).isEqualTo(2);
+    ObjectNode snapshot = mapper.createObjectNode();
+    ArrayNode groups = snapshot.putArray("groups");
+    ObjectNode moving = null;
+    for (JsonNode raw : board.path("snapshot").path("groups")) {
+      String id = raw.path("pieceIds").get(0).asText();
+      if (id.equals(source) || id.equals(target)) {
+        ObjectNode group = raw.deepCopy();
+        groups.add(group);
+        if (id.equals(source)) moving = group;
+      }
+    }
+    assertThat(moving).isNotNull();
+    ObjectNode transform = (ObjectNode) moving.path("transform");
+    transform.put("rotation", 90000);
+    ObjectNode translation = (ObjectNode) transform.path("translation");
+    translation.put("x", 3113262).put("y", 676216);
+    assertThat(LocalGeometry.hasForbiddenOverlap(definition, snapshot)).isFalse();
+    translation.put("x", 3112278);
+    assertThat(LocalGeometry.hasForbiddenOverlap(definition, snapshot)).isFalse();
+    translation.put("x", 2996944);
+    assertThat(LocalGeometry.hasForbiddenOverlap(definition, snapshot)).isTrue();
+  }
+
+  @Test
   void narrowConcaveTabCannotPenetrateDeeplyIntoAnotherPiece() throws Exception {
     JsonNode vectors =
         mapper.readTree(

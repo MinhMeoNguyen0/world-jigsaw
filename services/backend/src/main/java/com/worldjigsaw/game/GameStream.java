@@ -8,6 +8,7 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -66,9 +67,23 @@ class GameStream extends TextWebSocketHandler {
         new Peer(
             session,
             (UUID) session.getAttributes().get("subject"),
+            (String) session.getAttributes().get("displayName"),
             (Instant) session.getAttributes().get("expiry"));
     peers.put(session.getId(), peer);
     peer.writer = writers.submit(peer::writeLoop);
+  }
+
+  /** Snapshot only currently subscribed, unexpired connections; multiple tabs count once. */
+  List<Map<String, String>> connectedPlayers(UUID puzzleId) {
+    Map<UUID, String> names = new java.util.HashMap<>();
+    Instant now = clock.instant();
+    for (Peer peer : peers.values()) {
+      if (puzzleId.equals(peer.puzzle)
+          && !peer.stopped.get()
+          && !peer.overloaded.get()
+          && now.isBefore(peer.expiresAt)) names.put(peer.subject, peer.displayName);
+    }
+    return names.values().stream().sorted().map(name -> Map.of("displayName", name)).toList();
   }
 
   @Override
@@ -254,6 +269,7 @@ class GameStream extends TextWebSocketHandler {
 
   private final class Peer implements GameCoordinator.Sink {
     final UUID id = UUID.randomUUID(), subject;
+    final String displayName;
     final WebSocketSession session;
     final Instant expiresAt;
     final ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(128);
@@ -267,9 +283,10 @@ class GameStream extends TextWebSocketHandler {
     private long window = System.nanoTime();
     private int frames;
 
-    Peer(WebSocketSession session, UUID subject, Instant expiresAt) {
+    Peer(WebSocketSession session, UUID subject, String displayName, Instant expiresAt) {
       this.session = session;
       this.subject = subject;
+      this.displayName = displayName;
       this.expiresAt = expiresAt;
     }
 
@@ -371,6 +388,7 @@ class LocalStreamHandshake implements HandshakeInterceptor {
       return false;
     }
     attributes.put("subject", session.subject());
+    attributes.put("displayName", session.displayName());
     attributes.put("expiry", session.expiresAt());
     return true;
   }

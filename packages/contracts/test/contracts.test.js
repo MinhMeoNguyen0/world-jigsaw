@@ -498,8 +498,15 @@ test('undo returns the one selected action identity', () => {
     actionId: confirm.actions[0].actionId,
   }
   assert.equal(validate('Undo', undo).valid, true)
-  assert.equal(validate('UndoResult', undo).valid, true)
-  assert.equal(validate('UndoResult', { ...undo, actionId: null }).valid, false)
+  assert.equal(validate('UndoResult', { ...undo, actions: [] }).valid, true)
+  assert.equal(validate('UndoResult', { ...undo, actions: [], actionId: null }).valid, false)
+  const actions = Array.from({ length: 81 }, (_, n) => ({
+    ...confirm.actions[0],
+    actionId: id(n + 2000),
+  }))
+  assert.equal(validate('UndoResult', { ...undo, actions: actions.slice(0, 6) }).valid, true)
+  assert.equal(validate('UndoResult', { ...undo, actions: actions.slice(0, 80) }).valid, true)
+  assert.equal(validate('UndoResult', { ...undo, actions }).valid, false)
 })
 
 test('connected progress counts groups regardless of final position', () => {

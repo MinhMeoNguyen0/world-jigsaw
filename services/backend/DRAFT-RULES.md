@@ -16,5 +16,5 @@ The private-local coordinator integrates this engine with authenticated turns, p
 preview generation fences, cancellation and the confirmation journal. A process-lifetime local
 file lock and PostgreSQL transaction barrier protect the single-host writer under the deployment
 preconditions in the root README. The service reserves turn and merged-group IDs and retains cancel and undo receipts in the
-game database. The frontend owner still needs to integrate the shared turn and geometry contract,
-including real mouse and touch coverage. Chat and public hosting remain separate.
+game database. The private-local web client uses the shared turn and geometry contract. Public
+hosting remains outside this local service.

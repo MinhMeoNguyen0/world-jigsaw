@@ -90,5 +90,37 @@ class LocalSessionsTest {
     assertThat(again.headers().firstValue("set-cookie")).isEmpty();
     assertThat(mapper.readTree(a.body()).path("displayName"))
         .isNotEqualTo(mapper.readTree(b.body()).path("displayName"));
+    URI identity = URI.create(origin + "/api/v1/session/identity");
+    HttpResponse<String> verified =
+        first.send(
+            HttpRequest.newBuilder(identity)
+                .header("Cookie", cookieA.substring(0, cookieA.indexOf(';')))
+                .header("X-Local-Subject", "00000000-0000-4000-8000-000000000000")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertThat(verified.statusCode()).isEqualTo(200);
+    assertThat(mapper.readTree(verified.body()).path("displayName"))
+        .isEqualTo(mapper.readTree(a.body()).path("displayName"));
+    assertThat(mapper.readTree(verified.body()).path("subject").asText())
+        .isEqualTo(afterRestart.lookup(token).subject().toString());
+    assertThat(
+            first
+                .send(
+                    HttpRequest.newBuilder(identity).GET().build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode())
+        .isEqualTo(401);
+    assertThat(
+            first
+                .send(
+                    HttpRequest.newBuilder(identity)
+                        .header("Origin", "http://attacker.test")
+                        .header("Cookie", cookieA.substring(0, cookieA.indexOf(';')))
+                        .GET()
+                        .build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode())
+        .isEqualTo(403);
   }
 }

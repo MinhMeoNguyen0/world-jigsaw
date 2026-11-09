@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const port = '4173'
+const port = process.env.PLAYWRIGHT_PORT ?? '4173'
 const isCI = Boolean(process.env.CI)
 
 // Smoke tests run against the production build served by `vite preview`.

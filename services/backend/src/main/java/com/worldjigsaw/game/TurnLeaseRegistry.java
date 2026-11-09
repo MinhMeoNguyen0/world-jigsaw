@@ -242,8 +242,13 @@ class TurnLeaseRegistry {
       throw error("INVALID_ACTION", "Generation exhausted");
     Set<UUID> ids = new HashSet<>(), keptGroups = new HashSet<>();
     for (PreviewGeneration.Action action : survivors) {
+      PreviewGeneration.Action previous = turn.actions.get(action.actionId());
       if (!ids.add(action.actionId())
-          || !action.equals(turn.actions.get(action.actionId()))
+          || previous == null
+          || (!action.equals(previous)
+              && (previous.baseRevisions().size() < 2
+                  || !previous.baseRevisions().containsAll(action.baseRevisions())
+                  || !previous.affectedPieceIds().containsAll(action.affectedPieceIds())))
           || action.baseRevisions().isEmpty())
         throw error("INVALID_ACTION", "Invalid surviving actions");
       for (var revision : action.baseRevisions()) {

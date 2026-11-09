@@ -1,7 +1,7 @@
 # Local turn wire interpretation
 
-This is the private-local service's interpretation of the shared schema. The `LiveGame` adapter
-uses this wire, but remains unmounted. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
+This is the private-local service's interpretation of the shared schema. The web client's `LiveGame` adapter
+uses this wire. The existing `PreviewSubmit` action has no separate drag/drop/attach field.
 A position frame should not irreversibly join a group merely because a pointer passed a neighbor.
 
 For a normal move or adjustment, `targetId` identifies a draft group or one of its pieces and
@@ -26,8 +26,8 @@ sequences within each generation; the client's submitted sequence is tracked ind
 rejecting stale submissions and is reported on rejection and v2 acceptance. A reconnect receives
 every current action in outgoing sequence order.
 
-Undo fences and clears the old generation, rejects removal of an action with joined dependencies,
-then re-emits surviving previews under the new generation. Cancel clears only the draft and reveals
+Undo fences and clears the old generation, then re-emits surviving previews under the new generation;
+see the [shared contract](../../packages/contracts/README.md) for joined-action behavior. Cancel clears only the draft and reveals
 the latest canonical board. Confirm must match the server's current action set and turn revision,
 use the original command ID for retries, validate again under the board lock, persist the board,
 quota, event and command result atomically, then emit the event and fence the preview. A response

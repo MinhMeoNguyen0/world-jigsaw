@@ -21,6 +21,8 @@ import type {
   Turn,
   UndoV2,
   UndoResult,
+  ShapeChange,
+  ShapeResult,
 } from '@world-jigsaw/contracts'
 
 /** Provisional adapter for the private same-origin v1 service. It does not render a game. */
@@ -30,6 +32,7 @@ export interface LiveGameState {
   previews: Record<string, PreviewState>
   previewPending: boolean
   pendingConfirm: Confirm | null
+  pendingShape: ShapeChange | null
   unresolvedCommand: { puzzleId: string; commandId: string } | null
   issue: string | null
 }
@@ -40,6 +43,14 @@ interface DraftProof {
   revision: number
   nextSequence: number
   actions: Action[]
+}
+interface Flight {
+  sequence: number
+  actionId: string
+  draftRevision: number
+  action: Action
+  proof: DraftProof | null
+  recover: boolean
 }
 export interface LiveGameDependencies {
   fetch: typeof fetch
@@ -105,6 +116,7 @@ export class LiveGame {
     previews: {},
     previewPending: false,
     pendingConfirm: null,
+    pendingShape: null,
     unresolvedCommand: null,
     issue: null,
   }
@@ -114,14 +126,17 @@ export class LiveGame {
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
   private sequence = 0
   private uncertainDraft = false
-  private inFlight: { sequence: number; actionId: string; draftRevision: number } | null = null
+  private inFlight: Flight | null = null
+  private lostPreview: Flight | null = null
   private draftRevision: number | null = null
   private acceptedActions: Action[] = []
   private draftProof: DraftProof | null = null
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
   private cancelRequest: Cancel | null = null
   private undoRequest: UndoV2 | null = null
+  private undoBaseProof: DraftProof | null = null
   private confirmBusy: { payload: Confirm; epoch: number } | null = null
+  private shapeBusy = false
   private readonly deps: LiveGameDependencies
 
   constructor(deps: LiveGameDependencies = defaults()) {
@@ -130,6 +145,33 @@ export class LiveGame {
 
   getState(): LiveGameState {
     return structuredClone(this.state)
+  }
+
+  /** Return only actions whose latest revision this client has proven. */
+  provenDraft(): Action[] | null {
+    if (
+      this.state.connection !== 'ready' ||
+      !this.state.game?.ownTurn ||
+      this.uncertainDraft ||
+      this.inFlight ||
+      this.state.pendingConfirm ||
+      this.state.pendingShape ||
+      this.state.unresolvedCommand ||
+      this.undoRequest ||
+      this.cancelRequest ||
+      this.draftRevision === null
+    )
+      return null
+    return structuredClone(this.acceptedActions)
+  }
+
+  /** The server revision associated with the locally proven action set. */
+  provenDraftRevision(): number | null {
+    return this.provenDraft() === null ? null : this.draftRevision
+  }
+
+  pendingUndoActionId(): string | null {
+    return this.undoRequest?.actionId ?? null
   }
 
   subscribe(listener: (state: LiveGameState) => void): () => void {
@@ -172,7 +214,10 @@ export class LiveGame {
   async connect(): Promise<void> {
     const epoch = ++this.epoch
     this.stopSocket()
-    if (this.inFlight) this.uncertainDraft = true
+    if (this.inFlight) {
+      this.uncertainDraft = true
+      this.lostPreview = this.inFlight
+    }
     this.inFlight = null
     this.publish({ connection: 'connecting', previews: {}, previewPending: false })
     if (epoch !== this.epoch) return
@@ -190,8 +235,10 @@ export class LiveGame {
         this.beginRequest = null
       if (this.cancelRequest && !sameId(this.cancelRequest.puzzleId, game.snapshot.puzzleId))
         this.cancelRequest = null
-      if (this.undoRequest && !sameId(this.undoRequest.puzzleId, game.snapshot.puzzleId))
+      if (this.undoRequest && !sameId(this.undoRequest.puzzleId, game.snapshot.puzzleId)) {
         this.undoRequest = null
+        this.undoBaseProof = null
+      }
       this.history = { byVersion: new Map(), eventIds: new Set() }
       this.publish({ game, connection: 'resyncing' })
       if (epoch !== this.epoch) return
@@ -216,7 +263,10 @@ export class LiveGame {
       socket.onclose = () => {
         if (epoch !== this.epoch) return
         ++this.epoch
-        if (this.inFlight) this.uncertainDraft = true
+        if (this.inFlight) {
+          this.uncertainDraft = true
+          this.lostPreview = this.inFlight
+        }
         this.inFlight = null
         this.stopSocket()
         this.publish({
@@ -247,7 +297,10 @@ export class LiveGame {
 
   disconnect() {
     ++this.epoch
-    if (this.inFlight) this.uncertainDraft = true
+    if (this.inFlight) {
+      this.uncertainDraft = true
+      this.lostPreview = this.inFlight
+    }
     this.inFlight = null
     this.stopSocket()
     this.publish({ connection: 'disconnected', previews: {}, previewPending: false })
@@ -271,16 +324,53 @@ export class LiveGame {
     })
   }
 
-  private undoProof(payload: UndoV2): DraftProof | null {
-    const proof = this.draftProof
+  private undoProof(payload: UndoV2, survivors?: Action[]): DraftProof | null {
+    const proof = this.undoBaseProof ?? this.draftProof
     if (
       !proof ||
       !sameId(proof.turn.puzzleId, payload.puzzleId) ||
       !sameId(proof.turn.turnId, payload.turnId) ||
       proof.turn.generation !== payload.generation ||
       proof.turn.turnRevision !== payload.turnRevision ||
-      proof.revision !== payload.draftRevision ||
-      !proof.actions.some((action) => sameId(action.actionId, payload.actionId))
+      proof.revision !== payload.draftRevision
+    )
+      return null
+    const removed = proof.actions.find((action) => sameId(action.actionId, payload.actionId))
+    if (!removed) return null
+    const previous = proof.actions.filter((action) => !sameId(action.actionId, payload.actionId))
+    if (
+      !survivors &&
+      previous.some((action) =>
+        action.affectedPieceIds.some((id) =>
+          removed.affectedPieceIds.some((piece) => sameId(id, piece)),
+        ),
+      )
+    )
+      return null
+    if (
+      survivors &&
+      (survivors.length !== previous.length ||
+        survivors.some((action) => {
+          const old = previous.find((item) => sameId(item.actionId, action.actionId))
+          if (!old) return true
+          const joined = old.affectedPieceIds.some((id) =>
+            removed.affectedPieceIds.some((piece) => sameId(id, piece)),
+          )
+          if (!joined) return canonical(old) !== canonical(action)
+          return (
+            action.affectedPieceIds.some(
+              (id) => !old.affectedPieceIds.some((piece) => sameId(id, piece)),
+            ) ||
+            action.baseRevisions.some(
+              (revision) =>
+                !old.baseRevisions.some(
+                  (base) =>
+                    sameId(base.groupId, revision.groupId) && base.revision === revision.revision,
+                ),
+            )
+          )
+        }) ||
+        new Set(survivors.map((action) => action.actionId.toLowerCase())).size !== survivors.length)
     )
       return null
     return {
@@ -291,8 +381,55 @@ export class LiveGame {
       },
       revision: proof.revision + 1,
       nextSequence: 0,
-      actions: proof.actions.filter((action) => !sameId(action.actionId, payload.actionId)),
+      actions: structuredClone(survivors ?? previous),
     }
+  }
+
+  recoverInterruptedPreview() {
+    if (this.inFlight) this.inFlight.recover = true
+    if (this.lostPreview) {
+      this.lostPreview.recover = true
+      if (this.uncertainDraft && this.state.connection === 'ready')
+        this.resync('Recovering interrupted preview.')
+    }
+  }
+
+  private matchesInterruptedPreview(reply: SubscribedV2): boolean {
+    const flight = this.lostPreview
+    const proof = flight?.proof
+    if (
+      !flight?.recover ||
+      !proof ||
+      !reply.ownTurn ||
+      !sameId(proof.turn.puzzleId, reply.ownTurn.puzzleId) ||
+      !sameId(proof.turn.turnId, reply.ownTurn.turnId) ||
+      proof.turn.generation !== reply.ownTurn.generation ||
+      proof.turn.turnRevision !== reply.ownTurn.turnRevision ||
+      reply.draftRevision !== flight.draftRevision + 1 ||
+      reply.nextSequence !== flight.sequence + 1
+    )
+      return false
+    const normalize = (action: Action) => ({
+      ...action,
+      actionId: action.actionId.toLowerCase(),
+      targetId: action.targetId.toLowerCase(),
+      kind: undefined,
+      affectedPieceIds: action.affectedPieceIds.map((id) => id.toLowerCase()).sort(),
+      baseRevisions: action.baseRevisions
+        .map((revision) => ({ ...revision, groupId: revision.groupId.toLowerCase() }))
+        .sort((a, b) => a.groupId.localeCompare(b.groupId)),
+    })
+    const affected = new Set(flight.action.affectedPieceIds.map((id) => id.toLowerCase()))
+    const expected = proof.actions.map((action) =>
+      action.affectedPieceIds.some((id) => affected.has(id.toLowerCase()))
+        ? { ...action, intendedTransform: flight.action.intendedTransform }
+        : action,
+    )
+    if (!expected.some((action) => sameId(action.actionId, flight.actionId)))
+      expected.push(flight.action)
+    const ordered = (actions: Action[]) =>
+      actions.map(normalize).sort((a, b) => a.actionId.localeCompare(b.actionId))
+    return canonical(ordered(expected)) === canonical(ordered(reply.actions))
   }
 
   private receive(raw: unknown) {
@@ -370,7 +507,12 @@ export class LiveGame {
             candidate.nextSequence === reply.nextSequence &&
             canonical(candidate.actions) === canonical(reply.actions),
           )
-        this.uncertainDraft = reply.actions.length > 0 && !matches(proof) && !matches(undoneProof)
+        this.uncertainDraft =
+          !matches(proof) &&
+          !matches(undoneProof) &&
+          !(this.lostPreview?.recover && matches(this.lostPreview.proof)) &&
+          !this.matchesInterruptedPreview(reply) &&
+          (reply.actions.length > 0 || Boolean(this.lostPreview?.recover))
         this.draftProof =
           reply.ownTurn && reply.draftRevision !== null && !this.uncertainDraft
             ? {
@@ -384,6 +526,7 @@ export class LiveGame {
         this.sequence = reply.nextSequence
         this.draftRevision = reply.draftRevision
         this.acceptedActions = structuredClone(reply.actions)
+        if (!this.uncertainDraft) this.lostPreview = null
         this.publish({
           game: {
             ...game,
@@ -423,6 +566,7 @@ export class LiveGame {
           return
         }
         this.inFlight = null
+        this.lostPreview = null
         this.acceptedActions = structuredClone(receipt.actions)
         this.draftRevision = receipt.draftRevision
         this.draftProof = {
@@ -467,7 +611,9 @@ export class LiveGame {
         ) {
           this.inFlight = null
           this.uncertainDraft = true
-          this.resync(`Preview rejected: ${rejection.error.code}; resynchronizing.`)
+          this.resync(
+            `Preview rejected: ${rejection.error.code}: ${rejection.error.message}; resynchronizing.`,
+          )
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
       } else if (type === 'boardChanged') {
         const result = applyBoardChanged(
@@ -541,7 +687,7 @@ export class LiveGame {
 
   async begin(): Promise<Turn> {
     const game = this.readyGame()
-    if (this.state.pendingConfirm || this.state.unresolvedCommand)
+    if (this.state.pendingConfirm || this.state.pendingShape || this.state.unresolvedCommand)
       throw new Error('Resolve the pending confirmation first')
     if (game.ownTurn) return game.ownTurn
     this.beginRequest ??= {
@@ -579,6 +725,7 @@ export class LiveGame {
     const turn = this.turn()
     if (
       this.state.pendingConfirm ||
+      this.state.pendingShape ||
       this.state.unresolvedCommand ||
       this.uncertainDraft ||
       this.inFlight ||
@@ -592,7 +739,15 @@ export class LiveGame {
     if (!socket) throw new Error('Game stream is not connected')
     if (this.draftRevision === null) throw new Error('Missing draft revision')
     const epoch = this.epoch
-    this.inFlight = { sequence, actionId: action.actionId, draftRevision: this.draftRevision }
+    this.lostPreview = null
+    this.inFlight = {
+      sequence,
+      actionId: action.actionId,
+      draftRevision: this.draftRevision,
+      action: structuredClone(action),
+      proof: this.draftProof,
+      recover: false,
+    }
     this.publish({ previewPending: true, issue: null })
     if (epoch !== this.epoch || socket !== this.socket)
       throw new Error('Connection changed before preview')
@@ -633,6 +788,7 @@ export class LiveGame {
   async undo(actionId: string): Promise<UndoResult> {
     if (
       this.state.pendingConfirm ||
+      this.state.pendingShape ||
       this.state.unresolvedCommand ||
       (this.uncertainDraft && !this.undoRequest) ||
       this.inFlight ||
@@ -652,6 +808,7 @@ export class LiveGame {
         draftRevision: this.draftRevision,
         actionId,
       }
+      this.undoBaseProof = this.draftProof
     }
     const payload = this.undoRequest
     if (!sameId(payload.actionId, actionId)) throw new Error('Retry the pending undo first')
@@ -667,6 +824,7 @@ export class LiveGame {
       if (this.undoRequest === payload) {
         if (error instanceof GameRequestError && error.definitive) {
           this.undoRequest = null
+          this.undoBaseProof = null
           if (this.state.connection === 'ready') {
             this.uncertainDraft = true
             this.resync('Undo rejected; refreshing the draft.')
@@ -688,12 +846,15 @@ export class LiveGame {
       this.requireEpoch(epoch)
       return result
     }
-    const undoneProof = this.undoProof(payload)
-    if (undoneProof) this.draftProof = undoneProof
+    const undoneProof = this.undoProof(payload, result.actions)
+    if (!undoneProof) throw new Error('Undo survivor mismatch')
+    this.draftProof = undoneProof
     this.undoRequest = null
+    this.undoBaseProof = null
     const activeTurn = this.state.game?.ownTurn
     if (
       epoch === this.epoch ||
+      (this.state.connection === 'ready' && this.uncertainDraft) ||
       (this.state.connection === 'ready' &&
         activeTurn &&
         sameId(activeTurn.puzzleId, payload.puzzleId) &&
@@ -706,7 +867,12 @@ export class LiveGame {
   }
 
   async cancel(): Promise<CancelResult> {
-    if (this.state.pendingConfirm || this.state.unresolvedCommand || this.undoRequest)
+    if (
+      this.state.pendingConfirm ||
+      this.state.pendingShape ||
+      this.state.unresolvedCommand ||
+      this.undoRequest
+    )
       throw new Error('Resolve the pending operation first')
     if (!this.cancelRequest) {
       const turn = this.turn()
@@ -768,11 +934,81 @@ export class LiveGame {
     return result
   }
 
+  /** Retry an unknown outcome with the same request ID and payload. */
+  async changeShape(
+    values?: Pick<ShapeChange, 'tabDepthPermille' | 'tabWidthPermille' | 'edgeWavePermille'>,
+  ): Promise<ShapeResult> {
+    if (!this.state.pendingShape) {
+      const game = this.readyGame()
+      if (
+        !values ||
+        game.ownTurn ||
+        this.state.pendingConfirm ||
+        this.state.unresolvedCommand ||
+        this.inFlight ||
+        this.cancelRequest ||
+        this.undoRequest
+      )
+        throw new Error('Finish or cancel the current draft before changing shape')
+      const payload: ShapeChange = {
+        schemaVersion: 1,
+        puzzleId: game.snapshot.puzzleId,
+        requestId: this.deps.id(),
+        definitionVersion: game.definition.definitionVersion,
+        ...values,
+      }
+      checked<ShapeChange>('ShapeChange', payload)
+      this.publish({ pendingShape: payload, issue: null })
+      // Listeners may synchronously replace the pending request or disconnect.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (this.state.pendingShape !== payload || this.state.connection !== 'ready')
+        throw new Error('Connection changed before shape change')
+    }
+    const payload = this.state.pendingShape
+    if (this.shapeBusy) throw new Error('Shape change already in progress')
+    this.shapeBusy = true
+    try {
+      const result = await this.request<ShapeResult>('/api/v1/game/shape', 'ShapeResult', payload)
+      if (
+        !sameId(result.puzzleId, payload.puzzleId) ||
+        !sameId(result.requestId, payload.requestId)
+      )
+        throw new Error('Shape response mismatch')
+      if (this.state.pendingShape === payload) {
+        this.publish({ pendingShape: null, issue: null })
+        if (result.outcome === 'updated' && this.state.connection !== 'disconnected')
+          this.resync('Shape updated; synchronizing the shared board.')
+      }
+      return result
+    } catch (error) {
+      if (this.state.pendingShape === payload) {
+        if (error instanceof GameRequestError && error.definitive) {
+          this.publish({ pendingShape: null, issue: String(error) })
+          if (error.code === 'STALE_REVISION' && this.state.connection === 'ready')
+            this.resync('Puzzle shape changed; refreshing the board.')
+        } else this.publish({ issue: `Shape outcome unknown: ${String(error)}` })
+      }
+      throw error
+    } finally {
+      this.shapeBusy = false
+    }
+  }
+
+  restorePendingShape(payload: ShapeChange) {
+    checked<ShapeChange>('ShapeChange', payload)
+    if (this.state.pendingShape) throw new Error('A shape change is already pending')
+    this.publish({
+      pendingShape: structuredClone(payload),
+      issue: 'Resolve the restored shape change before editing.',
+    })
+  }
+
   async confirm(): Promise<CommandResult> {
     if (!this.state.pendingConfirm) {
       this.turn()
       if (
         this.state.unresolvedCommand ||
+        this.state.pendingShape ||
         this.uncertainDraft ||
         this.inFlight ||
         this.undoRequest ||

@@ -1153,6 +1153,11 @@
         "actionId": {
           "type": "string",
           "format": "uuid"
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 80,
+          "items": { "$ref": "#/$defs/Action" }
         }
       },
       "required": [
@@ -1162,7 +1167,8 @@
         "requestId",
         "turnRevision",
         "generation",
-        "actionId"
+        "actionId",
+        "actions"
       ],
       "additionalProperties": false
     },
@@ -1312,6 +1318,89 @@
         }
       },
       "required": ["schemaVersion", "displayName", "expiresAt"],
+      "additionalProperties": false
+    },
+    "ShapeChange": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "puzzleId": { "type": "string", "format": "uuid" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "definitionVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "tabDepthPermille": { "type": "integer", "minimum": 100, "maximum": 220, "multipleOf": 10 },
+        "tabWidthPermille": { "type": "integer", "minimum": 220, "maximum": 360, "multipleOf": 10 },
+        "edgeWavePermille": { "type": "integer", "minimum": 0, "maximum": 60, "multipleOf": 10 }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "requestId",
+        "definitionVersion",
+        "tabDepthPermille",
+        "tabWidthPermille",
+        "edgeWavePermille"
+      ],
+      "additionalProperties": false
+    },
+    "ShapeResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "puzzleId": { "type": "string", "format": "uuid" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "outcome": { "enum": ["updated", "unchanged"] },
+        "definitionVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "boardVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "requestId",
+        "outcome",
+        "definitionVersion",
+        "boardVersion"
+      ],
+      "additionalProperties": false
+    },
+    "DraftSummary": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "puzzleId": { "type": "string", "format": "uuid" },
+        "turnId": { "type": "string", "format": "uuid" },
+        "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "draftRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "pendingMoves": { "type": "integer", "minimum": 0, "maximum": 5 }
+      },
+      "required": [
+        "schemaVersion",
+        "puzzleId",
+        "turnId",
+        "generation",
+        "draftRevision",
+        "pendingMoves"
+      ],
+      "additionalProperties": false
+    },
+    "PresenceSnapshot": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "puzzleId": { "type": "string", "format": "uuid" },
+        "players": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
+            },
+            "required": ["displayName"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["schemaVersion", "puzzleId", "players"],
       "additionalProperties": false
     },
     "ChatAssertionResponse": {

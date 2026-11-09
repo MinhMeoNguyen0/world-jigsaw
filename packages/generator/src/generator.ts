@@ -19,12 +19,15 @@ export interface Options {
   image: string
   definitionVersion?: number
   placedPieces?: number
+  layout?: 'tray' | 'surround' | 'balanced'
 }
 export interface GeneratedBoard {
   definition: Definition
   snapshot: Snapshot
 }
 const VERSION = 'world-jigsaw-grid-3'
+const SURROUND_VERSION = 'world-jigsaw-grid-6'
+const BALANCED_VERSION = 'world-jigsaw-grid-7'
 const digest = (s: string) => createHash('sha256').update(s).digest('hex')
 function uuid(s: string): string {
   const h = digest(s).slice(0, 32).split('')
@@ -116,6 +119,9 @@ function localSegments(segments: ContourSegment[], origin: Point): Edge['segment
 
 export function generate(options: Options): GeneratedBoard {
   const { seed, columns, rows, width, height, image } = options
+  const surroundLayout = options.layout === 'surround' || options.layout === 'balanced'
+  const generatorVersion =
+    options.layout === 'balanced' ? BALANCED_VERSION : surroundLayout ? SURROUND_VERSION : VERSION
   const version = options.definitionVersion ?? 1,
     placed = options.placedPieces ?? 0
   if (
@@ -151,7 +157,7 @@ export function generate(options: Options): GeneratedBoard {
   )
     throw new Error('invalid grid, dimensions, definition version or placed count')
   const identity = canonicalJson({
-    generatorVersion: VERSION,
+    generatorVersion,
     seed,
     columns,
     rows,
@@ -206,13 +212,69 @@ export function generate(options: Options): GeneratedBoard {
   const trayColumns = Math.ceil(Math.sqrt(pieces.length))
   const trayRows = Math.ceil(pieces.length / trayColumns)
   const trayX = width + margin
-  const workspace = {
-    min: point(-margin, -margin),
-    max: point(
-      trayX + (trayColumns + 1) * trayStep,
-      Math.max(height + margin, (trayRows + 1) * trayStep),
-    ),
+  // The new layout is authored once in the snapshot, so every client sees the same positions.
+  const surround: Point[] = []
+  const step = Math.ceil(Math.max(width / columns, height / rows) * 1.8)
+  // Match the reviewed inset picture: a separate central play surface surrounds it.
+  const marginX = Math.round(width * 0.35),
+    marginY = Math.round(height * 0.3666666667)
+  const halfX = Math.ceil((width / 2 + marginX) / step),
+    halfY = Math.max(
+      Math.ceil((height / 2 + marginY) / step),
+      options.layout === 'balanced' ? halfX : 0,
+    )
+  let ring = 1
+  while (surround.length < pieces.length) {
+    const x = halfX + ring,
+      y = halfY + ring
+    const top: Point[] = [],
+      right: Point[] = [],
+      bottom: Point[] = [],
+      left: Point[] = []
+    for (let dx = -x; dx < x; dx++) top.push(point(dx, -y))
+    for (let dy = -y; dy < y; dy++) right.push(point(x, dy))
+    for (let dx = x; dx > -x; dx--) bottom.push(point(dx, y))
+    for (let dy = y; dy > -y; dy--) left.push(point(-x, dy))
+    const sides = [top, right, bottom, left]
+    for (const side of sides)
+      side.sort((a, b) =>
+        digest(`${identity}:scatter:${a.x}:${a.y}`).localeCompare(
+          digest(`${identity}:scatter:${b.x}:${b.y}`),
+        ),
+      )
+    for (let i = 0; i < Math.max(top.length, right.length, bottom.length, left.length); i++)
+      for (const side of sides)
+        if (side[i] && surround.length < pieces.length) {
+          const hash = digest(`${identity}:offset:${side[i].x}:${side[i].y}`)
+          const jitter = (offset: number) =>
+            (parseInt(hash.slice(offset, offset + 8), 16) / 0xffffffff - 0.5) * step * 0.12
+          surround.push(
+            point(
+              Math.round(width / 2 + side[i].x * step + jitter(0)),
+              Math.round(height / 2 + side[i].y * step + jitter(8)),
+            ),
+          )
+        }
+    ring++
   }
+  const workspace = surroundLayout
+    ? {
+        min: point(
+          Math.min(0, ...surround.map((p) => p.x)) - step,
+          Math.min(0, ...surround.map((p) => p.y)) - step,
+        ),
+        max: point(
+          Math.max(width, ...surround.map((p) => p.x)) + step,
+          Math.max(height, ...surround.map((p) => p.y)) + step,
+        ),
+      }
+    : {
+        min: point(-margin, -margin),
+        max: point(
+          trayX + (trayColumns + 1) * trayStep,
+          Math.max(height + margin, (trayRows + 1) * trayStep),
+        ),
+      }
   const base: Omit<Definition, 'checksum'> = {
     schemaVersion: 1,
     puzzleId,
@@ -220,10 +282,12 @@ export function generate(options: Options): GeneratedBoard {
     image,
     pieces: pieces as Definition['pieces'],
     imageBounds: { min: point(0, 0), max: point(width, height) },
-    playSurface: { min: point(0, 0), max: point(width, height) },
+    playSurface: surroundLayout
+      ? { min: point(-marginX, -marginY), max: point(width + marginX, height + marginY) }
+      : { min: point(0, 0), max: point(width, height) },
     workspace,
     shape: {
-      generatorVersion: VERSION,
+      generatorVersion,
       seed,
       tabDepthPermille: 100,
       tabWidthPermille: 340,
@@ -235,10 +299,12 @@ export function generate(options: Options): GeneratedBoard {
     const angle = (parseInt(digest(`${identity}:rotation:${i}`).slice(0, 8), 16) % 4) * 90000
     const rad = (angle * Math.PI) / 180000
     const ref = add(piece.solvedPosition, piece.referencePoint)
-    const target = point(
-      trayX + ((i % trayColumns) + 1) * trayStep,
-      (Math.floor(i / trayColumns) + 1) * trayStep,
-    )
+    const target = surroundLayout
+      ? surround[i]
+      : point(
+          trayX + ((i % trayColumns) + 1) * trayStep,
+          (Math.floor(i / trayColumns) + 1) * trayStep,
+        )
     const translation = point(
       Math.round(target.x - (Math.cos(rad) * ref.x - Math.sin(rad) * ref.y)),
       Math.round(target.y - (Math.sin(rad) * ref.x + Math.cos(rad) * ref.y)),

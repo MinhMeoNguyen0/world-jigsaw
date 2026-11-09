@@ -65,6 +65,12 @@ public class GameBoards {
         definition.toString(),
         snapshot.path("boardVersion").longValue(),
         day.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC));
+    jdbc.update(
+        "INSERT INTO game_definition_history(puzzle_id, definition_version, board_version, definition) VALUES (?, ?, ?, ?::jsonb)",
+        puzzle,
+        definition.path("definitionVersion").longValue(),
+        snapshot.path("boardVersion").longValue(),
+        definition.toString());
     for (JsonNode piece : definition.path("pieces")) {
       jdbc.update(
           "INSERT INTO game_pieces(puzzle_id, piece_id) VALUES (?, ?)",

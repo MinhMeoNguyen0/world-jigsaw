@@ -104,6 +104,85 @@ class GamePreviewGeometryTest {
     }
   }
 
+  @Test
+  void joinedUndoPreservesSurvivorAndRejectsAnOverlappingRestoration() throws Exception {
+    for (boolean overlap : new boolean[] {false, true}) {
+      var fixture = squareFixture(0, false);
+      UUID subject = UUID.randomUUID();
+      var turn = fixture.game().begin(subject, fixture.puzzle());
+      UUID a = UUID.randomUUID(), b = UUID.randomUUID();
+      int sequence = 0;
+      if (overlap)
+        fixture
+            .game()
+            .preview(
+                subject,
+                turn.turnId(),
+                0,
+                ++sequence,
+                squareAction(UUID.randomUUID(), fixture, 2, 400000, 0, false));
+      fixture
+          .game()
+          .preview(subject, turn.turnId(), 0, ++sequence, squareAction(a, fixture, 0, 0, 0, false));
+      fixture
+          .game()
+          .preview(subject, turn.turnId(), 0, ++sequence, squareAction(b, fixture, 1, 0, 0, false));
+      var joined =
+          fixture
+              .game()
+              .preview(
+                  subject, turn.turnId(), 0, ++sequence, squareAction(a, fixture, 0, 0, 0, true));
+      UUID joinedId =
+          joined.previews().stream()
+              .map(PreviewGeneration.Preview::action)
+              .filter(action -> action.actionId().equals(a))
+              .findFirst()
+              .orElseThrow()
+              .targetId();
+      int distance = overlap ? 100000 : -100000;
+      var moved =
+          new PreviewGeneration.Action(
+              a,
+              "piece",
+              joinedId,
+              List.of(fixture.pieces()[0], fixture.pieces()[1]),
+              List.of(
+                  new PreviewGeneration.BaseRevision(fixture.groups()[0], 0),
+                  new PreviewGeneration.BaseRevision(fixture.groups()[1], 0)),
+              new PreviewGeneration.Transform(new PreviewGeneration.Point(distance, 0), 0));
+      fixture.game().preview(subject, turn.turnId(), 0, ++sequence, moved);
+      ObjectNode undo =
+          new ObjectMapper()
+              .createObjectNode()
+              .put("schemaVersion", 1)
+              .put("puzzleId", fixture.puzzle().toString())
+              .put("turnId", turn.turnId().toString())
+              .put("requestId", UUID.randomUUID().toString())
+              .put("turnRevision", 0)
+              .put("generation", 0)
+              .put("draftRevision", sequence)
+              .put("actionId", b.toString());
+      if (overlap) {
+        assertThatThrownBy(() -> fixture.game().undo(subject, undo))
+            .isInstanceOf(DraftRules.RuleError.class)
+            .hasMessageContaining("overlap");
+        assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).hasSize(3);
+      } else {
+        JsonNode result = fixture.game().undo(subject, undo);
+        assertThat(
+                result
+                    .path("actions")
+                    .get(0)
+                    .path("intendedTransform")
+                    .path("translation")
+                    .path("x")
+                    .intValue())
+            .isEqualTo(distance);
+        assertThat(fixture.game().subscribe(fixture.puzzle()).previews()).hasSize(1);
+      }
+    }
+  }
+
   private record SquareFixture(GameCoordinator game, UUID puzzle, UUID[] pieces, UUID[] groups) {}
 
   private SquareFixture squareFixture(int rotation, boolean snap) throws Exception {
@@ -125,7 +204,7 @@ class GamePreviewGeometryTest {
           groups.addObject().put("groupId", groupIds[i].toString()).put("revision", 0);
       group.putArray("pieceIds").add(pieceIds[i].toString());
       ObjectNode transform = group.putObject("transform");
-      int translation = snap ? (i == 0 ? 285001 : i == 2 ? 500000 : 0) : 0;
+      int translation = snap ? (i == 0 ? 277001 : i == 2 ? 500000 : 0) : 0;
       transform
           .putObject("translation")
           .put("x", axisX(rotation) * translation)
@@ -148,6 +227,8 @@ class GamePreviewGeometryTest {
     GameIdentityLedger identities = mock(GameIdentityLedger.class);
     when(identities.reserveTurn(any(), any())).thenAnswer(call -> UUID.randomUUID());
     when(identities.reserveGroup(any())).thenAnswer(call -> UUID.randomUUID());
+    when(identities.record(any(), any(), any(), any(), any(), any()))
+        .thenAnswer(call -> new GameIdentityLedger.Receipt(false, call.getArgument(5)));
     Clock clock = Clock.fixed(Instant.parse("2026-11-07T12:00:00Z"), ZoneOffset.UTC);
     GameCoordinator game =
         new GameCoordinator(
@@ -212,7 +293,7 @@ class GamePreviewGeometryTest {
       ObjectNode piece = squares.path("pieces").get(0).deepCopy();
       piece.put("pieceId", pieceId.toString());
       ((ObjectNode) piece.path("solvedPosition"))
-          .put("x", i == 12 ? -90000 : (i % 4) * 100000)
+          .put("x", i == 12 ? -82000 : (i % 4) * 100000)
           .put("y", i == 12 ? 0 : (i / 4) * 100000);
       for (JsonNode edge : piece.path("edges"))
         ((ObjectNode) edge).putNull("neighborPieceId").putNull("neighborEdgeId");
@@ -606,7 +687,7 @@ class GamePreviewGeometryTest {
           groups.addObject().put("groupId", groupIds[i].toString()).put("revision", 0);
       group.putArray("pieceIds").add(pieces[i].toString());
       ObjectNode transform = group.putObject("transform");
-      transform.putObject("translation").put("x", i == 2 ? -290001 : 0).put("y", 0);
+      transform.putObject("translation").put("x", i == 2 ? -282001 : 0).put("y", 0);
       transform.put("rotation", 0);
       group.put("finalPosition", false);
     }

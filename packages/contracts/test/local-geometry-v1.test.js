@@ -50,8 +50,8 @@ test('local geometry square collision vectors match independent rectangle arithm
         const a = boxes[i],
           b = boxes[j]
         const overlapsInset = (outer, inner) =>
-          Math.min(outer.maxX, inner.maxX - 10000) > Math.max(outer.minX, inner.minX + 10000) &&
-          Math.min(outer.maxY, inner.maxY - 10000) > Math.max(outer.minY, inner.minY + 10000)
+          Math.min(outer.maxX, inner.maxX - 19000) > Math.max(outer.minX, inner.minX + 19000) &&
+          Math.min(outer.maxY, inner.maxY - 19000) > Math.max(outer.minY, inner.minY + 19000)
         forbidden ||= overlapsInset(a, b) || overlapsInset(b, a)
       }
     assert.equal(forbidden, example.forbidden, example.name)
@@ -88,8 +88,8 @@ test('local geometry square snap vectors use reciprocal neighbors and inclusive 
 
 test('narrow tab intrusion vectors match independent rectangular interval arithmetic', () => {
   for (const example of fixture.concaveCases.squareLeft) {
-    // The other square's inset starts at x + 10000; its y interval contains the tab.
+    // The other square's inset starts at x + 19000; its y interval contains the tab.
     // The main body and its inset lie left of x=100000, far from every example square.
-    assert.equal(160000 > example.x + 10000, example.forbidden, String(example.x))
+    assert.equal(160000 > example.x + 19000, example.forbidden, String(example.x))
   }
 })
