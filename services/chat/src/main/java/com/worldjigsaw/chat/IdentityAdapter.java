@@ -5,18 +5,18 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
-import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.Signature;
 import java.security.spec.X509EncodedKeySpec;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
 import java.util.UUID;
@@ -48,7 +48,9 @@ interface IdentityAdapter {
     String mode = env.getOrDefault("CHAT_IDENTITY_MODE", "session");
     if (mode.equals("session")) {
       String port = env.getOrDefault("GAME_PORT", "8080");
-      if (!port.matches("[0-9]{1,5}") || Integer.parseInt(port) < 1 || Integer.parseInt(port) > 65535)
+      if (!port.matches("[0-9]{1,5}")
+          || Integer.parseInt(port) < 1
+          || Integer.parseInt(port) > 65535)
         throw new IllegalArgumentException("Invalid GAME_PORT");
       return session(URI.create("http://127.0.0.1:" + port + "/api/v1/session/identity"));
     }
@@ -71,24 +73,32 @@ interface IdentityAdapter {
     return exchange -> {
       String token = null;
       var headers = exchange.getRequestHeaders().get("Cookie");
-      if (headers != null) for (String header : headers) for (String part : header.split(";")) {
-        String value = part.trim();
-        if (value.startsWith("wj_session=")) {
-          if (token != null) return null;
-          token = value.substring("wj_session=".length());
-        }
-      }
+      if (headers != null)
+        for (String header : headers)
+          for (String part : header.split(";")) {
+            String value = part.trim();
+            if (value.startsWith("wj_session=")) {
+              if (token != null) return null;
+              token = value.substring("wj_session=".length());
+            }
+          }
       if (token == null || !token.matches("[A-Za-z0-9_-]{43}")) return null;
       try {
-        HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(3))
-            .header("Cookie", "wj_session=" + token).GET().build();
+        HttpRequest request =
+            HttpRequest.newBuilder(endpoint)
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", "wj_session=" + token)
+                .GET()
+                .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) return null;
         JsonNode value = json.readTree(response.body());
         String subject = value.path("subject").asText();
         String name = value.path("displayName").asText();
         long expires = value.path("expiresAt").asLong();
-        if (!canonicalUuid(subject) || name.length() > 128 || !name.equals(ChatServer.normalize(name))
+        if (!canonicalUuid(subject)
+            || name.length() > 128
+            || !name.equals(ChatServer.normalize(name))
             || expires <= Instant.now().getEpochSecond()) return null;
         return new Identity(subject, name, expires);
       } catch (Exception ex) {

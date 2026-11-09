@@ -57,17 +57,19 @@ try {
       p = await ctx.newPage(),
       sent = [],
       received = []
+    let socketId = 0
     p.on('websocket', (ws) => {
+      const connection = ++socketId
       ws.on('framesent', (e) => {
         try {
           const m = JSON.parse(e.payload)
-          if (m.type === 'preview.submit') sent.push(m)
+          if (m.type === 'preview.submit') sent.push({ ...m, connection })
         } catch {}
       })
       ws.on('framereceived', (e) => {
         try {
           const m = JSON.parse(e.payload)
-          if (m.type === 'preview.accepted' || m.type === 'preview.rejected') received.push(m)
+          if (m.type === 'preview.accepted' || m.type === 'preview.rejected') received.push({ ...m, connection })
         } catch {}
       })
     })
@@ -169,7 +171,7 @@ try {
       const reply = await wait(
         () =>
           received.find(
-            (m) => m.sequence === final.sequence && m.actionId === final.action.actionId,
+            (m) => m.connection === final.connection && m.sequence === final.sequence && m.actionId === final.action.actionId,
           ),
         'receipt matching final sequence',
       )
@@ -208,6 +210,12 @@ try {
         .waitFor({ timeout: 30000 })
         .catch(() => {})
       const cancel = p.getByRole('button', { name: 'Cancel batch' })
+      // A final rejection can begin resynchronization after the earlier ready check.
+      // Wait for the draft to become cancelable instead of skipping cleanup mid-transition.
+      const deadline = Date.now() + 30000
+      while (Date.now() < deadline && !(await cancel.isEnabled()) &&
+        (await observer.locator('[data-preview-action]').count()) > 0)
+        await p.waitForTimeout(100)
       if (await cancel.isEnabled().catch(() => false)) {
         const response = p.waitForResponse(
           (r) => r.url().endsWith('/cancel') && r.request().method() === 'POST',

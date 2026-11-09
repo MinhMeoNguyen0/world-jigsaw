@@ -68,7 +68,8 @@ class DraftRules {
     }
 
     DraftGroup copy() {
-      DraftGroup copy = new DraftGroup(group.deepCopy(), new ArrayList<>(sources), new ArrayList<>(actions));
+      DraftGroup copy =
+          new DraftGroup(group.deepCopy(), new ArrayList<>(sources), new ArrayList<>(actions));
       adjustments.forEach((id, transform) -> copy.adjustments.put(id, transform.deepCopy()));
       if (children != null) {
         copy.children = children.stream().map(DraftGroup::copy).toList();
@@ -279,8 +280,11 @@ class DraftRules {
       }
       for (var adjustment : g.adjustments.entrySet()) {
         if (adjustment.getKey().equals(a.id)) continue;
-        DraftGroup child = children.stream()
-            .filter(item -> item.actions.contains(adjustment.getKey())).findFirst().orElseThrow();
+        DraftGroup child =
+            children.stream()
+                .filter(item -> item.actions.contains(adjustment.getKey()))
+                .findFirst()
+                .orElseThrow();
         applyMove(d, child, action(d, adjustment.getKey()), adjustment.getValue(), true);
       }
       g = d.groups.stream().filter(x -> x.actions.contains(a.id)).findFirst().orElseThrow();

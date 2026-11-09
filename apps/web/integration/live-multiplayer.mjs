@@ -146,7 +146,12 @@ try {
   await a.locator('[data-connection=ready]').waitFor()
   await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 })
   await settle(a, 1)
+  const undoResponse = a.waitForResponse(
+    (response) => response.url().includes('/undo') && response.request().method() === 'POST',
+  )
   await a.getByRole('button', { name: 'Undo last change' }).click()
+  assert.equal((await undoResponse).status(), 200)
+  await b.waitForFunction(() => document.querySelectorAll('[data-preview-action]').length === 0)
   await a.locator('[data-connection=ready]').waitFor()
   assert.equal(await a.getByRole('button', { name: 'Rotate selected piece' }).isDisabled(), true)
   await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 })
@@ -184,6 +189,25 @@ try {
   }
   await a.waitForFunction(() => document.querySelectorAll('[data-preview-action]').length === 5)
   console.log('five independent previews visible to peer')
+  const sixth = fixture.snapshot.groups[5]
+  await dragTo(b, sixth.groupId, sixth.pieceIds[0], { x: 1350000, y: 800000 })
+  await status(b).filter({ hasText: 'QUOTA_EXCEEDED' }).waitFor({ timeout: 20000 })
+  await b.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+  await settle(b, 5)
+  // An intermediate position outside the play surface can be accepted as a free
+  // sort before the charged destination is rejected. Undo it if it was observed.
+  if (await a.locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`).count()) {
+    const sixthUndo = b.waitForResponse(
+      (response) => response.url().includes('/undo') && response.request().method() === 'POST',
+    )
+    await b.getByRole('button', { name: 'Undo last change' }).click()
+    assert.equal((await sixthUndo).status(), 200)
+    await a.locator(`[data-preview-piece-ids="${sixth.pieceIds[0]}"]`).waitFor({ state: 'detached' })
+    await b.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+    await settle(b, 5)
+  }
+  assert.equal(await a.locator('[data-preview-action]').count(), 5)
+  console.log('sixth charged move rejected; five accepted actions retained')
   await b.getByRole('button', { name: 'Confirm changes' }).click()
   await b.waitForFunction(
     () =>
