@@ -258,14 +258,16 @@ export function begin(definition: Definition, snapshot: Snapshot, allowance: All
     generation: 0,
   }
 }
-const applyMove = (d: Draft, g: DraftGroup, action: PendingAction, transform: Transform) => {
+const applyMove = (d: Draft, g: DraftGroup, action: PendingAction, transform: Transform, replay: boolean) => {
   checkWorkspace(d, { ...g.group, transform })
-  if (g.sources.length > 1 && !equalTransform(g.group.transform, transform)) {
-    chargeJoinedMovement(d, g, transform)
-    g.adjustments = [
-      ...(g.adjustments ?? []).filter((item) => !same(item.actionId, action.id)),
-      { actionId: action.id, transform: copy(transform) },
-    ]
+  if (g.sources.length > 1) {
+    const changed = !equalTransform(g.group.transform, transform)
+    if (changed) chargeJoinedMovement(d, g, transform)
+    if (changed || replay)
+      g.adjustments = [
+        ...(g.adjustments ?? []).filter((item) => !same(item.actionId, action.id)),
+        { actionId: action.id, transform: copy(transform) },
+      ]
   }
   g.group.transform = copy(transform)
   const src = original(d, action.source)
@@ -294,7 +296,7 @@ export function move(draft: Draft, groupId: string, actionId: string, transform:
     d.actions.push(action)
     g.actions.push(actionId)
   }
-  applyMove(d, g, action, transform)
+  applyMove(d, g, action, transform, false)
   checkQuota(d)
   return d
 }
@@ -376,7 +378,7 @@ export function undo(draft: Draft, actionId: string): Draft {
       if (same(adjustment.actionId, action.id)) continue
       const child = children.find((item) => item.actions.some((id) => same(id, adjustment.actionId)))!
       const survivor = d.actions.find((item) => same(item.id, adjustment.actionId))!
-      applyMove(d, child, survivor, adjustment.transform)
+      applyMove(d, child, survivor, adjustment.transform, true)
     }
     g = d.groups.find((group) => group.actions.some((id) => same(id, action.id)))!
   }

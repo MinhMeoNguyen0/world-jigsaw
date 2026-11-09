@@ -178,6 +178,44 @@ class DraftRulesTest {
   }
 
   @Test
+  void equalTransformReplayPreservesSurvivorAcrossNestedUndo() throws Exception {
+    JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
+    JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1),
+        third = snapshot.path("groups").get(2);
+    for (int rotation : new int[] {0, 90000, 180000, 270000}) {
+      for (boolean reverse : new boolean[] {false, true}) {
+        String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(),
+            c = UUID.randomUUID().toString(), pair = UUID.randomUUID().toString(),
+            triple = UUID.randomUUID().toString();
+        String removed = reverse ? a : b, survivor = reverse ? b : a;
+        JsonNode removedGroup = reverse ? first : second, survivorGroup = reverse ? second : first;
+        ObjectNode base = transform(0, 0, rotation);
+        int direction = reverse ? -1 : 1;
+        ObjectNode moved = transform(direction * 1300, direction * -700, rotation);
+        DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 5);
+        draft = rules.move(draft, id(first), a, base);
+        draft = rules.move(draft, id(second), b, base);
+        draft = rules.move(draft, id(third), c, base);
+        draft = rules.attach(draft, id(first), id(second), pair);
+        draft = rules.move(draft, pair, removed, moved);
+        DraftRules.Draft unchanged = rules.move(draft, pair, survivor, moved);
+        assertThat(rules.groupTransform(rules.undo(unchanged, removed), id(survivorGroup)))
+            .isEqualTo(base);
+        draft = rules.attach(draft, pair, id(third), triple);
+        draft = rules.move(draft, triple, survivor, moved);
+        DraftRules.Draft undone = rules.undo(draft, removed);
+        assertThat(rules.groupTransform(undone, id(survivorGroup))).isEqualTo(moved);
+        assertThat(rules.groupTransform(undone, id(removedGroup)))
+            .isEqualTo(removedGroup.path("transform"));
+        assertThat(rules.groupTransform(undone, id(third))).isEqualTo(base);
+        int charged = rotation == 0 ? 1 : 2;
+        assertThat(rules.pendingCount(undone)).isEqualTo(charged);
+        assertThat(rules.confirm(undone, snapshot, 5).charged()).isEqualTo(charged);
+      }
+    }
+  }
+
+  @Test
   void freeOuterSortAndLegacyRejectionLeaveInputsUnchanged() throws Exception {
     JsonNode board = fixture("review-60.json"),
         snapshot = board.path("snapshot"),

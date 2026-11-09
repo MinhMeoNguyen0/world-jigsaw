@@ -160,17 +160,21 @@ class DraftRules {
       d.actions.add(action);
       g.actions.add(actionKey);
     }
-    applyMove(d, g, action, transform);
+    applyMove(d, g, action, transform, false);
     checkQuota(d);
     return d;
   }
 
-  private static void applyMove(Draft d, DraftGroup g, Action action, JsonNode transform) {
+  private static void applyMove(
+      Draft d, DraftGroup g, Action action, JsonNode transform, boolean replay) {
     checkWorkspace(d, g.group.path("pieceIds"), transform);
-    if (g.sources.size() > 1 && !sameTransform(g.group.path("transform"), transform)) {
-      chargeJoinedMovement(d, g, transform);
-      g.adjustments.remove(action.id);
-      g.adjustments.put(action.id, transform.deepCopy());
+    if (g.sources.size() > 1) {
+      boolean changed = !sameTransform(g.group.path("transform"), transform);
+      if (changed) chargeJoinedMovement(d, g, transform);
+      if (changed || replay) {
+        g.adjustments.remove(action.id);
+        g.adjustments.put(action.id, transform.deepCopy());
+      }
     }
     g.group.set("transform", transform.deepCopy());
     JsonNode source = source(d, action.source);
@@ -277,7 +281,7 @@ class DraftRules {
         if (adjustment.getKey().equals(a.id)) continue;
         DraftGroup child = children.stream()
             .filter(item -> item.actions.contains(adjustment.getKey())).findFirst().orElseThrow();
-        applyMove(d, child, action(d, adjustment.getKey()), adjustment.getValue());
+        applyMove(d, child, action(d, adjustment.getKey()), adjustment.getValue(), true);
       }
       g = d.groups.stream().filter(x -> x.actions.contains(a.id)).findFirst().orElseThrow();
     }
