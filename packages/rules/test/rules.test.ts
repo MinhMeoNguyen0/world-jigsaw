@@ -300,7 +300,10 @@ test('attachment, independent action charges, group movement and undo', () => {
   const before = d
   d = attach(d, g1.groupId, g2.groupId, action(99), 0, 0)
   assert.equal(pendingCount(d), 2)
-  rejects(() => undo(d, action(1)), 'INVALID_ACTION')
+  const undone = undo(d, action(1))
+  assert.deepEqual(undone.actions.map((item) => item.id), [action(2)])
+  assert.deepEqual(undone.groups.find((item) => item.group.groupId === g2.groupId)?.group.transform, solved)
+  assert.deepEqual(undone.groups.find((item) => item.group.groupId === g1.groupId)?.group.transform, g1.transform)
   assert.equal(pendingCount(before), 2)
   d = move(d, action(99), action(1), { rotation: 0, translation: { x: 100, y: 100 } })
   const result = confirm(d, snapshot, allowance)

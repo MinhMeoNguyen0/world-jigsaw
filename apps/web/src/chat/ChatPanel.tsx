@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { LiveChat, type LiveChatState } from './live-chat'
 import { t } from '../i18n/translate'
 
@@ -15,12 +15,19 @@ export function ChatPanel({ presence, ready }: { presence: ReactNode; ready: boo
   const [input, setInput] = useState('')
   const [notice, setNotice] = useState('')
   const [sending, setSending] = useState(false)
+  const started = useRef(false)
   useEffect(() => {
     const unsubscribe = chat.subscribe(setState)
-    if (ready) void chat.connect()
     return () => {
       unsubscribe()
       chat.disconnect()
+      started.current = false
+    }
+  }, [chat])
+  useEffect(() => {
+    if (ready && !started.current) {
+      started.current = true
+      void chat.connect()
     }
   }, [chat, ready])
   const send = async () => {

@@ -56,6 +56,8 @@ class DraftRules {
     ObjectNode group;
     List<String> sources;
     List<String> actions;
+    List<DraftGroup> children;
+    Map<String, Action> beforeJoin;
 
     DraftGroup(ObjectNode group, List<String> sources, List<String> actions) {
       this.group = group;
@@ -64,7 +66,13 @@ class DraftRules {
     }
 
     DraftGroup copy() {
-      return new DraftGroup(group.deepCopy(), new ArrayList<>(sources), new ArrayList<>(actions));
+      DraftGroup copy = new DraftGroup(group.deepCopy(), new ArrayList<>(sources), new ArrayList<>(actions));
+      if (children != null) {
+        copy.children = children.stream().map(DraftGroup::copy).toList();
+        copy.beforeJoin = new HashMap<>();
+        beforeJoin.forEach((id, action) -> copy.beforeJoin.put(id, action.copy()));
+      }
+      return copy;
     }
   }
 
@@ -185,6 +193,10 @@ class DraftRules {
     mergedGroup.set("transform", target.group.path("transform").deepCopy());
     mergedGroup.put("finalPosition", false);
     checkWorkspace(d, members, mergedGroup.path("transform"));
+    Map<String, Action> beforeJoin = new HashMap<>();
+    for (Action a : d.actions)
+      if (moving.actions.contains(a.id) || target.actions.contains(a.id))
+        beforeJoin.put(a.id, a.copy());
     for (Action a : d.actions)
       if (moving.actions.contains(a.id) || target.actions.contains(a.id))
         a.joinedCharge = counted(d, a);
@@ -195,7 +207,10 @@ class DraftRules {
     actions.addAll(target.actions);
     d.groups.remove(moving);
     d.groups.remove(target);
-    d.groups.add(new DraftGroup(mergedGroup, sources, actions));
+    DraftGroup joined = new DraftGroup(mergedGroup, sources, actions);
+    joined.children = List.of(moving.copy(), target.copy());
+    joined.beforeJoin = beforeJoin;
+    d.groups.add(joined);
     checkQuota(d);
     return d;
   }
@@ -239,11 +254,19 @@ class DraftRules {
     if (a == null) throw fail("INVALID_ACTION", "Unknown action");
     DraftGroup g =
         d.groups.stream().filter(x -> x.actions.contains(a.id)).findFirst().orElseThrow();
-    if (g.sources.size() != 1 || g.actions.size() != 1)
-      throw fail("INVALID_ACTION", "Joined action cannot be undone");
+    while (g.children != null) {
+      d.groups.remove(g);
+      d.groups.addAll(g.children.stream().map(DraftGroup::copy).toList());
+      for (int i = 0; i < d.actions.size(); i++) {
+        Action previous = g.beforeJoin.get(d.actions.get(i).id);
+        if (previous != null) d.actions.set(i, previous.copy());
+      }
+      g = d.groups.stream().filter(x -> x.actions.contains(a.id)).findFirst().orElseThrow();
+    }
     g.group = source(d, a.source).deepCopy();
     g.actions.clear();
-    d.actions.remove(a);
+    d.actions.removeIf(item -> item.id.equals(a.id));
+    checkQuota(d);
     d.generation++;
     return d;
   }

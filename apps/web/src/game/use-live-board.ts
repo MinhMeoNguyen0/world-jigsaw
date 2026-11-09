@@ -67,6 +67,21 @@ function turnAt(tr: Transform, center: Point): Transform {
   }
 }
 
+export function imageSource(value: string, origin: string): string | null {
+  if (value === 'fixture://original-landscape') return '/original-landscape.svg'
+  if (value === 'fixture://hoi-an-generated') return '/hoi-an-generated.png'
+  try {
+    if (/%|\\/.test(value) || /(^|\/)\.{1,2}(\/|$)/.test(value)) return null
+    const url = new URL(value, origin)
+    if (url.origin !== origin || url.username || url.password || url.search || url.hash ||
+      !/^\/(?!api(?:\/|$))(?:[a-z0-9_-]+\/)*[a-z0-9_.-]+\.(?:png|jpe?g|webp|gif|avif|svg)$/i.test(url.pathname))
+      return null
+    return url.pathname
+  } catch {
+    return null
+  }
+}
+
 export function useLiveBoard() {
   const [client] = useState(() => new LiveGame())
   const [state, setState] = useState<LiveGameState>(() => client.getState())
@@ -80,6 +95,7 @@ export function useLiveBoard() {
     [dragging, setDragging] = useState(false)
   const [camera, setCamera] = useState({ zoom: 1, x: 0, y: 0 })
   const [summary, setSummary] = useState<DraftSummary | null>(null)
+  const [imageLoad, setImageLoad] = useState<{ source: string; loaded: boolean } | null>(null)
   const board = useRef<SVGSVGElement>(null),
     pending = useRef<Pending | null>(null)
   const recoveryFailed = useRef(false)
@@ -94,6 +110,7 @@ export function useLiveBoard() {
   const game = state.game
   const proven = client.provenDraft()
   const actions = proven ?? []
+  const undoPending = client.pendingUndoActionId() !== null
   const proofRevision = client.provenDraftRevision()
   const turnId = game?.ownTurn?.turnId
   const generation = game?.ownTurn?.generation
@@ -175,11 +192,18 @@ export function useLiveBoard() {
   const centerX = workspace ? (workspace.min.x + workspace.max.x) / 2 + camera.x : 0.5
   const centerY = workspace ? (workspace.min.y + workspace.max.y) / 2 + camera.y : 0.5
   const bounds = `${centerX - visibleWidth / 2} ${centerY - visibleHeight / 2} ${visibleWidth} ${visibleHeight}`
-  const imageAssets: Record<string, string> = {
-    'fixture://original-landscape': '/original-landscape.svg',
-    'fixture://hoi-an-generated': '/hoi-an-generated.png',
-  }
-  const supportedImage = game ? (imageAssets[game.definition.image] ?? null) : null
+  const source = game ? imageSource(game.definition.image, window.location.origin) : null
+  useEffect(() => {
+    if (!source) return
+    const img = new Image()
+    img.onload = () => { setImageLoad({ source, loaded: true }) }
+    img.onerror = () => { setImageLoad({ source, loaded: false }) }
+    img.src = source
+    return () => { img.onload = null; img.onerror = null }
+  }, [source])
+  const supportedImage = source && imageLoad?.source === source && imageLoad.loaded ? source : null
+  const imageError = game && (!source || (imageLoad?.source === source && !imageLoad.loaded))
+    ? t('game.imageUnavailable') : null
   const point = (x: number, y: number): Point | null => {
     const m = board.current?.getScreenCTM()
     if (!m) return null
@@ -567,10 +591,10 @@ export function useLiveBoard() {
       })
   }
   const undo = () => {
-    const last = client.provenDraft()?.at(-1)
-    if (last) {
+    const actionId = client.pendingUndoActionId() ?? client.provenDraft()?.at(-1)?.actionId
+    if (actionId) {
       setSelected(null)
-      void client.undo(last.actionId).catch((e: unknown) => {
+      void client.undo(actionId).catch((e: unknown) => {
         setError(String(e))
       })
     }
@@ -621,6 +645,7 @@ export function useLiveBoard() {
     client,
     game,
     actions,
+    undoPending,
     pendingMoves,
     proven,
     selected,
@@ -654,6 +679,7 @@ export function useLiveBoard() {
     play,
     image,
     supportedImage,
+    imageError,
     point,
     down,
     move,

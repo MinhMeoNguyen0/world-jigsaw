@@ -165,6 +165,8 @@
   "chat.unknown": "Delivery is unknown. The message may have been sent.",
   "game.cancel": "Cancel batch",
   "game.undo": "Undo last change",
+  "game.imageUnavailable": "Puzzle image is unsupported or unavailable.",
+  "game.importedImage": "Imported puzzle image",
   "game.pending": "{count} pending",
   "game.confirmRetry": "Retry confirmation",
   "game.resolve": "Check confirmation",

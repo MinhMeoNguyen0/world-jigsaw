@@ -20,7 +20,13 @@ export class RuleError extends Error {
     this.code = code
   }
 }
-type DraftGroup = { group: Group; sources: string[]; actions: string[] }
+type DraftGroup = {
+  group: Group
+  sources: string[]
+  actions: string[]
+  children?: DraftGroup[]
+  beforeJoin?: PendingAction[]
+}
 type PendingAction = { id: string; source: string; entered: boolean; joinedCharge?: boolean }
 export type Draft = {
   definition: Definition
@@ -327,6 +333,10 @@ export function attach(
     finalPosition: false,
   }
   checkWorkspace(d, group)
+  const children = [copy(moving), copy(target)]
+  const beforeJoin = copy(d.actions.filter((action) =>
+    [...moving.actions, ...target.actions].some((id) => same(id, action.id)),
+  ))
   for (const action of d.actions)
     if ([...moving.actions, ...target.actions].some((id) => same(id, action.id)))
       action.joinedCharge = counted(d, action)
@@ -336,6 +346,8 @@ export function attach(
     group,
     sources: [...moving.sources, ...target.sources],
     actions: [...moving.actions, ...target.actions],
+    children,
+    beforeJoin,
   })
   checkQuota(d)
   return d
@@ -344,12 +356,17 @@ export function undo(draft: Draft, actionId: string): Draft {
   checkOrientation(draft.base)
   const d = copy(draft),
     action = d.actions.find((a) => same(a.id, actionId)) ?? fail('INVALID_ACTION', 'Unknown action')
-  const g = d.groups.find((g) => g.actions.some((id) => same(id, action.id)))!
-  if (g.sources.length !== 1 || g.actions.length !== 1)
-    return fail('INVALID_ACTION', 'Joined action cannot be undone')
+  let g = d.groups.find((g) => g.actions.some((id) => same(id, action.id)))!
+  while (g.children) {
+    const previous = g.beforeJoin!
+    d.groups = [...d.groups.filter((group) => group !== g), ...copy(g.children)]
+    d.actions = d.actions.map((item) => copy(previous.find((saved) => same(saved.id, item.id)) ?? item))
+    g = d.groups.find((group) => group.actions.some((id) => same(id, action.id)))!
+  }
   g.group = copy(original(d, action.source))
   g.actions = []
   d.actions = d.actions.filter((a) => !same(a.id, actionId))
+  checkQuota(d)
   d.generation++
   return d
 }

@@ -134,6 +134,7 @@ export class LiveGame {
   private beginRequest: { schemaVersion: 1; puzzleId: string; requestId: string } | null = null
   private cancelRequest: Cancel | null = null
   private undoRequest: UndoV2 | null = null
+  private undoBaseProof: DraftProof | null = null
   private confirmBusy: { payload: Confirm; epoch: number } | null = null
   private shapeBusy = false
   private readonly deps: LiveGameDependencies
@@ -167,6 +168,10 @@ export class LiveGame {
   /** The server revision associated with the locally proven action set. */
   provenDraftRevision(): number | null {
     return this.provenDraft() === null ? null : this.draftRevision
+  }
+
+  pendingUndoActionId(): string | null {
+    return this.undoRequest?.actionId ?? null
   }
 
   subscribe(listener: (state: LiveGameState) => void): () => void {
@@ -230,8 +235,10 @@ export class LiveGame {
         this.beginRequest = null
       if (this.cancelRequest && !sameId(this.cancelRequest.puzzleId, game.snapshot.puzzleId))
         this.cancelRequest = null
-      if (this.undoRequest && !sameId(this.undoRequest.puzzleId, game.snapshot.puzzleId))
+      if (this.undoRequest && !sameId(this.undoRequest.puzzleId, game.snapshot.puzzleId)) {
         this.undoRequest = null
+        this.undoBaseProof = null
+      }
       this.history = { byVersion: new Map(), eventIds: new Set() }
       this.publish({ game, connection: 'resyncing' })
       if (epoch !== this.epoch) return
@@ -317,8 +324,8 @@ export class LiveGame {
     })
   }
 
-  private undoProof(payload: UndoV2): DraftProof | null {
-    const proof = this.draftProof
+  private undoProof(payload: UndoV2, survivors?: Action[]): DraftProof | null {
+    const proof = this.undoBaseProof ?? this.draftProof
     if (
       !proof ||
       !sameId(proof.turn.puzzleId, payload.puzzleId) ||
@@ -329,6 +336,19 @@ export class LiveGame {
       !proof.actions.some((action) => sameId(action.actionId, payload.actionId))
     )
       return null
+    const removed = proof.actions.find((action) => sameId(action.actionId, payload.actionId))!
+    const previous = proof.actions.filter((action) => !sameId(action.actionId, payload.actionId))
+    if (!survivors && previous.some((action) => action.affectedPieceIds.some((id) =>
+      removed.affectedPieceIds.some((piece) => sameId(id, piece))))) return null
+    if (survivors && (survivors.length !== previous.length || survivors.some((action) => {
+      const old = previous.find((item) => sameId(item.actionId, action.actionId))
+      if (!old) return true
+      const joined = old.affectedPieceIds.some((id) => removed.affectedPieceIds.some((piece) => sameId(id, piece)))
+      if (!joined) return canonical(old) !== canonical(action)
+      return action.affectedPieceIds.some((id) => !old.affectedPieceIds.some((piece) => sameId(id, piece))) ||
+        action.baseRevisions.some((revision) => !old.baseRevisions.some((base) =>
+          sameId(base.groupId, revision.groupId) && base.revision === revision.revision))
+    }) || new Set(survivors.map((action) => action.actionId.toLowerCase())).size !== survivors.length)) return null
     return {
       turn: {
         ...proof.turn,
@@ -337,7 +357,7 @@ export class LiveGame {
       },
       revision: proof.revision + 1,
       nextSequence: 0,
-      actions: proof.actions.filter((action) => !sameId(action.actionId, payload.actionId)),
+      actions: structuredClone(survivors ?? previous),
     }
   }
 
@@ -756,6 +776,7 @@ export class LiveGame {
         draftRevision: this.draftRevision,
         actionId,
       }
+      this.undoBaseProof = this.draftProof
     }
     const payload = this.undoRequest
     if (!sameId(payload.actionId, actionId)) throw new Error('Retry the pending undo first')
@@ -771,6 +792,7 @@ export class LiveGame {
       if (this.undoRequest === payload) {
         if (error instanceof GameRequestError && error.definitive) {
           this.undoRequest = null
+          this.undoBaseProof = null
           if (this.state.connection === 'ready') {
             this.uncertainDraft = true
             this.resync('Undo rejected; refreshing the draft.')
@@ -792,12 +814,15 @@ export class LiveGame {
       this.requireEpoch(epoch)
       return result
     }
-    const undoneProof = this.undoProof(payload)
-    if (undoneProof) this.draftProof = undoneProof
+    const undoneProof = this.undoProof(payload, result.actions)
+    if (!undoneProof) throw new Error('Undo survivor mismatch')
+    this.draftProof = undoneProof
     this.undoRequest = null
+    this.undoBaseProof = null
     const activeTurn = this.state.game?.ownTurn
     if (
       epoch === this.epoch ||
+      (this.state.connection === 'ready' && this.uncertainDraft) ||
       (this.state.connection === 'ready' &&
         activeTurn &&
         sameId(activeTurn.puzzleId, payload.puzzleId) &&

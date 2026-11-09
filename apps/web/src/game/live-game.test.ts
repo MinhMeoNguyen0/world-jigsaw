@@ -977,6 +977,7 @@ describe('versioned subscription and preview receipts', () => {
           turnRevision: newTurn.turnRevision,
           generation: newTurn.generation,
           actionId: action.actionId,
+          actions: [second],
         }),
       )
       h.setGame({ ...current, ownTurn: newTurn })
@@ -1003,6 +1004,73 @@ describe('versioned subscription and preview receipts', () => {
       expect(socketAt(h.sockets, 1).sent).toHaveLength(2)
     },
   )
+
+  it.each(['handoff first', 'response first'] as const)(
+    'reconciles restored joined survivors when %s',
+    async (order) => {
+      const h = harness()
+      const second = fixture.confirm.actions[1] as Confirm['actions'][number]
+      const socket = await h.start()
+      socket.emit(handoff())
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      h.client.preview(second)
+      socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
+      const joined = {
+        ...action,
+        targetId: second.targetId,
+        affectedPieceIds: [...action.affectedPieceIds, ...second.affectedPieceIds] as typeof action.affectedPieceIds,
+        baseRevisions: [...action.baseRevisions, ...second.baseRevisions] as typeof action.baseRevisions,
+      }
+      const joinedSecond = { ...joined, actionId: second.actionId, kind: second.kind }
+      h.client.preview(joined)
+      socket.emit({ ...accepted(2, 3), actions: [joined, joinedSecond] })
+      const response = deferred<Response>()
+      h.setUndoReply(response.promise)
+      const pending = h.client.undo(action.actionId)
+      const newTurn = { ...turn, generation: turn.generation + 1, turnRevision: turn.turnRevision + 1 }
+      const result = new Response(JSON.stringify({
+        schemaVersion: 1, puzzleId, turnId: turn.turnId,
+        requestId: '00000000-0000-4000-8000-000000000001',
+        turnRevision: newTurn.turnRevision, generation: newTurn.generation,
+        actionId: action.actionId, actions: [second],
+      }))
+      h.setGame({ ...current, ownTurn: newTurn })
+      if (order === 'handoff first') {
+        socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        socketAt(h.sockets, 1).open()
+        socketAt(h.sockets, 1).emit({ ...handoff([second], 4), ownTurn: newTurn, nextSequence: 0 })
+        expect(h.client.provenDraft()).toBeNull()
+      }
+      response.resolve(result)
+      await pending
+      const index = order === 'handoff first' ? 2 : 1
+      await vi.waitFor(() => expect(h.sockets).toHaveLength(index + 1))
+      socketAt(h.sockets, index).open()
+      socketAt(h.sockets, index).emit({ ...handoff([second], 4), ownTurn: newTurn, nextSequence: 0 })
+      expect(h.client.provenDraft()).toEqual([second])
+    },
+  )
+
+  it('retries a lost undo response with the same fenced request', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    h.setUndoReply(Promise.reject(new TypeError('lost response')))
+    await expect(h.client.undo(action.actionId)).rejects.toThrow('lost response')
+    expect(h.client.pendingUndoActionId()).toBe(action.actionId)
+    h.setUndoReply(Promise.resolve(new Response(JSON.stringify({
+      schemaVersion: 1, puzzleId, turnId: turn.turnId,
+      requestId: '00000000-0000-4000-8000-000000000001',
+      turnRevision: turn.turnRevision + 1, generation: turn.generation + 1,
+      actionId: action.actionId, actions: [],
+    }))))
+    await h.client.undo(action.actionId)
+    expect(h.undoBodies[1]).toEqual(h.undoBodies[0])
+  })
 
   it.each(['revision', 'actions', 'generation', 'turn revision', 'sequence'] as const)(
     'blocks a recovered draft when its %s conflicts with acknowledged work',

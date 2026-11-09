@@ -1153,6 +1153,11 @@
         "actionId": {
           "type": "string",
           "format": "uuid"
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/Action" }
         }
       },
       "required": [
@@ -1162,7 +1167,8 @@
         "requestId",
         "turnRevision",
         "generation",
-        "actionId"
+        "actionId",
+        "actions"
       ],
       "additionalProperties": false
     },

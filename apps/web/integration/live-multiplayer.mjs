@@ -88,9 +88,17 @@ async function dragTo(page, groupId, pieceId, target, hold = false, preview = fa
 try {
   await ready(a)
   await ready(b)
+  await a.getByRole('button', { name: /Live chat/ }).click()
+  await b.getByRole('button', { name: /Live chat/ }).click()
+  await a.getByRole('textbox', { name: 'Message' }).fill('Chat survives board changes')
+  await a.getByRole('button', { name: 'Send', exact: true }).click()
+  await b.getByText('Chat survives board changes').waitFor()
   const original = await b.locator(`[data-group-id="${ids[0]}"]`).getAttribute('transform')
   await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 }, true)
   await b.locator('[data-preview-action]').first().waitFor({ state: 'attached', timeout: 20000 })
+  await a.locator('[data-preview-pending=false]').waitFor()
+  await a.locator('svg.board').dispatchEvent('contextmenu', { button: 2 })
+  assert.ok((await a.locator('[data-local-ghost]').getAttribute('transform')).includes('rotate(90)'))
   console.log('peer saw preview while pointer held')
   await a.mouse.up()
   await settle(a, 1)
@@ -155,6 +163,13 @@ try {
       document.querySelector('.pill-count')?.textContent?.includes('0 left') &&
       document.querySelector('.pill-count')?.textContent?.includes('0 pending'),
   )
+  await a.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+  await b.getByText('Chat survives board changes').waitFor()
+  await a.getByRole('textbox', { name: 'Message' }).fill('Still connected after confirmation')
+  await a.getByRole('button', { name: 'Send', exact: true }).click()
+  await b.getByText('Still connected after confirmation').waitFor()
+  await a.getByRole('button', { name: 'Close chat' }).click()
+  await b.getByRole('button', { name: 'Close chat' }).click()
   const saved = await Promise.all(
     ids.map((id) => b.locator(`[data-group-id="${id}"]`).getAttribute('transform')),
   )
@@ -184,6 +199,11 @@ try {
     members.includes(pieces[0]) && members.includes(pieces[1]),
     `join preview members: ${members}`,
   )
+  await a.getByRole('button', { name: 'Undo last change' }).click()
+  await b.waitForFunction(() => document.querySelectorAll('[data-preview-action]').length === 0)
+  await a.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+  await dragTo(a, ids[0], pieces[0], { groupId: ids[1] })
+  await settle(a, 1)
   await a.getByRole('button', { name: 'Confirm changes' }).click()
   await a.waitForFunction(() =>
     document.querySelector('.pill-count')?.textContent?.includes('4 left'),
@@ -257,6 +277,9 @@ try {
   await b.getByText('Same player after reload').waitFor()
   assert.equal(await b.getByText('Same player after reload').locator('..').locator('strong').textContent(), displayName)
   console.log('mounted chat delivered to peer')
+  await a.route('**/hoi-an-generated.png', (route) => route.abort())
+  await a.reload()
+  await status(a).filter({ hasText: 'Puzzle image is unsupported or unavailable.' }).waitFor()
   assert.deepEqual(errors, [])
 } catch (error) {
   console.error('FAILED', error)

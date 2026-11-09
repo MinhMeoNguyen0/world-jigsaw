@@ -400,6 +400,10 @@ export interface UndoResult {
   turnRevision: number
   generation: number
   actionId: string
+  /**
+   * @maxItems 5
+   */
+  actions: Action[]
 }
 export interface CancelResult {
   schemaVersion: 1

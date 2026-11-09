@@ -1030,6 +1030,8 @@ class GameCoordinator {
     DraftRules.Draft updated = rules.undo(turn.draft, actionId.toString());
     List<PreviewGeneration.Action> survivors = serverActions(updated);
     leases.validateUndoAt(subject, turnId, generation, survivors, acceptedAt);
+    if (hasForbiddenOverlap(turn, updated, current(subject, puzzle)))
+      throw error("INVALID_ACTION", "Undo would cause forbidden piece overlap");
     if (turn.revision == 9_007_199_254_740_991L
         || turn.draftRevision == 9_007_199_254_740_991L
         || generation == 9_007_199_254_740_991L)
@@ -1044,6 +1046,8 @@ class GameCoordinator {
             .put("turnRevision", turn.revision + 1)
             .put("generation", generation + 1)
             .put("actionId", actionId.toString());
+    ArrayNode remaining = result.putArray("actions");
+    for (var action : survivors) remaining.add(mapper.valueToTree(action));
     turn.pendingReceipt =
         new PendingReceipt(
             requestId,

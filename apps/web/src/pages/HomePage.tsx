@@ -67,6 +67,7 @@ export function HomePage() {
     client,
     game,
     actions,
+    undoPending,
     pendingMoves,
     proven,
     selected,
@@ -99,6 +100,7 @@ export function HomePage() {
     play,
     image,
     supportedImage,
+    imageError,
     down,
     move,
     up,
@@ -369,6 +371,7 @@ export function HomePage() {
             onPointerCancel={abort}
             onContextMenu={(event) => {
               event.preventDefault()
+              event.stopPropagation()
               if (pending.current?.active) rotate(pending.current.group)
             }}
           >
@@ -497,19 +500,24 @@ export function HomePage() {
                 alt={t(
                   game?.definition.image === 'fixture://hoi-an-generated'
                     ? 'game.generatedAlt'
-                    : 'live.fixtureAlt',
+                    : game?.definition.image === 'fixture://original-landscape'
+                      ? 'live.fixtureAlt'
+                      : 'game.importedImage',
                 )}
               />
               <span>
                 {t(
                   game?.definition.image === 'fixture://hoi-an-generated'
                     ? 'game.generatedCaption'
-                    : 'live.fixture',
+                    : game?.definition.image === 'fixture://original-landscape'
+                      ? 'live.fixture'
+                      : 'game.importedImage',
                 )}
               </span>
             </div>
           )}
         </div>
+        {imageError && <div className="feedback" role="status">{imageError}</div>}
         <div className="feedback" aria-live="polite" role="status">
           {error ??
             state.issue ??
@@ -640,7 +648,7 @@ export function HomePage() {
         </button>
         <button
           className="pill-action"
-          disabled={!actions.length || dragging || state.previewPending}
+          disabled={(!actions.length && !undoPending) || dragging || state.previewPending || state.connection !== 'ready'}
           onClick={undo}
           aria-label={t('home.undo')}
         >

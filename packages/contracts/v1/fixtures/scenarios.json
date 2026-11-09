@@ -86,7 +86,7 @@
     },
     {
       "name": "undo-joined-action",
-      "expected": "Reject removal if it would invalidate a joined or dependent action; preserve the entire batch and allow cancel."
+      "expected": "Restore the pre-join components, remove the selected action and preserve other actions when the restored positions remain valid."
     },
     {
       "name": "cancel-after-other-commit",

@@ -94,8 +94,9 @@ class DraftRulesTest {
     assertThat(rules.pendingCount(draft)).isZero();
     draft = rules.move(draft, merged, action, transform(100, 0, 0));
     assertThat(rules.pendingCount(draft)).isEqualTo(1);
-    DraftRules.Draft joined = draft;
-    assertThatThrownBy(() -> rules.undo(joined, action)).isInstanceOf(DraftRules.RuleError.class);
+    DraftRules.Draft undone = rules.undo(draft, action);
+    assertThat(rules.actions(undone)).isEmpty();
+    assertThat(rules.groups(undone)).hasSize(snapshot.path("groups").size());
     DraftRules.Confirmation result = rules.confirm(draft, snapshot, 5);
     assertThat(result.charged()).isEqualTo(1);
     assertThat(result.snapshot().path("groups").size())
@@ -105,6 +106,25 @@ class DraftRulesTest {
     assertThat(group).isNotNull();
     assertThat(group.path("pieceIds").size()).isEqualTo(2);
     assertThat(group.path("transform").path("translation").path("x").intValue()).isEqualTo(100);
+  }
+
+  @Test
+  void undoJoinedActionRestoresOtherDraftsAndLaterIndependentMoves() throws Exception {
+    JsonNode board = fixture("review-60.json"), snapshot = board.path("snapshot");
+    JsonNode first = snapshot.path("groups").get(0), second = snapshot.path("groups").get(1),
+        third = snapshot.path("groups").get(2);
+    String a = UUID.randomUUID().toString(), b = UUID.randomUUID().toString(),
+        c = UUID.randomUUID().toString(), merged = UUID.randomUUID().toString();
+    DraftRules.Draft draft = rules.begin(board.path("definition"), snapshot, 5);
+    draft = rules.move(draft, id(first), a, transform(100, 0, 0));
+    draft = rules.move(draft, id(second), b, transform(0, 0, 0));
+    draft = rules.attach(draft, id(first), id(second), merged);
+    draft = rules.move(draft, id(third), c, transform(200, 0, 0));
+    DraftRules.Draft undone = rules.undo(draft, a);
+    assertThat(rules.actions(undone)).extracting(DraftRules.ActionView::actionId).containsExactly(b, c);
+    assertThat(rules.groupTransform(undone, id(second))).isEqualTo(transform(0, 0, 0));
+    assertThat(rules.groupTransform(undone, id(third))).isEqualTo(transform(200, 0, 0));
+    assertThat(rules.groupTransform(undone, id(first))).isEqualTo(first.path("transform"));
   }
 
   @Test
