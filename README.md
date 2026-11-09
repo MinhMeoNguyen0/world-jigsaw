@@ -1,7 +1,17 @@
 # World Jigsaw
 
-A browser-based, collaborative daily jigsaw puzzle. The product and engineering plan is in
-[`docs/PLAN.md`](docs/PLAN.md).
+A browser-based, collaborative daily jigsaw puzzle.
+
+## Handoff and demo
+
+The [project handoff](docs/HANDOFF.md) maps the current architecture, operational constraints and
+known gaps. The [documentation and recording notes](docs/demo/README.md) include playback and
+reproduction instructions. [Watch the two-player local demo](docs/demo/two-player-local.webm): two
+independent browser contexts on one computer show a remote pointer, live chat and drag preview,
+confirmation and a saved position after reload. The original [Player A](docs/demo/player-a.webm) and
+[Player B](docs/demo/player-b.webm) recordings are also available. The silent recordings use disposable
+local data; they do not demonstrate separate devices or a public deployment. The earlier [product plan](docs/PLAN.md)
+is a proposal, not the current wire contract.
 
 ## Repository layout
 
@@ -13,7 +23,7 @@ A browser-based, collaborative daily jigsaw puzzle. The product and engineering 
 | `packages/contracts` | Versioned shared schemas, fixtures and types       |
 | `packages/generator` | Deterministic puzzle generator and review fixtures |
 | `packages/rules`     | Local puzzle rules                                 |
-| `docs`               | Product and engineering plan                       |
+| `docs`               | Handoff, demo recordings, and product plan         |
 | `.github`            | CI workflows and Dependabot configuration          |
 
 The [puzzle generator](packages/generator/README.md) produces standalone definitions and starting snapshots.

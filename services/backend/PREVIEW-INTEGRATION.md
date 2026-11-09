@@ -10,7 +10,8 @@ restoring an old board. An admitted Confirm pins its previews until the transact
 The protocol's explicit join request and independent outgoing sequence numbers are documented in
 [TURN-WIRE.md](TURN-WIRE.md). The service is private-local and single-writer; session identity,
 geometry thresholds, error handling and resilience are not a public hosting security review. The
-frontend and chat have not been integrated by this backend change.
+current web client uses the game service and the separate chat relay; see the
+[project handoff](../../docs/HANDOFF.md) for their integration.
 
 ## Separate preview demo
 
