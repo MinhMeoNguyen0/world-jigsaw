@@ -1,10 +1,9 @@
 # Private-local live chat adapter
 
-`LiveChat` is the web client's transport for the independent local chat relay. It does not
-authenticate the player. In local mode, create a disposable random
-UUID for the tab or browser session and supply it as `subject`; it can be impersonated
-and must not be a secret or real identifier. Supply `window.fetch.bind(window)` and
-`crypto.randomUUID` through the other constructor arguments.
+`LiveChat` is the web client's transport for the local chat relay. It uses the existing
+HTTP-only game session cookie for both the stream and sends. Start it after the game
+session is ready. Supply `window.fetch.bind(window)` and `crypto.randomUUID` through
+the constructor arguments.
 
 Subscribe before calling `connect()`. Render message text and display names as text,
 never HTML. State contains only the latest 100 live events, and it is cleared on stream
@@ -24,5 +23,4 @@ send response.
 The Vite development server proxies `/api/v1/chat` to the local relay and other
 `/api/v1` requests to the game service, preserving the browser Host and Origin. It binds
 only to loopback and is not a production gateway. See the relay README for local setup,
-identity limitations, and the prohibition on public exposure. Assertion mode is not
-implemented by this local adapter.
+identity limitations, and the prohibition on public exposure.

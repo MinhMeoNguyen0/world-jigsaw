@@ -1,10 +1,8 @@
 import { validate } from '@world-jigsaw/contracts'
 import type { ChatAccepted, ChatMessage } from '@world-jigsaw/contracts'
 
-/** Private-local relay identity, independent of the game session. This is not authentication. */
 export interface LiveChatDependencies {
   fetch: typeof fetch
-  subject: string
   id: () => string
 }
 
@@ -51,7 +49,8 @@ export class LiveChat {
     this.update({ connection: 'connecting', messages: [] })
     try {
       const response = await this.deps.fetch('/api/v1/chat/stream', {
-        headers: { 'X-Local-Subject': this.deps.subject, Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream' },
+        credentials: 'same-origin',
         signal: controller.signal,
         cache: 'no-store',
       })
@@ -91,7 +90,8 @@ export class LiveChat {
     try {
       const response = await this.deps.fetch('/api/v1/chat/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Local-Subject': this.deps.subject },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body,
       })
       if (!response.ok) return response.status >= 500 ? 'unavailable' : 'invalid'

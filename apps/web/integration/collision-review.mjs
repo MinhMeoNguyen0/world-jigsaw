@@ -145,6 +145,11 @@ try {
       )
       await p.mouse.move(data.x, data.y)
       await p.mouse.down()
+      if (mode === 'owner' && fraction === 0.18) {
+        await p.mouse.move(data.targetBox.x + data.targetBox.w / 2, data.targetBox.y + data.targetBox.h / 2)
+        await wait(() => received.some((m) => m.type === 'preview.rejected'), 'intermediate rejection')
+        await p.locator('[data-connection=ready]').waitFor({ timeout: 30000 })
+      }
       await p.mouse.move(data.tx, data.ty, { steps: 20 })
       await p.waitForTimeout(300)
       await p.mouse.up()

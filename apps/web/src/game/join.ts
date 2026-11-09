@@ -5,7 +5,7 @@ import type {
   PreviewState,
   Transform,
 } from '@world-jigsaw/contracts'
-import { controlBounds } from './transit'
+import { sampledScale } from './transit'
 
 interface Candidate {
   ids: string[]
@@ -55,8 +55,6 @@ export function suggestJoin(
   for (const id of action.affectedPieceIds) {
     const piece = pieces.get(id)
     if (!piece) continue
-    const box = controlBounds(piece, transform)
-    if (!box) continue
     for (const edge of piece.edges) {
       const neighbor = edge.neighborPieceId
       if (!neighbor || moving.has(neighbor) || occupied.has(neighbor)) continue
@@ -69,15 +67,7 @@ export function suggestJoin(
         candidate.transform.rotation !== transform.rotation
       )
         continue
-      const otherBox = controlBounds(other, candidate.transform)
-      if (!otherBox) continue
-      const tolerance =
-        Math.min(
-          box.right - box.left,
-          box.bottom - box.top,
-          otherBox.right - otherBox.left,
-          otherBox.bottom - otherBox.top,
-        ) * 0.05
+      const tolerance = Math.floor(Math.min(sampledScale(piece), sampledScale(other)) / 20)
       if (
         Math.hypot(
           transform.translation.x - candidate.transform.translation.x,

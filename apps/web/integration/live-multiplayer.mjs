@@ -50,8 +50,10 @@ async function settle(page, expected) {
     { timeout: 20000 },
   )
 }
-async function dragTo(page, groupId, pieceId, target, hold = false) {
-  const selector = `[data-group-id="${groupId}"] > path`
+async function dragTo(page, groupId, pieceId, target, hold = false, preview = false) {
+  const selector = preview
+    ? `[data-preview-piece-ids="${pieceId}"] > path`
+    : `[data-group-id="${groupId}"] > path`
   const points = await page.locator(selector).evaluate(
     (path, { pieceId, target, definition }) => {
       const group = path.parentElement,
@@ -112,6 +114,28 @@ try {
   await a.getByRole('button', { name: 'Undo last change' }).click()
   await a.locator('[data-connection=ready]').waitFor()
   assert.equal(await a.getByRole('button', { name: 'Rotate selected piece' }).isDisabled(), true)
+  await dragTo(a, ids[0], pieces[0], { x: 500000, y: 200000 })
+  await settle(a, 1)
+  const beforeInterruptedMove = await b.locator(`[data-preview-piece-ids="${pieces[0]}"]`).getAttribute('transform')
+  await dragTo(a, ids[0], pieces[0], { x: 800000, y: 200000 }, true, true)
+  await b.waitForFunction(({ piece, before }) => {
+    const value = document.querySelector(`[data-preview-piece-ids="${piece}"]`)?.getAttribute('transform')
+    return value && value !== before
+  }, { piece: pieces[0], before: beforeInterruptedMove })
+  await dragTo(b, ids[1], pieces[1], { x: 500000, y: 200000 })
+  await settle(b, 1)
+  await a.locator('svg.board').dispatchEvent('pointercancel', { pointerId: 1 })
+  await a.mouse.up()
+  await a.getByRole('status').filter({ hasText: 'Preview rejected:' }).waitFor({ timeout: 20000 })
+  await a.locator('[data-connection=ready]').waitFor({ timeout: 20000 })
+  await settle(a, 1)
+  await a.waitForTimeout(1000)
+  assert.equal(await a.locator('[data-connection=ready]').count(), 1)
+  assert.equal(await a.getByRole('button', { name: 'Confirm changes' }).isEnabled(), true)
+  assert.ok(await a.locator(`[data-preview-piece-ids="${pieces[1]}"]`).count())
+  await b.getByRole('button', { name: 'Cancel batch' }).click()
+  await a.getByRole('button', { name: 'Cancel batch' }).click()
+  await b.waitForFunction(() => document.querySelectorAll('[data-preview-action]').length === 0)
   const targets = [
     { x: 500000, y: 200000 },
     { x: 800000, y: 200000 },
@@ -220,9 +244,18 @@ try {
   console.log('all four initial orientations rotated and canceled')
   await a.getByRole('button', { name: /Live chat/ }).click()
   await b.getByRole('button', { name: /Live chat/ }).click()
+  const displayName = await a.evaluate(async () => (await (await fetch('/api/v1/session', { method: 'POST' })).json()).displayName)
   await a.getByRole('textbox', { name: 'Message' }).fill('A real shared message')
   await a.getByRole('button', { name: 'Send', exact: true }).click()
   await b.getByText('A real shared message').waitFor()
+  assert.equal(await b.getByText('A real shared message').locator('..').locator('strong').textContent(), displayName)
+  await a.reload()
+  await a.locator('[data-connection=ready]').waitFor()
+  await a.getByRole('button', { name: /Live chat/ }).click()
+  await a.getByRole('textbox', { name: 'Message' }).fill('Same player after reload')
+  await a.getByRole('button', { name: 'Send', exact: true }).click()
+  await b.getByText('Same player after reload').waitFor()
+  assert.equal(await b.getByText('Same player after reload').locator('..').locator('strong').textContent(), displayName)
   console.log('mounted chat delivered to peer')
   assert.deepEqual(errors, [])
 } catch (error) {

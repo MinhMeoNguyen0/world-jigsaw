@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { LiveChat, type LiveChatState } from './live-chat'
 
-const subject = '00000000-0000-4000-8000-000000000001'
 const messageId = '00000000-0000-4000-8000-000000000002'
 const message = {
   schemaVersion: 1,
@@ -23,7 +22,7 @@ function harness() {
   fetcher.mockResolvedValueOnce(
     new Response(body, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8' } }),
   )
-  const chat = new LiveChat({ fetch: fetcher, subject, id: () => messageId })
+  const chat = new LiveChat({ fetch: fetcher, id: () => messageId })
   let state!: LiveChatState
   chat.subscribe((next) => {
     state = next
@@ -58,7 +57,8 @@ describe('live chat', () => {
     expect(await h.chat.send('hello')).toBe('accepted')
     expect(h.fetcher.mock.calls[1]?.[1]).toMatchObject({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Local-Subject': subject },
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
     })
     h.fetcher.mockResolvedValueOnce(new Response('', { status: 400 }))
     expect(await h.chat.send('bad')).toBe('invalid')

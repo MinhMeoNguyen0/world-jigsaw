@@ -708,6 +708,7 @@ export function HomePage() {
         </div>
       )}
       <ChatPanel
+        ready={state.connection === 'ready'}
         presence={
           <PlayerStrip puzzleId={game?.snapshot.puzzleId} ready={state.connection === 'ready'} />
         }

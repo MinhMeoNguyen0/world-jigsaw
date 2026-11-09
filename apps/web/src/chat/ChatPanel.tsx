@@ -2,12 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { LiveChat, type LiveChatState } from './live-chat'
 import { t } from '../i18n/translate'
 
-export function ChatPanel({ presence }: { presence: ReactNode }) {
+export function ChatPanel({ presence, ready }: { presence: ReactNode; ready: boolean }) {
   const [chat] = useState(
     () =>
       new LiveChat({
         fetch: window.fetch.bind(window),
-        subject: crypto.randomUUID(),
         id: () => crypto.randomUUID(),
       }),
   )
@@ -18,12 +17,12 @@ export function ChatPanel({ presence }: { presence: ReactNode }) {
   const [sending, setSending] = useState(false)
   useEffect(() => {
     const unsubscribe = chat.subscribe(setState)
-    void chat.connect()
+    if (ready) void chat.connect()
     return () => {
       unsubscribe()
       chat.disconnect()
     }
-  }, [chat])
+  }, [chat, ready])
   const send = async () => {
     if (sending || !input.trim()) return
     setSending(true)

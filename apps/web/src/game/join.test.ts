@@ -34,6 +34,34 @@ describe('join proposal', () => {
     expect(suggestJoin(balanced, {}, proposal, near, [proposal]).affectedPieceIds)
       .toEqual([...moving.pieceIds, ...neighbor.pieceIds])
   })
+  it.each([0, 90000, 180000, 270000])(
+    'uses the sampled contour boundary at rotation %i',
+    (rotation) => {
+      const balanced = balancedFixture as unknown as CurrentGame
+      const moving = balanced.snapshot.groups[1]
+      const neighbor = balanced.snapshot.groups[2]
+      const oriented: CurrentGame = {
+        ...balanced,
+        snapshot: {
+          ...balanced.snapshot,
+          groups: [
+            { ...moving, transform: { ...moving.transform, rotation } },
+            { ...neighbor, transform: { ...neighbor.transform, rotation } },
+          ],
+        },
+      }
+      const proposal: Action = {
+        actionId: 'a', kind: 'piece', targetId: moving.pieceIds[0],
+        affectedPieceIds: moving.pieceIds,
+        baseRevisions: [{ groupId: moving.groupId, revision: moving.revision }],
+        intendedTransform: { ...moving.transform, rotation },
+      }
+      const transform = (offset: number) => ({ rotation, translation: { x: offset, y: 0 } })
+      expect(suggestJoin(oriented, {}, proposal, transform(6600), [proposal]).affectedPieceIds)
+        .toContain(neighbor.pieceIds[0])
+      expect(suggestJoin(oriented, {}, proposal, transform(6650), [proposal])).toBe(proposal)
+    },
+  )
   it('requests the whole adjacent group only within the conservative snap range', () => {
     const joined = suggestJoin(game, {}, action, second.transform, [action])
     expect(joined.affectedPieceIds).toEqual([...first.pieceIds, ...second.pieceIds])

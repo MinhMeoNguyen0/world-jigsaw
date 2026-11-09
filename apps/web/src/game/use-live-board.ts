@@ -26,6 +26,7 @@ interface Pending {
   origin: Transform
   desired: Transform
   sent: string
+  sentFor: 'active' | 'final' | 'restore'
   active: boolean
   moved: boolean
   acquiring: boolean
@@ -221,6 +222,7 @@ export function useLiveBoard() {
       ) {
         p.restoring = true
         try {
+          p.sentFor = 'restore'
           client.preview(p.original)
           p.restoring = false
         } catch (e) {
@@ -249,6 +251,7 @@ export function useLiveBoard() {
     if (value !== p.sent) {
       p.sent = value
       p.action = { ...p.action, intendedTransform: structuredClone(p.desired) }
+      p.sentFor = p.active ? 'active' : 'final'
       setAccepted(false)
       try {
         client.preview(p.action)
@@ -297,6 +300,7 @@ export function useLiveBoard() {
     origin: structuredClone(group.transform),
     desired: structuredClone(group.transform),
     sent: '',
+    sentFor: 'active',
     active: true,
     moved: false,
     acquiring: false,
@@ -398,6 +402,7 @@ export function useLiveBoard() {
       return
     }
     d.active = false
+    d.sent = ''
     flush()
   }
   const abort = () => {
@@ -508,15 +513,17 @@ export function useLiveBoard() {
       if (next.connection === 'ready' && !next.issue && !next.previewPending && !pending.current) {
         setAccepted((client.provenDraft()?.length ?? 0) > 0)
       }
-      if (
-        next.connection === 'resyncing' &&
-        next.issue?.startsWith('Preview rejected:') &&
-        !pending.current?.interrupted
-      ) {
-        pending.current = null
-        setGhost(null)
-        setDragging(false)
-        setError(next.issue)
+      if (next.connection === 'resyncing' && next.issue?.startsWith('Preview rejected:')) {
+        const current = pending.current
+        if (current && current.sentFor === 'active' && !current.interrupted) {
+          if (!current.active) current.sent = ''
+        } else {
+          pending.current = null
+          setGhost(null)
+          setDragging(false)
+          setSelected(null)
+          setError(next.issue)
+        }
       }
       setState(next)
       queueMicrotask(() => {

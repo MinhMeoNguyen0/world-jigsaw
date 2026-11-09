@@ -23,6 +23,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Private loopback-only anonymous identity; it is not public authentication. */
@@ -134,6 +135,19 @@ class LocalSessionController {
 
   LocalSessionController(LocalSessions sessions) {
     this.sessions = sessions;
+  }
+
+  @GetMapping("/api/v1/session/identity")
+  ResponseEntity<?> identity(HttpServletRequest request) {
+    String host = request.getServerName();
+    if ((!"127.0.0.1".equals(host) && !"localhost".equalsIgnoreCase(host))
+        || (request.getHeader("Origin") != null && !LocalSessions.sameOrigin(request)))
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    LocalSessions.Session session = sessions.lookup(LocalSessions.cookie(request));
+    if (session == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+    return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
+        .body(Map.of("subject", session.subject().toString(), "displayName", session.displayName(),
+            "expiresAt", session.expiresAt().getEpochSecond()));
   }
 
   @PostMapping("/api/v1/session")

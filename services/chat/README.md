@@ -1,7 +1,7 @@
 # Local chat service
 
 This independently runnable Java 21 service relays short messages in one live room. It binds
-only to `127.0.0.1` and does not contact the game, its database, or a gateway. It uses its own
+only to `127.0.0.1` and checks the game session with the local game service. It uses its own
 PostgreSQL database for the room's validation settings. It never stores messages or transcripts.
 
 From the repository root, run `docker compose up -d chat-postgres`, or supply a separate
@@ -20,7 +20,12 @@ must be initialized before any other JDK HTTP server in the process.
 
 ## Identity and private use
 
-The default `CHAT_IDENTITY_MODE=local` is a **development-only identity adapter**, not
+The default `CHAT_IDENTITY_MODE=session` forwards the game session cookie to the loopback game
+service for verification on each stream and send. Start the game service on port 8080, or set
+`GAME_PORT` to its port. The game supplies the subject, display name, and expiration; browser
+identity headers are ignored. The stream closes when the session expires.
+
+The optional `CHAT_IDENTITY_MODE=local` is a **development-only identity adapter**, not
 authentication. Supply a lowercase canonical UUID in `X-Local-Subject` on requests. It is
 caller-selected and can be impersonated; the first 8 characters form a public display name. Use
 a disposable random UUID, not a secret or real identifier.
