@@ -35,6 +35,7 @@ interface Pending {
   openingTurn: boolean
   openedTurn: Turn | null
   waitingForTurn: boolean
+  recovered: boolean
   initialTurn: Turn | null
   puzzleId: string
   snapshot: Snapshot
@@ -480,7 +481,7 @@ export function useLiveBoard() {
             ? p.snapshot
             : null
       const candidates = now.game.snapshot.groups.filter((group) => {
-        if (!recovering) return true
+        if (!p.recovered) return true
         const original = base?.groups.find((item) => sameId(item.groupId, group.groupId))
         return (
           original &&
@@ -580,6 +581,7 @@ export function useLiveBoard() {
       openingTurn: !currentGame.ownTurn,
       openedTurn: null,
       waitingForTurn: false,
+      recovered: false,
       initialTurn: currentGame.ownTurn,
       puzzleId: currentGame.snapshot.puzzleId,
       snapshot: currentGame.snapshot,
@@ -824,6 +826,7 @@ export function useLiveBoard() {
         setGhost(null)
         setSelected(null)
         current.waitingForTurn = true
+        current.recovered = true
         if (next.connection !== 'disconnected') {
           client.recoverInterruptedPreview()
         }

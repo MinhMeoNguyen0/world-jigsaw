@@ -520,6 +520,80 @@ describe('three-piece group interaction', () => {
     },
   )
 
+  it.each([
+    ['drag', 'revised'],
+    ['drag', 'unchanged'],
+    ['rotate', 'revised'],
+    ['rotate', 'unchanged'],
+  ] as const)(
+    'checks the %s target when a held drag recovers with a %s neighbor',
+    async (interaction, change) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const multiplayer = multiplayerFixture as unknown as CurrentGame
+      const [first, second] = multiplayer.snapshot.groups
+      if (!second) throw new Error('Expected neighboring groups')
+      const moving = { ...first, finalPosition: false }
+      const target = {
+        ...second,
+        finalPosition: false,
+        transform:
+          interaction === 'drag'
+            ? { rotation: 0, translation: { x: 20, y: 30 } }
+            : { rotation: 90000, translation: { x: 126687, y: 6697 } },
+      }
+      const snapshot = {
+        ...multiplayer.snapshot,
+        groups: [moving, target],
+      } as CurrentGame['snapshot']
+      const ownTurn = { ...turn, puzzleId: snapshot.puzzleId, boardVersion: snapshot.boardVersion }
+      const { board } = setup({ definition: multiplayer.definition, ownTurn, snapshot })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      board.down(pointer(10, 20), moving)
+      board.move(pointer(30, 50))
+      await Promise.resolve()
+      mock.actions = [firstPreview()]
+      emit({ ...old, connection: 'resyncing' })
+      const updated = change === 'revised' ? { ...target, revision: target.revision + 1 } : target
+      emit({
+        ...old,
+        game: {
+          ...requireGame(old),
+          snapshot: {
+            ...snapshot,
+            boardVersion: snapshot.boardVersion + 1,
+            groups: [moving, updated],
+          },
+        },
+      })
+      await Promise.resolve()
+      if (interaction === 'rotate') board.rotate(moving)
+      mock.preview.mockClear()
+      board.up(pointer(30, 50))
+      expect(lastPreview().affectedPieceIds).toEqual(
+        change === 'unchanged' ? [...moving.pieceIds, ...target.pieceIds] : moving.pieceIds,
+      )
+      expect(lastPreview().baseRevisions).toEqual(
+        change === 'unchanged'
+          ? [
+              { groupId: moving.groupId, revision: moving.revision },
+              { groupId: target.groupId, revision: target.revision },
+            ]
+          : [{ groupId: moving.groupId, revision: moving.revision }],
+      )
+      cleanup?.()
+    },
+  )
+
   it.each(['drag', 'rotate'] as const)(
     'joins an unchanged neighbor after another player confirms an unrelated move: %s',
     async (interaction) => {
