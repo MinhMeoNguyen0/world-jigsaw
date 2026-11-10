@@ -480,6 +480,7 @@ export function useLiveBoard() {
             ? p.snapshot
             : null
       const candidates = now.game.snapshot.groups.filter((group) => {
+        if (!recovering) return true
         const original = base?.groups.find((item) => sameId(item.groupId, group.groupId))
         return (
           original &&

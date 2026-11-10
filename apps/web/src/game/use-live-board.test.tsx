@@ -2,6 +2,7 @@ import { createElement, type PointerEvent } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../../../../packages/contracts/v1/fixtures/board-and-batch.json'
+import multiplayerFixture from '../../../../packages/generator/fixtures/surround-60.json'
 import type { Action, CurrentGame, Group } from '@world-jigsaw/contracts'
 import { useLiveBoard } from './use-live-board'
 import type { LiveGameState } from './live-game'
@@ -462,7 +463,7 @@ describe('three-piece group interaction', () => {
   )
 
   it.each(['snapshot', 'own draft'] as const)(
-    'uses only proven %s targets when the turn base is unavailable',
+    'uses only proven %s targets during recovery when the turn base is unavailable',
     async (source) => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
       const moving = fixture.snapshot.groups[0] as Group
@@ -507,12 +508,80 @@ describe('three-piece group interaction', () => {
       const active = firstPreview()
       board.up(pointer(30, 50))
       mock.actions = source === 'own draft' ? [targetAction, active] : [active]
+      mock.state = { ...old, connection: 'resyncing', previewPending: false }
+      mock.listener?.(mock.state as LiveGameState)
       mock.state = { ...old, previewPending: false }
       mock.listener?.(mock.state as LiveGameState)
       await Promise.resolve()
       expect(lastPreview().affectedPieceIds).toEqual(
         source === 'own draft' ? [...moving.pieceIds, ...target.pieceIds] : moving.pieceIds,
       )
+      cleanup?.()
+    },
+  )
+
+  it.each(['drag', 'rotate'] as const)(
+    'joins an unchanged neighbor after another player confirms an unrelated move: %s',
+    async (interaction) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const multiplayer = multiplayerFixture as unknown as CurrentGame
+      const [first, second] = multiplayer.snapshot.groups
+      const other = multiplayer.snapshot.groups.at(-1)
+      if (!second || !other) throw new Error('Expected separate groups for both players')
+      const moving = { ...first, finalPosition: false }
+      const target = {
+        ...second,
+        finalPosition: false,
+        transform:
+          interaction === 'drag'
+            ? { rotation: 0, translation: { x: 20, y: 30 } }
+            : { rotation: 90000, translation: { x: 126667, y: 6667 } },
+      }
+      const peer = { ...other, finalPosition: false }
+      const snapshot = {
+        ...multiplayer.snapshot,
+        groups: [moving, target, peer],
+      } as CurrentGame['snapshot']
+      const ownTurn = { ...turn, puzzleId: snapshot.puzzleId, boardVersion: snapshot.boardVersion }
+      const { board } = setup({ definition: multiplayer.definition, ownTurn, snapshot })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      mock.state = { ...old, connection: 'resyncing' }
+      mock.listener?.(mock.state as LiveGameState)
+      const peerMove = {
+        ...peer,
+        revision: peer.revision + 1,
+        transform: { ...peer.transform, translation: { x: 500000, y: 500000 } },
+      }
+      mock.state = {
+        ...old,
+        game: {
+          ...requireGame(old),
+          snapshot: {
+            ...snapshot,
+            boardVersion: snapshot.boardVersion + 1,
+            groups: [moving, target, peerMove],
+          },
+        },
+      }
+      mock.listener?.(mock.state as LiveGameState)
+      await Promise.resolve()
+      if (interaction === 'drag') {
+        board.down(pointer(10, 20), moving)
+        board.move(pointer(30, 50))
+        board.up(pointer(30, 50))
+      } else board.rotate(moving)
+      await Promise.resolve()
+      expect(lastPreview().affectedPieceIds).toEqual([...moving.pieceIds, ...target.pieceIds])
+      expect(lastPreview().baseRevisions).toEqual([
+        { groupId: moving.groupId, revision: moving.revision },
+        { groupId: target.groupId, revision: target.revision },
+      ])
       cleanup?.()
     },
   )
