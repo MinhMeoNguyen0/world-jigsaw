@@ -12,6 +12,7 @@ import type {
   Group,
   Piece,
   Transform,
+  Turn,
 } from '@world-jigsaw/contracts'
 
 interface Point {
@@ -30,6 +31,10 @@ interface Pending {
   active: boolean
   moved: boolean
   acquiring: boolean
+  openingTurn: boolean
+  openedTurn: Turn | null
+  initialTurn: Turn | null
+  puzzleId: string
   finalPrepared: boolean
   interrupted: boolean
   restoring: boolean
@@ -225,7 +230,7 @@ export function useLiveBoard() {
   const previewOwners = new Map<string, string>()
   for (const action of previews)
     for (const id of action.affectedPieceIds) previewOwners.set(id.toLowerCase(), action.actionId)
-  const visibleGhost = state.recoveryView ? null : ghost
+  const visibleGhost = state.connection === 'ready' && !state.recoveryView ? ghost : null
   const ghostIds = new Set(visibleGhost?.ids.map((id) => id.toLowerCase()) ?? [])
   const previewed = new Set([...previewOwners.keys(), ...ghostIds])
   const pieceMap = new Map(
@@ -284,6 +289,23 @@ export function useLiveBoard() {
       now = client.getState()
     if (!p || !p.moved || now.connection !== 'ready' || !now.game?.ownTurn || now.previewPending)
       return
+    if (p.openingTurn) {
+      if (!p.openedTurn) return
+      const turn = now.game.ownTurn
+      if (
+        turn.turnId.toLowerCase() !== p.openedTurn.turnId.toLowerCase() ||
+        turn.puzzleId.toLowerCase() !== p.openedTurn.puzzleId.toLowerCase() ||
+        turn.generation !== p.openedTurn.generation ||
+        turn.turnRevision !== p.openedTurn.turnRevision ||
+        client.provenDraft() === null
+      ) {
+        pending.current = null
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+        return
+      }
+    }
     if (p.interrupted) {
       if (p.undoStarted && !p.restoring) {
         p.restoring = true
@@ -386,8 +408,11 @@ export function useLiveBoard() {
     p.acquiring = true
     void client
       .begin()
-      .then(() => {
-        if (pending.current === p) flush()
+      .then((turn) => {
+        if (pending.current === p) {
+          if (p.openingTurn) p.openedTurn = turn
+          flush()
+        }
       })
       .catch((e: unknown) => {
         if (pending.current !== p) return
@@ -407,6 +432,10 @@ export function useLiveBoard() {
     active: true,
     moved: false,
     acquiring: false,
+    openingTurn: !client.getState().game?.ownTurn,
+    openedTurn: null,
+    initialTurn: client.getState().game?.ownTurn ?? null,
+    puzzleId: client.getState().game!.snapshot.puzzleId,
     finalPrepared: false,
     interrupted: false,
     restoring: false,
@@ -493,7 +522,7 @@ export function useLiveBoard() {
       return
     }
     const d = pending.current
-    if (!d?.active) return
+    if (!d?.active || client.getState().connection !== 'ready') return
     const p = cursorPoint ?? point(event.clientX, event.clientY)
     if (!p) return
     const dx = p.x - d.start.x,
@@ -557,6 +586,7 @@ export function useLiveBoard() {
   const rotate = (group: Group) => {
     if (
       state.connection !== 'ready' ||
+      client.getState().connection !== 'ready' ||
       state.pendingConfirm ||
       state.pendingShape ||
       state.unresolvedCommand ||
@@ -630,22 +660,48 @@ export function useLiveBoard() {
       })
     }
     const unsubscribe = client.subscribe((next) => {
-      const previousTurn = stateRef.current.game?.ownTurn
+      const current = pending.current
+      const previousTurn = current?.initialTurn
       const nextTurn = next.game?.ownTurn
-      if (
-        pending.current &&
-        (next.connection !== 'ready' ||
+      if (current && next.connection !== 'ready') {
+        setGhost(null)
+        setSelected(null)
+        if (current.openingTurn && next.connection !== 'disconnected')
+          client.recoverInterruptedPreview()
+        if (
           !next.game ||
-          (stateRef.current.game &&
-            stateRef.current.game.snapshot.puzzleId.toLowerCase() !==
-              next.game.snapshot.puzzleId.toLowerCase()) ||
-          (previousTurn &&
-            (!nextTurn ||
-              previousTurn.turnId.toLowerCase() !== nextTurn.turnId.toLowerCase() ||
-              previousTurn.puzzleId.toLowerCase() !== nextTurn.puzzleId.toLowerCase() ||
-              previousTurn.generation !== nextTurn.generation ||
-              previousTurn.turnRevision !== nextTurn.turnRevision)))
+          next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          (current.interrupted &&
+            next.connection === 'disconnected' &&
+            stateRef.current.connection !== 'ready' &&
+            stateRef.current.connection !== 'disconnected') ||
+          (!current.interrupted && !(current.openingTurn && next.connection !== 'disconnected'))
+        ) {
+          if (current.interrupted) client.abandonInterruptedPreview()
+          pending.current = null
+          setDragging(false)
+        }
+      } else if (
+        current &&
+        (!next.game ||
+          next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          (!nextTurn && (!current.openingTurn || stateRef.current.connection !== 'ready')))
       ) {
+        if (current.interrupted) client.abandonInterruptedPreview()
+        pending.current = null
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (
+        current &&
+        previousTurn &&
+        nextTurn &&
+        (previousTurn.turnId.toLowerCase() !== nextTurn.turnId.toLowerCase() ||
+          previousTurn.puzzleId.toLowerCase() !== nextTurn.puzzleId.toLowerCase() ||
+          previousTurn.generation !== nextTurn.generation ||
+          previousTurn.turnRevision !== nextTurn.turnRevision)
+      ) {
+        if (current.interrupted) client.abandonInterruptedPreview()
         pending.current = null
         setGhost(null)
         setDragging(false)

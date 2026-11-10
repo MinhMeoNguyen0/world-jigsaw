@@ -487,6 +487,11 @@ export class LiveGame {
     }
   }
 
+  abandonInterruptedPreview() {
+    if (this.inFlight) this.inFlight.recover = false
+    if (this.lostPreview) this.lostPreview.recover = false
+  }
+
   private matchesInterruptedPreview(reply: SubscribedV2): boolean {
     const flight = this.lostPreview
     const proof = flight?.proof

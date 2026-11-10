@@ -13,6 +13,9 @@ const mock = vi.hoisted(() => ({
   sendCursor: vi.fn(),
   recover: vi.fn(),
   preview: vi.fn(),
+  undo: vi.fn(),
+  begin: vi.fn(),
+  abandon: vi.fn(),
   effects: [] as (() => void | (() => void))[],
   listener: null as ((state: LiveGameState) => void) | null,
 }))
@@ -41,7 +44,9 @@ vi.mock('./live-game.ts', () => ({
     }
     sendCursor = mock.sendCursor
     recoverInterruptedPreview = mock.recover
+    abandonInterruptedPreview = mock.abandon
     preview = mock.preview
+    undo = mock.undo
     subscribe(listener: (state: LiveGameState) => void) {
       mock.listener = listener
       listener(mock.state as LiveGameState)
@@ -54,7 +59,7 @@ vi.mock('./live-game.ts', () => ({
     }
     disconnect() {}
     begin() {
-      return Promise.resolve(null)
+      return mock.begin()
     }
   },
 }))
@@ -71,6 +76,7 @@ function setup(override?: Partial<CurrentGame>, stateOverride?: Partial<LiveGame
     ownTurn: null,
     ...override,
   }
+  mock.begin.mockImplementation(() => Promise.resolve(game.ownTurn))
   mock.state = { connection: 'ready', game, previews: {}, cursors: {}, ...stateOverride }
   vi.stubGlobal('window', {
     location: { origin: 'http://127.0.0.1:5173' },
@@ -122,6 +128,9 @@ afterEach(() => {
   mock.preview.mockClear()
   mock.sendCursor.mockClear()
   mock.recover.mockClear()
+  mock.undo.mockReset()
+  mock.begin.mockReset()
+  mock.abandon.mockReset()
   mock.effects = []
   mock.listener = null
 })
@@ -237,6 +246,87 @@ describe('three-piece group interaction', () => {
           ? action.baseRevisions
           : [{ groupId: joined.groupId, revision: joined.revision }],
       )
+    },
+  )
+
+  it.each(['drag', 'rotation'] as const)(
+    'submits the first %s after turn-opening resynchronization',
+    async (kind) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const { board, group } = setup()
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      let resolveBegin!: (value: CurrentGame['ownTurn']) => void
+      mock.begin.mockReturnValue(
+        new Promise((resolve) => {
+          resolveBegin = resolve
+        }),
+      )
+      if (kind === 'drag') {
+        board.down(pointer(10, 20), group)
+        board.move(pointer(30, 50))
+      } else board.rotate(group)
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      emit({ ...old, connection: 'resyncing' })
+      expect(board.pending.current).not.toBeNull()
+      if (kind === 'drag') {
+        board.move(pointer(100, 100))
+        expect(board.pending.current?.desired.translation).toEqual({
+          x: group.transform.translation.x + 20,
+          y: group.transform.translation.y + 30,
+        })
+        board.up()
+      }
+      expect(mock.preview).not.toHaveBeenCalled()
+      emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+      resolveBegin(turn)
+      await Promise.resolve()
+      expect(mock.preview).toHaveBeenCalledOnce()
+      cleanup?.()
+    },
+  )
+
+  it.each(['restore', 'undo'] as const)(
+    'reconciles a canceled drag after the lost preview is recovered: %s',
+    async (outcome) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = outcome === 'restore' ? [action] : []
+      const { board } = setup({ ownTurn: turn })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      mock.undo.mockResolvedValue({})
+      board.down(pointer(10, 20), joined)
+      board.move(pointer(30, 50))
+      const submitted = mock.preview.mock.calls[0]?.[0] as Action
+      expect(submitted).toBeDefined()
+      mock.state = { ...(mock.state as LiveGameState), previewPending: true }
+      board.abort()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      emit({ ...old, connection: 'disconnected', previewPending: false })
+      expect(board.pending.current?.interrupted).toBe(true)
+      mock.actions = [submitted]
+      mock.preview.mockClear()
+      emit({ ...old, connection: 'ready', previewPending: false })
+      await Promise.resolve()
+      if (outcome === 'restore') expect(mock.preview).toHaveBeenCalledWith(action, true)
+      else expect(mock.undo).toHaveBeenCalledWith(submitted.actionId)
+      cleanup?.()
     },
   )
 })
