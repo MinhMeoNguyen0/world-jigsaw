@@ -19,7 +19,7 @@ export interface Options {
   image: string
   definitionVersion?: number
   placedPieces?: number
-  layout?: 'tray' | 'surround' | 'balanced' | 'expanded'
+  layout?: 'tray' | 'surround' | 'balanced' | 'expanded' | 'compact'
 }
 export interface GeneratedBoard {
   definition: Definition
@@ -29,6 +29,7 @@ const VERSION = 'world-jigsaw-grid-3'
 const SURROUND_VERSION = 'world-jigsaw-grid-6'
 const BALANCED_VERSION = 'world-jigsaw-grid-7'
 const EXPANDED_VERSION = 'world-jigsaw-grid-8'
+const COMPACT_VERSION = 'world-jigsaw-grid-9'
 const digest = (s: string) => createHash('sha256').update(s).digest('hex')
 function uuid(s: string): string {
   const h = digest(s).slice(0, 32).split('')
@@ -120,16 +121,19 @@ function localSegments(segments: ContourSegment[], origin: Point): Edge['segment
 
 export function generate(options: Options): GeneratedBoard {
   const { seed, columns, rows, width, height, image } = options
-  const layout = options.layout ?? 'expanded'
+  const layout = options.layout ?? 'compact'
+  const compact = layout === 'compact'
   const expanded = layout === 'expanded'
   const surroundLayout = layout !== 'tray'
-  const generatorVersion = expanded
-    ? EXPANDED_VERSION
-    : layout === 'balanced'
-      ? BALANCED_VERSION
-      : surroundLayout
-        ? SURROUND_VERSION
-        : VERSION
+  const generatorVersion = compact
+    ? COMPACT_VERSION
+    : expanded
+      ? EXPANDED_VERSION
+      : layout === 'balanced'
+        ? BALANCED_VERSION
+        : surroundLayout
+          ? SURROUND_VERSION
+          : VERSION
   const version = options.definitionVersion ?? 1,
     placed = options.placedPieces ?? 0
   if (
@@ -222,7 +226,7 @@ export function generate(options: Options): GeneratedBoard {
   const trayX = width + margin
   // The new layout is authored once in the snapshot, so every client sees the same positions.
   const surround: Point[] = []
-  const step = Math.ceil(Math.max(width / columns, height / rows) * 1.8)
+  const step = Math.ceil(Math.max(width / columns, height / rows) * (compact ? 1.55 : 1.8))
   // Match the reviewed inset picture: a separate central play surface surrounds it.
   const marginX = Math.round(width * (expanded ? 0.65 : 0.35)),
     marginY = Math.round(height * (expanded ? 0.65 : 0.3666666667))
