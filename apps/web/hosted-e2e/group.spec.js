@@ -251,18 +251,16 @@ test('a three-piece group stays together when its middle is clicked and dragged'
     await socket.close({ code: 1001, reason: 'hosted reconnect test' })
     await page.locator('[data-connection=disconnected]').waitFor({ timeout: 20000 })
     expect(await page.locator('[data-preview-piece-ids]').count()).toBe(0)
-    const exposed = await page
-      .locator('[data-piece-ids]')
-      .evaluateAll(
-        (elements, ids) =>
-          elements
-            .filter((e) => e.dataset.pieceIds.split(',').some((id) => ids.includes(id)))
-            .map((e) => ({
-              ids: e.dataset.pieceIds.split(','),
-              transform: e.getAttribute('transform'),
-            })),
-        pieces,
-      )
+    const exposed = await page.locator('[data-piece-ids]').evaluateAll(
+      (elements, ids) =>
+        elements
+          .filter((e) => e.dataset.pieceIds.split(',').some((id) => ids.includes(id)))
+          .map((e) => ({
+            ids: e.dataset.pieceIds.split(','),
+            transform: e.getAttribute('transform'),
+          })),
+      pieces,
+    )
     expect(exposed).toHaveLength(3)
     expect(exposed.flatMap((e) => e.ids).sort()).toEqual(pieces.slice().sort())
     expect(exposed.every((e) => e.transform)).toBe(true)
