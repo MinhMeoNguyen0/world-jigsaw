@@ -615,6 +615,169 @@ describe('versioned subscription and preview receipts', () => {
     actions: [action],
   })
 
+  const joined = {
+    ...action,
+    affectedPieceIds: fixture.mergedSnapshot.groups[0].pieceIds,
+    baseRevisions: fixture.snapshot.groups.map(({ groupId, revision }) => ({ groupId, revision })),
+    intendedTransform: fixture.mergedSnapshot.groups[0].transform,
+  }
+
+  async function acceptedJoined(serverTime = current.serverTime) {
+    const h = harness()
+    h.setGame({ ...current, serverTime, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(joined)
+    socket.emit({
+      ...fixture.preview,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 0,
+      action: joined,
+    })
+    socket.emit({ ...accepted(0, 1), actionId: joined.actionId, actions: [joined] })
+    return { h, socket }
+  }
+
+  it('shows only the acknowledged joined draft during a bounded reconnect and replaces it with the handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    expect(h.client.getState().recoveryView).toEqual({
+      snapshot: current.snapshot,
+      turn,
+      actions: [joined],
+    })
+    expect(h.client.getState().previews).toEqual({})
+    expect(h.client.provenDraft()).toBeNull()
+    expect(() => h.client.preview(joined)).toThrow('not synchronized')
+    await h.client.connect()
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    // The turn was canceled or expired while disconnected: the handoff wins.
+    next.emit({ ...handoff(), ownTurn: null, draftRevision: null })
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.getState().previews).toEqual({})
+    expect(h.client.getState().game?.ownTurn).toBeNull()
+  })
+
+  it('discards the tentative view after the bounded recovery window', async () => {
+    const { h, socket } = await acceptedJoined()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      socket.drop()
+      expect(h.client.getState().recoveryView).not.toBeNull()
+      vi.advanceTimersByTime(2000)
+      expect(h.client.getState().recoveryView).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retain a view past the conservative lease deadline', async () => {
+    const { h, socket } = await acceptedJoined('2026-11-08T23:59:59.000Z')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      socket.drop()
+      vi.advanceTimersByTime(1000)
+      expect(h.client.getState().recoveryView).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the tentative view if reconnect fails', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    h.setCurrentUnavailable(true)
+    await expect(h.client.connect()).rejects.toThrow('PUZZLE_UNAVAILABLE')
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.getState().game).toBeNull()
+  })
+
+  it.each(['clear', 'rejection'] as const)(
+    'drops the tentative view on an explicit %s during recovery',
+    async (event) => {
+      const { h, socket } = await acceptedJoined()
+      socket.drop()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit(
+        event === 'clear'
+          ? { ...fixture.previewCleared, turnId: turn.turnId, generation: turn.generation }
+          : {
+              schemaVersion: 1,
+              type: 'preview.rejected',
+              puzzleId,
+              turnId: turn.turnId,
+              generation: turn.generation,
+              sequence: 0,
+              actionId: joined.actionId,
+              error: {
+                code: 'INVALID_ACTION',
+                message: 'Invalid move',
+                requestId: joined.actionId,
+                retryable: false,
+              },
+            },
+      )
+      expect(h.client.getState().recoveryView).toBeNull()
+      expect(h.client.getState().connection).not.toBe('ready')
+      h.client.disconnect()
+    },
+  )
+
+  it('uses the fresh current game to clear a turn canceled before the handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    h.setGame(current)
+    await h.client.connect()
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.getState().connection).toBe('resyncing')
+  })
+
+  it('restores the accepted draft only from the fresh atomic handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({
+      ...handoff([joined], 1),
+      previews: [
+        {
+          ...fixture.preview,
+          turnId: turn.turnId,
+          generation: turn.generation,
+          sequence: 0,
+          action: joined,
+        },
+      ],
+    })
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.provenDraft()).toEqual([joined])
+    expect(Object.values(h.client.getState().previews)[0]?.actions[joined.actionId]).toEqual(joined)
+  })
+
+  it('does not retain a draft with a preview submission in flight', async () => {
+    const { h, socket } = await acceptedJoined()
+    h.client.preview(joined)
+    socket.drop()
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.provenDraft()).toBeNull()
+  })
+
+  it('does not retain an acknowledged draft when the displayed preview has not caught up', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(joined)
+    socket.emit({ ...accepted(0, 1), actionId: joined.actionId, actions: [joined] })
+    socket.drop()
+    expect(h.client.getState().recoveryView).toBeNull()
+  })
+
   it.each(['accepted', 'unchanged', 'concurrent'] as const)(
     'recovers an interrupted preview after a lost receipt when the draft is %s',
     async (outcome) => {

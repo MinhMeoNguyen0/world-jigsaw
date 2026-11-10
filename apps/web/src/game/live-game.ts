@@ -32,6 +32,8 @@ export interface LiveGameState {
   connection: 'disconnected' | 'connecting' | 'ready' | 'resyncing'
   game: CurrentGame | null
   previews: Record<string, PreviewState>
+  /** Last acknowledged appearance only; never used for commands or draft proof. */
+  recoveryView: { snapshot: CurrentGame['snapshot']; turn: Turn; actions: Action[] } | null
   previewPending: boolean
   previewRejection: PreviewRejected | null
   cursors: Record<string, CursorPresence>
@@ -119,6 +121,7 @@ export class LiveGame {
     connection: 'disconnected',
     game: null,
     previews: {},
+    recoveryView: null,
     previewPending: false,
     previewRejection: null,
     cursors: {},
@@ -129,6 +132,8 @@ export class LiveGame {
   }
   private listeners = new Set<(state: LiveGameState) => void>()
   private cursorTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private currentReadStarted = 0
   private socket: Socket | null = null
   private epoch = 0
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
@@ -193,6 +198,48 @@ export class LiveGame {
     for (const listener of this.listeners) listener(this.getState())
   }
 
+  private clearRecoveryView() {
+    if (this.recoveryTimer !== null) clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = null
+  }
+
+  private retainRecoveryView(): LiveGameState['recoveryView'] {
+    const game = this.state.game
+    const actions = this.provenDraft()
+    const turn = game?.ownTurn
+    const preview = turn && this.state.previews[turn.turnId.toLowerCase()]
+    if (
+      !game ||
+      !turn ||
+      !actions ||
+      !preview ||
+      preview.closed ||
+      preview.generation !== turn.generation ||
+      !actions.some((action) => action.affectedPieceIds.length > 1)
+    )
+      return null
+    const displayed = Object.values(preview.actions)
+    const sorted = (items: Action[]) =>
+      [...items].sort((a, b) => a.actionId.localeCompare(b.actionId))
+    if (canonical(sorted(displayed)) !== canonical(sorted(actions))) return null
+    // The server sampled serverTime after the current-game request began. Subtracting
+    // the entire elapsed request time gives a conservative lease/rollover bound.
+    const remaining =
+      Math.min(Date.parse(turn.expiresAt), Date.parse(game.endsAt)) -
+      Date.parse(game.serverTime) -
+      (performance.now() - this.currentReadStarted)
+    if (!Number.isFinite(remaining) || remaining <= 0) return null
+    this.clearRecoveryView()
+    this.recoveryTimer = setTimeout(
+      () => {
+        this.recoveryTimer = null
+        this.publish({ recoveryView: null })
+      },
+      Math.min(2000, remaining),
+    )
+    return { snapshot: game.snapshot, turn, actions: displayed }
+  }
+
   private async request<T>(path: string, name: string, body?: unknown): Promise<T> {
     const response = await this.deps.fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
@@ -238,9 +285,11 @@ export class LiveGame {
     try {
       await this.request('/api/v1/session', 'Session', {})
       if (epoch !== this.epoch) return
+      const currentReadStarted = performance.now()
       const game = await this.request<CurrentGame>('/api/v1/game/current', 'CurrentGame')
       await verifyGame(game)
       if (epoch !== this.epoch) return
+      this.currentReadStarted = currentReadStarted
       this.uncertainDraft = Boolean(game.ownTurn)
       if (
         this.beginRequest &&
@@ -254,7 +303,18 @@ export class LiveGame {
         this.undoBaseProof = null
       }
       this.history = { byVersion: new Map(), eventIds: new Set() }
-      this.publish({ game, connection: 'resyncing' })
+      const view = this.state.recoveryView
+      const keepView =
+        view &&
+        this.state.game &&
+        game.ownTurn &&
+        sameId(game.ownTurn.turnId, view.turn.turnId) &&
+        game.ownTurn.generation === view.turn.generation &&
+        game.ownTurn.turnRevision === view.turn.turnRevision &&
+        canonical(this.state.game.definition) === canonical(game.definition) &&
+        canonical(view.snapshot) === canonical(game.snapshot)
+      if (!keepView) this.clearRecoveryView()
+      this.publish({ game, connection: 'resyncing', recoveryView: keepView ? view : null })
       if (epoch !== this.epoch) return
       const url = new URL('/api/v1/game/stream', this.deps.origin)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -276,6 +336,8 @@ export class LiveGame {
       }
       socket.onclose = () => {
         if (epoch !== this.epoch) return
+        const recoveryView = this.retainRecoveryView()
+        if (!recoveryView) this.clearRecoveryView()
         ++this.epoch
         if (this.inFlight) {
           this.uncertainDraft = true
@@ -287,6 +349,7 @@ export class LiveGame {
           connection: 'disconnected',
           cursors: {},
           previews: {},
+          recoveryView,
           previewPending: false,
           issue: 'Connection lost; reconnect to resynchronize.',
         })
@@ -296,9 +359,11 @@ export class LiveGame {
           this.publish({ issue: 'Game stream error; reconnect if it closes.' })
       }
     } catch (error) {
-      if (epoch === this.epoch)
+      if (epoch === this.epoch) {
+        this.clearRecoveryView()
         this.publish({
           connection: 'disconnected',
+          recoveryView: null,
           issue: String(error),
           ...(error instanceof GameRequestError &&
           error.path === '/api/v1/game/current' &&
@@ -306,11 +371,13 @@ export class LiveGame {
             ? { game: null, previews: {} }
             : {}),
         })
+      }
       throw error
     }
   }
 
   disconnect() {
+    this.clearRecoveryView()
     ++this.epoch
     if (this.inFlight) {
       this.uncertainDraft = true
@@ -318,7 +385,13 @@ export class LiveGame {
     }
     this.inFlight = null
     this.stopSocket()
-    this.publish({ connection: 'disconnected', previews: {}, cursors: {}, previewPending: false })
+    this.publish({
+      connection: 'disconnected',
+      previews: {},
+      recoveryView: null,
+      cursors: {},
+      previewPending: false,
+    })
   }
 
   private stopSocket() {
@@ -334,7 +407,14 @@ export class LiveGame {
 
   private resync(reason: string) {
     const epoch = this.epoch
-    this.publish({ issue: reason, connection: 'resyncing', previews: {}, cursors: {} })
+    this.clearRecoveryView()
+    this.publish({
+      issue: reason,
+      connection: 'resyncing',
+      previews: {},
+      recoveryView: null,
+      cursors: {},
+    })
     if (epoch !== this.epoch) return
     void this.connect().catch(() => {
       // connect() has already published the error.
@@ -483,9 +563,11 @@ export class LiveGame {
           if (next) previews[key] = next
         }
         this.history = { byVersion: new Map(), eventIds: new Set() }
+        this.clearRecoveryView()
         this.publish({
           game: { ...game, snapshot: reply.snapshot },
           previews,
+          recoveryView: null,
           connection: 'resyncing',
           issue: 'Service must provide identity state atomically with the subscription.',
         })
@@ -544,6 +626,7 @@ export class LiveGame {
         this.draftRevision = reply.draftRevision
         this.acceptedActions = structuredClone(reply.actions)
         if (!this.uncertainDraft) this.lostPreview = null
+        this.clearRecoveryView()
         this.publish({
           game: {
             ...game,
@@ -552,6 +635,7 @@ export class LiveGame {
             ownTurn: reply.ownTurn,
           },
           previews,
+          recoveryView: null,
           connection: 'ready',
           previewPending: false,
           issue: this.uncertainDraft
@@ -625,6 +709,16 @@ export class LiveGame {
         )
         if (!sameId(event.puzzleId, game.snapshot.puzzleId))
           throw new Error('Preview for another puzzle')
+        const view = this.state.recoveryView
+        if (
+          type === 'previewCleared' &&
+          view &&
+          sameId(event.turnId, view.turn.turnId) &&
+          event.generation >= view.turn.generation
+        ) {
+          this.resync('Turn changed; refreshing turn and previews.')
+          return
+        }
         const key = event.turnId.toLowerCase()
         const previous = this.state.previews[key] ?? null
         const next = applyPreview(previous, event)
@@ -644,6 +738,16 @@ export class LiveGame {
         if (next) this.publish({ previews: { ...this.state.previews, [key]: next } })
       } else if (type === 'preview.rejected') {
         const rejection = checked<PreviewRejected>('PreviewRejected', message)
+        const view = this.state.recoveryView
+        if (
+          view &&
+          sameId(rejection.puzzleId, view.turn.puzzleId) &&
+          sameId(rejection.turnId, view.turn.turnId) &&
+          rejection.generation === view.turn.generation
+        ) {
+          this.resync('Preview rejected; refreshing turn and previews.')
+          return
+        }
         if (
           this.inFlight?.sequence === rejection.sequence &&
           sameId(rejection.puzzleId, game.snapshot.puzzleId) &&
@@ -686,7 +790,11 @@ export class LiveGame {
         if (result.status === 'applied') {
           this.history = result.seenEvents
           // An event does not carry this session's allowance or turn; refresh both.
-          this.publish({ game: { ...game, snapshot: result.snapshot, allowance: null } })
+          this.clearRecoveryView()
+          this.publish({
+            game: { ...game, snapshot: result.snapshot, allowance: null },
+            recoveryView: null,
+          })
           if (epoch === this.epoch) this.resync('Board changed; refreshing allowance and turn.')
         }
       } else if (type === 'leaseRenewed') {
@@ -709,16 +817,20 @@ export class LiveGame {
             !sameId(event.puzzleId, game.snapshot.puzzleId) ||
             event.day !== game.day
           ) {
-            this.publish({ game: null, previews: {} })
+            this.clearRecoveryView()
+            this.publish({ game: null, previews: {}, recoveryView: null })
             if (epoch !== this.epoch) return
           }
         } else checked('ResyncRequired', message)
         this.resync('Game changed; resynchronizing.')
       } else if (type === 'error') {
         const error = checked<{ error: { code: string; message: string } }>('SocketError', message)
+        if (error.error.code === 'PUZZLE_UNAVAILABLE') this.clearRecoveryView()
         this.publish({
           issue: `${error.error.code}: ${error.error.message}`,
-          ...(error.error.code === 'PUZZLE_UNAVAILABLE' ? { game: null, previews: {} } : {}),
+          ...(error.error.code === 'PUZZLE_UNAVAILABLE'
+            ? { game: null, previews: {}, recoveryView: null }
+            : {}),
         })
       } else throw new Error('Unsupported stream event')
     } catch (error) {

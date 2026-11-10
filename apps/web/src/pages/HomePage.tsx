@@ -526,6 +526,12 @@ export function HomePage() {
           )}
         </div>
         <div className="feedback" aria-live="polite" role="status">
+          {state.recoveryView && (
+            <>
+              {t('game.recoveryView')}
+              <br />
+            </>
+          )}
           {imageError && (
             <>
               {imageError}
