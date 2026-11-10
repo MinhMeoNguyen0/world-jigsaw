@@ -909,6 +909,61 @@ describe('versioned subscription and preview receipts', () => {
     },
   )
 
+  it.each([
+    'matching',
+    'other submission',
+    'revision',
+    'sequence',
+    'generation',
+    'turn revision',
+  ] as const)(
+    'uses correlated join recovery only for the matching submission: %s',
+    async (outcome) => {
+      const h = harness()
+      h.setGame({ ...current, ownTurn: turn })
+      const socket = await h.start()
+      socket.emit(handoff())
+      const second = fixture.confirm.actions[1] as Confirm['actions'][number]
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      h.client.preview(second)
+      socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
+      const submitted = {
+        ...joined,
+        intendedTransform: { ...joined.intendedTransform, translation: { x: 1, y: 0 } },
+      }
+      const serverJoin = { ...joined, targetId: mergedGroup.groupId }
+      const serverSecond = { ...serverJoin, actionId: second.actionId, kind: second.kind }
+      h.client.preview(submitted)
+      const frame = socket.sent.at(-1) as { submissionId: string }
+      h.client.recoverInterruptedPreview()
+      socket.drop()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit({
+        ...handoff([serverJoin, serverSecond], outcome === 'revision' ? 4 : 3),
+        nextSequence: outcome === 'sequence' ? 4 : 3,
+        ownTurn: {
+          ...turn,
+          generation: turn.generation + (outcome === 'generation' ? 1 : 0),
+          turnRevision: turn.turnRevision + (outcome === 'turn revision' ? 1 : 0),
+        },
+        lastSubmissionId:
+          outcome === 'other submission'
+            ? '00000000-0000-4000-8000-000000000099'
+            : frame.submissionId,
+      })
+      if (outcome === 'matching') {
+        expect(h.client.provenDraft()).toEqual([serverJoin, serverSecond])
+        expect(h.client.recoveredPreviewActionId()).toBe(action.actionId)
+      } else {
+        expect(h.client.provenDraft()).toBeNull()
+        await expect(h.client.confirm()).rejects.toThrow('not ready')
+      }
+    },
+  )
+
   it('keeps the joined view throughout a board change until the atomic handoff', async () => {
     const { h, socket } = await acceptedJoined()
     const changedGroup = fixture.boardChanged.groups[0] as

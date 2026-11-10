@@ -57,6 +57,11 @@ An intervening same-session tab therefore fences a stale command even if the act
 to the same values. Existing v1 confirmation retains its original semantics. Clients must not
 infer acceptance from a broadcast and must reconcile an unknown result before another save.
 
+A preview submission may include a fresh `submissionId`. The next v2 handoff includes the ID of
+only the latest accepted preview in the current generation, together with its authoritative action
+set, revision, and next sequence. Later previews without an ID and undo clear that evidence. Clients
+must still match turn identity, revision and sequence before using the ID to recover a lost receipt.
+
 Undo uses the closed `UndoV2` payload with the observed draft revision. The service rejects the
 original `Undo` shape because it cannot fence a concurrent preview; a retry uses the same request
 ID and payload. Both initial execution and receipt recovery check the revision before mutation.

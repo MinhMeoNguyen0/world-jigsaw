@@ -10,11 +10,13 @@ containers in Docker Desktop. Testcontainers creates temporary database containe
 tests. The recorded latency experiment instead used a separate local PostgreSQL cluster and host
 processes; its Docker-backed coordinator test could not initialize because Docker was unavailable.
 
-Those records do not establish the current deployment or what Docker Desktop is connected to. A
-different Docker daemon or context could also explain a different container list, but this has not
-been verified here. Check the active Docker context and daemon alongside the running host processes
-before attributing the observation to either cause. No current infrastructure inventory or external
-firstmate investigation records were available within this worktree.
+A read-only inspection on November 10, 2026 found the active Docker context `default` pointing to
+`unix:///var/run/docker.sock`. That daemon listed two stopped World Jigsaw test stacks, each with
+web, game, chat, and two PostgreSQL containers; it listed no running containers. A separate
+`desktop-linux` context was configured with a Windows named-pipe endpoint, but it was not inspected.
+The selected Unix daemon and stopped containers explain why this context has no running game
+containers; they do not establish which daemon Windows Docker Desktop displays or why it appears
+sparse there. No deployment or container state was changed.
 
 ## Pointer coordinate reuse
 

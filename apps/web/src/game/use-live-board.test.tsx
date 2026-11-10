@@ -6,10 +6,12 @@ import type { Action, CurrentGame, Group } from '@world-jigsaw/contracts'
 import { useLiveBoard } from './use-live-board'
 import type { LiveGameState } from './live-game'
 import * as moveAvailability from './move-availability'
+import * as join from './join'
 
 const mock = vi.hoisted(() => ({
   state: {},
   actions: [] as Action[] | null,
+  recoveredId: null as string | null,
   sendCursor: vi.fn(),
   recover: vi.fn(),
   preview: vi.fn<(action: Action, resyncOnCollision?: boolean) => void>(),
@@ -35,6 +37,9 @@ vi.mock('./live-game.ts', () => ({
     }
     provenDraftRevision() {
       return 0
+    }
+    recoveredPreviewActionId() {
+      return mock.recoveredId
     }
     pendingUndoActionId() {
       return null
@@ -142,6 +147,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   mock.actions = []
+  mock.recoveredId = null
   mock.preview.mockReset()
   mock.sendCursor.mockClear()
   mock.recover.mockClear()
@@ -305,6 +311,39 @@ describe('three-piece group interaction', () => {
       cleanup?.()
     },
   )
+
+  it('finishes a recovered server-authored join without resubmitting it', async () => {
+    vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+    const merged = { ...action, affectedPieceIds: source.flatMap((group) => group.pieceIds) }
+    vi.spyOn(join, 'suggestJoin').mockReturnValue(merged)
+    mock.actions = [action]
+    const { board } = setup({ ownTurn: turn })
+    vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+    const cleanup = mock.effects[3]?.()
+    const old = mock.state as LiveGameState
+    const emit = (next: LiveGameState) => {
+      mock.state = next
+      mock.listener?.(next)
+    }
+    board.down(pointer(10, 20), joined)
+    board.move(pointer(30, 50))
+    await Promise.resolve()
+    board.up(pointer(30, 50))
+    const serverJoin = {
+      ...lastPreview(),
+      targetId: fixture.mergedSnapshot.groups[0].groupId,
+      intendedTransform: joined.transform,
+    }
+    mock.preview.mockClear()
+    emit({ ...old, connection: 'resyncing' })
+    mock.actions = [serverJoin]
+    mock.recoveredId = serverJoin.actionId
+    emit(old)
+    await Promise.resolve()
+    expect(mock.preview).not.toHaveBeenCalled()
+    expect(board.pending.current).toBeNull()
+    cleanup?.()
+  })
 
   it.each([
     'different turn',
@@ -606,7 +645,11 @@ describe('three-piece group interaction', () => {
     async (kind) => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
       const { board, group } = setup()
-      vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
       const cleanup = mock.effects[3]?.()
       let resolveBegin!: (value: CurrentGame['ownTurn']) => void
       mock.begin.mockReturnValue(
@@ -642,7 +685,11 @@ describe('three-piece group interaction', () => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
       mock.actions = kind === 'existing' ? [action] : []
       const { board, group } = setup({ ownTurn: kind === 'existing' ? turn : null })
-      vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
       const cleanup = mock.effects[3]?.()
       const old = mock.state as LiveGameState
       const emit = (next: LiveGameState) => {

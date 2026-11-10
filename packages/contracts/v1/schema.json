@@ -486,6 +486,10 @@
           "minimum": 0,
           "maximum": 9007199254740991
         },
+        "submissionId": {
+          "type": "string",
+          "format": "uuid"
+        },
         "action": {
           "$ref": "#/$defs/Action"
         }
@@ -1716,6 +1720,10 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "lastSubmissionId": {
+          "type": "string",
+          "format": "uuid"
         },
         "draftRevision": {
           "anyOf": [

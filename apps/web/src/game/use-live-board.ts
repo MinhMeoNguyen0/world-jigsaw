@@ -324,7 +324,12 @@ export function useLiveBoard() {
       p.waitingForTurn = false
       if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
     }
-    if (recovering && !p.interrupted && p.sent) {
+    if (
+      recovering &&
+      !p.interrupted &&
+      p.sent &&
+      !(p.sentFor === 'final' && client.recoveredPreviewActionId() === p.action.actionId)
+    ) {
       const accepted = client
         .provenDraft()
         ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
@@ -630,7 +635,7 @@ export function useLiveBoard() {
       return
     }
     const d = pending.current
-    if (!d) return
+    if (!d?.active) return
     setAccepted(false)
     setSelected(null)
     setError(t('probe.interrupted'))
@@ -746,8 +751,7 @@ export function useLiveBoard() {
       } else if (
         current &&
         (next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
-          (!nextTurn &&
-            (!current.openingTurn || current.openedTurn)))
+          (!nextTurn && (!current.openingTurn || current.openedTurn)))
       ) {
         discardPending()
         setGhost(null)

@@ -52,6 +52,7 @@ interface DraftProof {
 }
 interface Flight {
   sequence: number
+  submissionId: string
   actionId: string
   draftRevision: number
   action: Action
@@ -141,6 +142,7 @@ export class LiveGame {
   private uncertainDraft = false
   private inFlight: Flight | null = null
   private lostPreview: Flight | null = null
+  private recoveredPreviewId: string | null = null
   private draftRevision: number | null = null
   private acceptedActions: Action[] = []
   private draftProof: DraftProof | null = null
@@ -181,6 +183,10 @@ export class LiveGame {
   /** The server revision associated with the locally proven action set. */
   provenDraftRevision(): number | null {
     return this.provenDraft() === null ? null : this.draftRevision
+  }
+
+  recoveredPreviewActionId(): string | null {
+    return this.recoveredPreviewId
   }
 
   pendingUndoActionId(): string | null {
@@ -507,6 +513,14 @@ export class LiveGame {
       reply.nextSequence !== flight.sequence + 1
     )
       return false
+    if (
+      reply.lastSubmissionId &&
+      sameId(reply.lastSubmissionId, flight.submissionId) &&
+      reply.actions.some((action) => sameId(action.actionId, flight.actionId)) &&
+      new Set(reply.actions.map((action) => action.actionId.toLowerCase())).size ===
+        reply.actions.length
+    )
+      return true
     const normalize = (action: Action) => ({
       ...action,
       actionId: action.actionId.toLowerCase(),
@@ -607,11 +621,19 @@ export class LiveGame {
             candidate.nextSequence === reply.nextSequence &&
             canonical(candidate.actions) === canonical(reply.actions),
           )
+        const recoveredPreview = this.matchesInterruptedPreview(reply)
+        this.recoveredPreviewId =
+          recoveredPreview &&
+          reply.lastSubmissionId &&
+          this.lostPreview &&
+          sameId(reply.lastSubmissionId, this.lostPreview.submissionId)
+            ? this.lostPreview.actionId
+            : null
         this.uncertainDraft =
           !matches(proof) &&
           !matches(undoneProof) &&
           !(this.lostPreview?.recover && matches(this.lostPreview.proof)) &&
-          !this.matchesInterruptedPreview(reply) &&
+          !recoveredPreview &&
           (reply.actions.length > 0 || Boolean(this.lostPreview?.recover))
         this.draftProof =
           reply.ownTurn && reply.draftRevision !== null && !this.uncertainDraft
@@ -937,8 +959,11 @@ export class LiveGame {
     if (this.draftRevision === null) throw new Error('Missing draft revision')
     const epoch = this.epoch
     this.lostPreview = null
+    this.recoveredPreviewId = null
+    const submissionId = this.deps.id()
     this.inFlight = {
       sequence,
+      submissionId,
       actionId: action.actionId,
       draftRevision: this.draftRevision,
       action: structuredClone(action),
@@ -958,6 +983,7 @@ export class LiveGame {
           turnId: turn.turnId,
           generation: turn.generation,
           sequence,
+          submissionId,
           action,
         }),
       )

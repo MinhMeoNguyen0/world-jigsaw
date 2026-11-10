@@ -257,6 +257,7 @@ export interface PreviewSubmit {
   turnId: string
   generation: number
   sequence: number
+  submissionId?: string
   action: Action
 }
 export interface PreviewRejected {
@@ -537,6 +538,7 @@ export interface SubscribedV2 {
    */
   actions: Action[]
   nextSequence: number
+  lastSubmissionId?: string
   draftRevision: number | null
 }
 export interface PreviewAcceptedV2 {
