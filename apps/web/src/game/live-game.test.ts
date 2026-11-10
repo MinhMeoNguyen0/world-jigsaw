@@ -804,7 +804,8 @@ describe('versioned subscription and preview receipts', () => {
 
   it('keeps the joined view throughout a board change until the atomic handoff', async () => {
     const { h, socket } = await acceptedJoined()
-    const changedGroup = fixture.boardChanged.groups[0] as CurrentGame['snapshot']['groups'][number] | undefined
+    const changedGroup = fixture.boardChanged.groups[0] as
+      CurrentGame['snapshot']['groups'][number] | undefined
     const unchangedGroup = current.snapshot.groups[1]
     if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
     const snapshot: CurrentGame['snapshot'] = {
