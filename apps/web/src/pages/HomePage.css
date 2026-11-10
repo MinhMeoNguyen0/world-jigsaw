@@ -854,6 +854,27 @@ input:focus-visible,
     gap: 4px;
   }
 }
+@media (min-width: 461px) and (max-height: 400px) {
+  .board-scroll {
+    --board-chrome: calc(var(--topbar-height) + var(--footer-height));
+    inset: var(--topbar-height) 250px var(--footer-height) 0;
+  }
+  .board-controls {
+    left: auto;
+    top: calc(var(--topbar-height) + 30px);
+    bottom: var(--footer-height);
+    width: 250px;
+    height: auto;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .feedback {
+    left: auto;
+    right: 0;
+    width: 250px;
+    transform: none;
+  }
+}
 .reconnect {
   position: fixed;
   top: 80px;
