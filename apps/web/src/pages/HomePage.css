@@ -856,7 +856,7 @@ input:focus-visible,
 }
 @media (orientation: landscape) and (max-height: 400px) {
   .app {
-    --control-rail-width: 216px;
+    --control-rail-width: 138px;
   }
   .board-scroll {
     --board-chrome: calc(var(--topbar-height) + var(--footer-height));
@@ -878,13 +878,32 @@ input:focus-visible,
     transform: none;
   }
   .pill-slot {
-    width: var(--control-rail-width);
+    width: 126px;
+    height: auto;
+    min-height: 78px;
+  }
+  .canvas-controls {
+    display: grid;
+    grid-template-columns: repeat(2, 40px);
+  }
+  .canvas-controls button {
+    width: 40px;
+    height: 40px;
   }
   .move-pill {
-    gap: 3px;
+    display: grid;
+    grid-template-columns: repeat(3, 36px);
+    grid-template-rows: auto 36px;
+    gap: 2px;
+    height: auto;
+    padding: 4px 6px;
+    border-radius: 18px;
   }
-  .pill-handle {
-    padding-inline: 2px;
+  .pill-count {
+    grid-column: span 2;
+  }
+  .dots {
+    margin-top: 1px;
   }
 }
 .reconnect {

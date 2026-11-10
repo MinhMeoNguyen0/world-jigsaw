@@ -10,10 +10,13 @@ import './HomePage.css'
 const MAX_ZOOM = 7.2
 
 // The reviewed page's movable pill stays within the visible viewport.
-const clampPill = (position: { x: number; y: number }) => ({
-  x: Math.max(0, Math.min(window.innerWidth - 250, position.x)),
-  y: Math.max(0, Math.min(window.innerHeight - 60, position.y)),
-})
+const clampPill = (position: { x: number; y: number }, pill: HTMLElement) => {
+  const { width, height } = pill.getBoundingClientRect()
+  return {
+    x: Math.max(0, Math.min(window.innerWidth - width, position.x)),
+    y: Math.max(0, Math.min(window.innerHeight - height, position.y)),
+  }
+}
 
 // Like the reviewed GroupArtwork, clip the whole image once for a connected group.
 function Artwork({
@@ -116,6 +119,7 @@ export function HomePage() {
   } = useLiveBoard()
   const [time, setTime] = useState('—')
   const [pillPosition, setPillPosition] = useState<{ x: number; y: number } | null>(null)
+  const pillRef = useRef<HTMLDivElement>(null)
   const pillDrag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const zoomFocus = useRef<string | null>(null)
   const serverTime = game?.serverTime,
@@ -138,7 +142,9 @@ export function HomePage() {
   }, [serverTime, endsAt])
   useEffect(() => {
     const resize = () => {
-      setPillPosition((position) => (position ? clampPill(position) : null))
+      setPillPosition((position) =>
+        position && pillRef.current ? clampPill(position, pillRef.current) : position,
+      )
       setCamera({ zoom: 1, x: 0, y: 0 })
       zoomFocus.current = null
     }
@@ -620,6 +626,7 @@ export function HomePage() {
         <div className="pill-slot">
           <div
             className="move-pill"
+            ref={pillRef}
             style={
               pillPosition
                 ? { position: 'fixed', left: pillPosition.x, top: pillPosition.y }
@@ -641,14 +648,17 @@ export function HomePage() {
                 }
               }}
               onPointerMove={(event) => {
-                if (!pillDrag.current) return
+                if (!pillDrag.current || !pillRef.current) return
                 event.stopPropagation()
                 const origin = pillDrag.current
                 setPillPosition(
-                  clampPill({
-                    x: origin.left + event.clientX - origin.x,
-                    y: origin.top + event.clientY - origin.y,
-                  }),
+                  clampPill(
+                    {
+                      x: origin.left + event.clientX - origin.x,
+                      y: origin.top + event.clientY - origin.y,
+                    },
+                    pillRef.current,
+                  ),
                 )
               }}
               onPointerUp={(event) => {

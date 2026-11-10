@@ -8,6 +8,11 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 700, height: 500 },
   { width: 375, height: 700 },
+  { width: 320, height: 300 },
+  { width: 350, height: 320 },
+  { width: 374, height: 320 },
+  { width: 375, height: 320 },
+  { width: 376, height: 320 },
   { width: 399, height: 320 },
   { width: 400, height: 320 },
   { width: 460, height: 320 },
@@ -119,6 +124,43 @@ for (const viewport of [
         return Number(image.getAttribute('width')) * (image as SVGImageElement).getScreenCTM()!.a
       })
       expect(pictureWidth).toBeGreaterThan(63)
+    }
+    if (
+      (viewport.width === 375 && viewport.height === 320) ||
+      (viewport.width === 1440 && viewport.height === 900)
+    ) {
+      await page.getByRole('button', { name: 'Zoom in' }).click()
+      await expect(page.getByRole('button', { name: 'Zoom out' })).toBeEnabled()
+      await page.getByRole('button', { name: 'Fit whole canvas' }).click()
+      await expect(page.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
+      const pill = page.locator('.move-pill')
+      const handle = page.getByRole('button', { name: 'Move controls' })
+      const before = (await pill.boundingBox())!
+      const grip = (await handle.boundingBox())!
+      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(grip.x + grip.width / 2 + 1, grip.y + grip.height / 2 + 1)
+      const moved = (await pill.boundingBox())!
+      expect(moved.x).toBeCloseTo(before.x + 1, 0)
+      expect(moved.y).toBeCloseTo(before.y + 1, 0)
+      await page.mouse.move(-100, -100)
+      const upperLeft = (await pill.boundingBox())!
+      expect(upperLeft.x).toBeCloseTo(0, 0)
+      expect(upperLeft.y).toBeCloseTo(0, 0)
+      await page.mouse.move(viewport.width + 100, viewport.height + 100)
+      const clamped = (await pill.boundingBox())!
+      expect(clamped.x + clamped.width).toBeCloseTo(viewport.width, 0)
+      expect(clamped.y + clamped.height).toBeCloseTo(viewport.height, 0)
+      await page.mouse.up()
+      await page.setViewportSize({ width: 320, height: 700 })
+      await expect
+        .poll(async () => {
+          const rect = (await pill.boundingBox())!
+          return (
+            rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= 320 && rect.y + rect.height <= 700
+          )
+        })
+        .toBe(true)
     }
   })
 }
