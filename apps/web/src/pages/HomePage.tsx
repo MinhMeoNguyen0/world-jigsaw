@@ -115,12 +115,8 @@ export function HomePage() {
     confirm,
   } = useLiveBoard()
   const [time, setTime] = useState('—')
-  const [pillPosition, setPillPosition] = useState(() => ({
-    x: Math.max(0, window.innerWidth / 2 - 125),
-    y: Math.max(55, window.innerHeight - (window.innerHeight <= 500 ? 44 : 47) - 70),
-  }))
+  const [pillPosition, setPillPosition] = useState<{ x: number; y: number } | null>(null)
   const pillDrag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
-  const pillMoved = useRef(false)
   const zoomFocus = useRef<string | null>(null)
   const serverTime = game?.serverTime,
     endsAt = game?.endsAt
@@ -142,14 +138,7 @@ export function HomePage() {
   }, [serverTime, endsAt])
   useEffect(() => {
     const resize = () => {
-      setPillPosition((position) =>
-        pillMoved.current
-          ? clampPill(position)
-          : clampPill({
-              x: window.innerWidth / 2 - 125,
-              y: window.innerHeight - (window.innerHeight <= 500 ? 44 : 47) - 70,
-            }),
-      )
+      setPillPosition((position) => (position ? clampPill(position) : null))
       setCamera({ zoom: 1, x: 0, y: 0 })
       zoomFocus.current = null
     }
@@ -575,144 +564,155 @@ export function HomePage() {
           {t('game.retrySummary')}
         </button>
       )}
-      <div className="canvas-controls" aria-label={t('home.canvasControls')}>
-        <button
-          type="button"
-          onClick={() => {
-            if (selected) rotate(selected)
-          }}
-          disabled={
-            !selected ||
-            !canMove(selected) ||
-            state.connection !== 'ready' ||
-            (!!game?.ownTurn && proven === null)
-          }
-          aria-label={t('home.rotate')}
-          title={t('home.rotate')}
-        >
-          {t('symbol.rotate')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            zoomCanvas(1.8)
-          }}
-          disabled={camera.zoom >= MAX_ZOOM}
-          aria-label={t('home.zoomIn')}
-          title={t('home.zoomIn')}
-        >
-          {t('symbol.zoomIn')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            zoomCanvas(1 / 1.8)
-          }}
-          disabled={camera.zoom <= 1}
-          aria-label={t('home.zoomOut')}
-          title={t('home.zoomOut')}
-        >
-          {t('symbol.zoomOut')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            zoomFocus.current = null
-            setCamera({ zoom: 1, x: 0, y: 0 })
-          }}
-          disabled={camera.zoom === 1}
-          aria-label={t('home.fitCanvas')}
-          title={t('home.fitCanvas')}
-        >
-          {t('symbol.fitCanvas')}
-        </button>
-      </div>
-      <div className="move-pill" style={{ left: pillPosition.x, top: pillPosition.y }}>
-        <button
-          className="pill-handle"
-          aria-label={t('home.movePill')}
-          onPointerDown={(event) => {
-            event.stopPropagation()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            pillDrag.current = {
-              x: event.clientX,
-              y: event.clientY,
-              left: pillPosition.x,
-              top: pillPosition.y,
+      <div className="board-controls">
+        <div className="canvas-controls" aria-label={t('home.canvasControls')}>
+          <button
+            type="button"
+            onClick={() => {
+              if (selected) rotate(selected)
+            }}
+            disabled={
+              !selected ||
+              !canMove(selected) ||
+              state.connection !== 'ready' ||
+              (!!game?.ownTurn && proven === null)
             }
-          }}
-          onPointerMove={(event) => {
-            if (!pillDrag.current) return
-            event.stopPropagation()
-            pillMoved.current = true
-            const origin = pillDrag.current
-            setPillPosition(
-              clampPill({
-                x: origin.left + event.clientX - origin.x,
-                y: origin.top + event.clientY - origin.y,
-              }),
-            )
-          }}
-          onPointerUp={(event) => {
-            event.stopPropagation()
-            pillDrag.current = null
-          }}
-          onPointerCancel={() => {
-            pillDrag.current = null
-          }}
-        >
-          {t('symbol.grip')}
-        </button>
-        <div className="pill-count">
-          <strong>{t('home.remaining', { count: remaining ?? '—' })}</strong>
-          <div className="dots">
-            {Array.from({ length: 5 }, (_, i) => (
-              <i key={i} className={remaining !== null && i < remaining ? 'available' : ''} />
-            ))}
-          </div>
-          <span>{t('game.pending', { count: pendingMoves ?? '—' })}</span>
-          {game?.ownTurn && (
-            <span>{t('game.savedAllowance', { count: committedRemaining ?? '—' })}</span>
-          )}
+            aria-label={t('home.rotate')}
+            title={t('home.rotate')}
+          >
+            {t('symbol.rotate')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              zoomCanvas(1.8)
+            }}
+            disabled={camera.zoom >= MAX_ZOOM}
+            aria-label={t('home.zoomIn')}
+            title={t('home.zoomIn')}
+          >
+            {t('symbol.zoomIn')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              zoomCanvas(1 / 1.8)
+            }}
+            disabled={camera.zoom <= 1}
+            aria-label={t('home.zoomOut')}
+            title={t('home.zoomOut')}
+          >
+            {t('symbol.zoomOut')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              zoomFocus.current = null
+              setCamera({ zoom: 1, x: 0, y: 0 })
+            }}
+            disabled={camera.zoom === 1}
+            aria-label={t('home.fitCanvas')}
+            title={t('home.fitCanvas')}
+          >
+            {t('symbol.fitCanvas')}
+          </button>
         </div>
-        <button
-          className="pill-action"
-          disabled={!game?.ownTurn || state.connection !== 'ready'}
-          onClick={cancel}
-          aria-label={t('game.cancel')}
-        >
-          {t('symbol.close')}
-        </button>
-        <button
-          className="pill-action"
-          disabled={
-            (!actions.length && !undoPending) ||
-            dragging ||
-            state.previewPending ||
-            state.connection !== 'ready'
-          }
-          onClick={undo}
-          aria-label={t('home.undo')}
-        >
-          {t('symbol.undo')}
-        </button>
-        <button
-          className="pill-confirm"
-          disabled={
-            dragging ||
-            !actions.length ||
-            state.previewPending ||
-            state.connection !== 'ready' ||
-            !!state.issue ||
-            !!state.pendingConfirm ||
-            !!state.unresolvedCommand ||
-            !game?.ownTurn
-          }
-          onClick={confirm}
-          aria-label={t('home.confirm')}
-        >
-          {t('symbol.confirm')}
-        </button>
+        <div className="pill-slot">
+          <div
+            className="move-pill"
+            style={
+              pillPosition
+                ? { position: 'fixed', left: pillPosition.x, top: pillPosition.y }
+                : undefined
+            }
+          >
+            <button
+              className="pill-handle"
+              aria-label={t('home.movePill')}
+              onPointerDown={(event) => {
+                event.stopPropagation()
+                event.currentTarget.setPointerCapture(event.pointerId)
+                const rect = event.currentTarget.parentElement!.getBoundingClientRect()
+                pillDrag.current = {
+                  x: event.clientX,
+                  y: event.clientY,
+                  left: rect.left,
+                  top: rect.top,
+                }
+              }}
+              onPointerMove={(event) => {
+                if (!pillDrag.current) return
+                event.stopPropagation()
+                const origin = pillDrag.current
+                setPillPosition(
+                  clampPill({
+                    x: origin.left + event.clientX - origin.x,
+                    y: origin.top + event.clientY - origin.y,
+                  }),
+                )
+              }}
+              onPointerUp={(event) => {
+                event.stopPropagation()
+                pillDrag.current = null
+              }}
+              onPointerCancel={() => {
+                pillDrag.current = null
+              }}
+            >
+              {t('symbol.grip')}
+            </button>
+            <div className="pill-count">
+              <strong>{t('home.remaining', { count: remaining ?? '—' })}</strong>
+              <div className="dots">
+                {Array.from({ length: 5 }, (_, i) => (
+                  <i key={i} className={remaining !== null && i < remaining ? 'available' : ''} />
+                ))}
+              </div>
+              <span>{t('game.pending', { count: pendingMoves ?? '—' })}</span>
+              {game?.ownTurn && (
+                <span>{t('game.savedAllowance', { count: committedRemaining ?? '—' })}</span>
+              )}
+            </div>
+            <button
+              className="pill-action"
+              disabled={!game?.ownTurn || state.connection !== 'ready'}
+              onClick={cancel}
+              aria-label={t('game.cancel')}
+            >
+              {t('symbol.close')}
+            </button>
+            <button
+              className="pill-action"
+              disabled={
+                (!actions.length && !undoPending) ||
+                dragging ||
+                state.previewPending ||
+                state.connection !== 'ready'
+              }
+              onClick={undo}
+              aria-label={t('home.undo')}
+            >
+              {t('symbol.undo')}
+            </button>
+            <button
+              className="pill-confirm"
+              disabled={
+                dragging ||
+                !actions.length ||
+                state.previewPending ||
+                state.connection !== 'ready' ||
+                !!state.issue ||
+                !!state.pendingConfirm ||
+                !!state.unresolvedCommand ||
+                !game?.ownTurn
+              }
+              onClick={confirm}
+              aria-label={t('home.confirm')}
+            >
+              {t('symbol.confirm')}
+            </button>
+          </div>
+        </div>
       </div>
       {state.pendingConfirm && (
         <div className="recovery-controls">
