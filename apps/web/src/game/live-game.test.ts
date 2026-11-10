@@ -716,6 +716,121 @@ describe('versioned subscription and preview receipts', () => {
     return { h, socket }
   }
 
+  const peerTurnId = '00000000-0000-4000-8000-000000000071'
+  const otherPeerTurnId = '00000000-0000-4000-8000-000000000072'
+  const peerAction = { ...joined, actionId: '00000000-0000-4000-8000-000000000073' }
+  const peerPreview = (turnId = peerTurnId, expiresAt = turn.expiresAt) => ({
+    ...fixture.preview,
+    turnId,
+    generation: 1,
+    sequence: 0,
+    action: peerAction,
+    expiresAt,
+  })
+
+  it.each(['disconnect', 'board change'] as const)(
+    'retains peer and own joined previews during %s until the atomic handoff',
+    async (cause) => {
+      const { h, socket } = await acceptedJoined()
+      socket.emit(peerPreview())
+      if (cause === 'disconnect') {
+        socket.drop()
+        await h.client.connect()
+      } else {
+        const changedGroup = fixture.boardChanged
+          .groups[0] as CurrentGame['snapshot']['groups'][number]
+        const unchangedGroup = current.snapshot.groups[1]
+        if (!unchangedGroup) throw new Error('Missing fixture group')
+        const snapshot = {
+          ...current.snapshot,
+          boardVersion: fixture.boardChanged.boardVersion,
+          groups: [changedGroup, unchangedGroup],
+        }
+        h.setGame({ ...current, snapshot, ownTurn: turn })
+        socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      }
+      const state = h.client.getState()
+      expect(state.recoveryView?.actions).toEqual([joined])
+      expect(state.peerRecoveryViews[peerTurnId]?.actions).toEqual([peerAction])
+      expect(h.client.provenDraft()).toBeNull()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      const snapshot = state.game?.snapshot
+      if (!snapshot) throw new Error('Missing board')
+      next.emit({
+        ...handoff(),
+        snapshot,
+        watermark: snapshot.boardVersion,
+        previews: [peerPreview()],
+      })
+      expect(h.client.getState().recoveryView).toBeNull()
+      expect(h.client.getState().peerRecoveryViews).toEqual({})
+      expect(Object.values(h.client.getState().previews)[0]?.actions[peerAction.actionId]).toEqual(
+        peerAction,
+      )
+      h.client.disconnect()
+    },
+  )
+
+  it('keeps a peer preview without an own turn and clears it on cancellation', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({
+      ...handoff(),
+      ownTurn: null,
+      draftRevision: null,
+      previews: [peerPreview(), peerPreview(otherPeerTurnId)],
+    })
+    socket.drop()
+    expect(h.client.getState().peerRecoveryViews[peerTurnId]?.actions).toEqual([peerAction])
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...fixture.previewCleared, turnId: peerTurnId, generation: 1, reason: 'canceled' })
+    expect(h.client.getState().peerRecoveryViews[peerTurnId]).toBeUndefined()
+    expect(h.client.getState().peerRecoveryViews[otherPeerTurnId]?.actions).toEqual([peerAction])
+    expect(h.client.getState().previews[peerTurnId]?.closed).toBe(true)
+    h.client.disconnect()
+  })
+
+  it('expires peer recoveries independently at their preview deadlines', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit({
+        ...handoff(),
+        ownTurn: null,
+        draftRevision: null,
+        previews: [
+          peerPreview(peerTurnId, '2026-11-08T12:00:01Z'),
+          peerPreview(otherPeerTurnId, '2026-11-08T12:00:02Z'),
+        ],
+      })
+      socket.drop()
+      expect(Object.keys(h.client.getState().peerRecoveryViews)).toHaveLength(2)
+      vi.advanceTimersByTime(1000)
+      expect(Object.keys(h.client.getState().peerRecoveryViews)).toEqual([otherPeerTurnId])
+      vi.advanceTimersByTime(1000)
+      expect(h.client.getState().peerRecoveryViews).toEqual({})
+      h.client.disconnect()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discards peer recovery after a failed reconnect', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({ ...handoff(), ownTurn: null, draftRevision: null, previews: [peerPreview()] })
+    socket.drop()
+    h.setCurrentUnavailable(true)
+    await expect(h.client.connect()).rejects.toThrow('PUZZLE_UNAVAILABLE')
+    expect(h.client.getState().peerRecoveryViews).toEqual({})
+    h.client.disconnect()
+  })
+
   it('shows the joined draft during reconnect and replaces it with the handoff', async () => {
     const { h, socket } = await acceptedJoined()
     socket.drop()

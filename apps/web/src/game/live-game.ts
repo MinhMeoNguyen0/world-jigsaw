@@ -34,6 +34,10 @@ export interface LiveGameState {
   previews: Record<string, PreviewState>
   /** Tentative appearance only; never used for commands or draft proof. */
   recoveryView: { turn: Turn; actions: Action[] } | null
+  peerRecoveryViews: Record<
+    string,
+    { generation: number; sequence: number; actions: Action[]; deadline: number }
+  >
   previewPending: boolean
   previewRejection: PreviewRejected | null
   cursors: Record<string, CursorPresence>
@@ -122,6 +126,7 @@ export class LiveGame {
     game: null,
     previews: {},
     recoveryView: null,
+    peerRecoveryViews: {},
     previewPending: false,
     previewRejection: null,
     cursors: {},
@@ -133,6 +138,8 @@ export class LiveGame {
   private listeners = new Set<(state: LiveGameState) => void>()
   private cursorTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private peerRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private previewDeadlines = new Map<string, number>()
   private currentReadStarted = 0
   private socket: Socket | null = null
   private epoch = 0
@@ -238,6 +245,66 @@ export class LiveGame {
     return { turn, actions: displayed }
   }
 
+  private clearPeerRecovery() {
+    if (this.peerRecoveryTimer !== null) clearTimeout(this.peerRecoveryTimer)
+    this.peerRecoveryTimer = null
+  }
+
+  private schedulePeerRecovery(views: LiveGameState['peerRecoveryViews']) {
+    this.clearPeerRecovery()
+    const deadline = Object.values(views).reduce(
+      (min, view) => Math.min(min, view.deadline),
+      Infinity,
+    )
+    if (!Number.isFinite(deadline)) return
+    this.peerRecoveryTimer = setTimeout(
+      () => {
+        this.peerRecoveryTimer = null
+        const now = performance.now()
+        const remaining = Object.fromEntries(
+          Object.entries(this.state.peerRecoveryViews).filter(([, view]) => view.deadline > now),
+        )
+        this.schedulePeerRecovery(remaining)
+        this.publish({ peerRecoveryViews: remaining })
+      },
+      Math.max(0, deadline - performance.now()),
+    )
+  }
+
+  private previewDeadline(preview: Preview, game: CurrentGame): number {
+    return (
+      this.currentReadStarted +
+      Math.min(Date.parse(preview.expiresAt), Date.parse(game.endsAt)) -
+      Date.parse(game.serverTime)
+    )
+  }
+
+  private retainPeerRecovery(): LiveGameState['peerRecoveryViews'] {
+    if (this.state.connection !== 'ready' || !this.state.game) return this.state.peerRecoveryViews
+    const ownId = this.state.game.ownTurn?.turnId.toLowerCase()
+    const views: LiveGameState['peerRecoveryViews'] = {}
+    for (const [key, preview] of Object.entries(this.state.previews)) {
+      const deadline = this.previewDeadlines.get(key)
+      const actions = Object.values(preview.actions)
+      if (
+        key !== ownId &&
+        !preview.closed &&
+        deadline !== undefined &&
+        Number.isFinite(deadline) &&
+        deadline > performance.now() &&
+        actions.some((action) => action.affectedPieceIds.length > 1)
+      )
+        views[key] = {
+          generation: preview.generation,
+          sequence: preview.sequence,
+          actions,
+          deadline,
+        }
+    }
+    this.schedulePeerRecovery(views)
+    return views
+  }
+
   private async request<T>(path: string, name: string, body?: unknown): Promise<T> {
     const response = await this.deps.fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
@@ -266,6 +333,8 @@ export class LiveGame {
   /** Reconnect always obtains a fresh current game and a fresh atomic subscription. */
   async connect(): Promise<void> {
     const recoveryView = this.retainRecoveryView() ?? this.state.recoveryView
+    const peerRecoveryViews = this.retainPeerRecovery()
+    this.previewDeadlines.clear()
     const epoch = ++this.epoch
     this.stopSocket()
     if (this.inFlight) {
@@ -277,6 +346,7 @@ export class LiveGame {
       connection: 'connecting',
       previews: {},
       recoveryView,
+      peerRecoveryViews,
       cursors: {},
       previewPending: false,
       previewRejection: null,
@@ -313,7 +383,31 @@ export class LiveGame {
         game.ownTurn.turnRevision === view.turn.turnRevision &&
         canonical(this.state.game.definition) === canonical(game.definition)
       if (!keepView) this.clearRecoveryView()
-      this.publish({ game, connection: 'resyncing', recoveryView: keepView ? view : null })
+      const sameDefinition =
+        this.state.game &&
+        sameId(this.state.game.snapshot.puzzleId, game.snapshot.puzzleId) &&
+        this.state.game.day === game.day &&
+        canonical(this.state.game.definition) === canonical(game.definition)
+      const endDeadline = currentReadStarted + Date.parse(game.endsAt) - Date.parse(game.serverTime)
+      const peerViews = sameDefinition
+        ? Object.fromEntries(
+            Object.entries(this.state.peerRecoveryViews)
+              .map(
+                ([key, peer]) =>
+                  [key, { ...peer, deadline: Math.min(peer.deadline, endDeadline) }] as const,
+              )
+              .filter(
+                ([, peer]) => Number.isFinite(peer.deadline) && peer.deadline > performance.now(),
+              ),
+          )
+        : {}
+      this.schedulePeerRecovery(peerViews)
+      this.publish({
+        game,
+        connection: 'resyncing',
+        recoveryView: keepView ? view : null,
+        peerRecoveryViews: peerViews,
+      })
       if (epoch !== this.epoch) return
       const url = new URL('/api/v1/game/stream', this.deps.origin)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -335,7 +429,9 @@ export class LiveGame {
       }
       socket.onclose = () => {
         if (epoch !== this.epoch) return
-        const recoveryView = this.retainRecoveryView()
+        const recoveryView = this.retainRecoveryView() ?? this.state.recoveryView
+        const peerRecoveryViews = this.retainPeerRecovery()
+        this.previewDeadlines.clear()
         if (!recoveryView) this.clearRecoveryView()
         ++this.epoch
         if (this.inFlight) {
@@ -349,6 +445,7 @@ export class LiveGame {
           cursors: {},
           previews: {},
           recoveryView,
+          peerRecoveryViews,
           previewPending: false,
           issue: 'Connection lost; reconnect to resynchronize.',
         })
@@ -360,9 +457,12 @@ export class LiveGame {
     } catch (error) {
       if (epoch === this.epoch) {
         this.clearRecoveryView()
+        this.clearPeerRecovery()
+        this.previewDeadlines.clear()
         this.publish({
           connection: 'disconnected',
           recoveryView: null,
+          peerRecoveryViews: {},
           issue: String(error),
           ...(error instanceof GameRequestError &&
           error.path === '/api/v1/game/current' &&
@@ -377,6 +477,8 @@ export class LiveGame {
 
   disconnect() {
     this.clearRecoveryView()
+    this.clearPeerRecovery()
+    this.previewDeadlines.clear()
     ++this.epoch
     if (this.inFlight) {
       this.uncertainDraft = true
@@ -388,6 +490,7 @@ export class LiveGame {
       connection: 'disconnected',
       previews: {},
       recoveryView: null,
+      peerRecoveryViews: {},
       cursors: {},
       previewPending: false,
     })
@@ -407,6 +510,8 @@ export class LiveGame {
   private resync(reason: string, game = this.state.game, discardView = false) {
     const epoch = this.epoch
     const recoveryView = discardView ? null : (this.retainRecoveryView() ?? this.state.recoveryView)
+    const peerRecoveryViews = this.retainPeerRecovery()
+    this.previewDeadlines.clear()
     if (!recoveryView) this.clearRecoveryView()
     this.publish({
       issue: reason,
@@ -414,6 +519,7 @@ export class LiveGame {
       game,
       previews: {},
       recoveryView,
+      peerRecoveryViews,
       cursors: {},
     })
     if (epoch !== this.epoch) return
@@ -549,17 +655,22 @@ export class LiveGame {
           return
         }
         const previews: Record<string, PreviewState> = {}
+        this.previewDeadlines.clear()
         for (const preview of reply.previews) {
           const key = preview.turnId.toLowerCase()
-          const next = applyPreview(previews[key] ?? null, preview)
+          const previous = previews[key] ?? null
+          const next = applyPreview(previous, preview)
+          if (next !== previous) this.previewDeadlines.set(key, this.previewDeadline(preview, game))
           if (next) previews[key] = next
         }
         this.history = { byVersion: new Map(), eventIds: new Set() }
         this.clearRecoveryView()
+        this.clearPeerRecovery()
         this.publish({
           game: { ...game, snapshot: reply.snapshot },
           previews,
           recoveryView: null,
+          peerRecoveryViews: {},
           connection: 'resyncing',
           issue: 'Service must provide identity state atomically with the subscription.',
         })
@@ -577,11 +688,14 @@ export class LiveGame {
         )
           throw new Error('Invalid subscription handoff')
         const previews: Record<string, PreviewState> = {}
+        this.previewDeadlines.clear()
         for (const preview of reply.previews) {
           if (!sameId(preview.puzzleId, reply.snapshot.puzzleId))
             throw new Error('Wrong preview puzzle')
           const key = preview.turnId.toLowerCase()
-          const next = applyPreview(previews[key] ?? null, preview)
+          const previous = previews[key] ?? null
+          const next = applyPreview(previous, preview)
+          if (next !== previous) this.previewDeadlines.set(key, this.previewDeadline(preview, game))
           if (next) previews[key] = next
         }
         const proof = this.draftProof
@@ -622,6 +736,7 @@ export class LiveGame {
         this.acceptedActions = structuredClone(reply.actions)
         if (!this.uncertainDraft) this.lostPreview = null
         this.clearRecoveryView()
+        this.clearPeerRecovery()
         this.publish({
           game: {
             ...game,
@@ -631,6 +746,7 @@ export class LiveGame {
           },
           previews,
           recoveryView: null,
+          peerRecoveryViews: {},
           connection: 'ready',
           previewPending: false,
           issue: this.uncertainDraft
@@ -715,6 +831,20 @@ export class LiveGame {
           return
         }
         const key = event.turnId.toLowerCase()
+        const peerView = this.state.peerRecoveryViews[key]
+        if (
+          peerView &&
+          (event.generation < peerView.generation ||
+            (type === 'preview' &&
+              event.generation === peerView.generation &&
+              (event as Preview).sequence <= peerView.sequence))
+        )
+          return
+        const peerRecoveryViews = { ...this.state.peerRecoveryViews }
+        if (peerView && event.generation >= peerView.generation) {
+          delete peerRecoveryViews[key]
+          this.schedulePeerRecovery(peerRecoveryViews)
+        }
         const previous = this.state.previews[key] ?? null
         const next = applyPreview(previous, event)
         if (
@@ -732,7 +862,13 @@ export class LiveGame {
           )
           return
         }
-        if (next) this.publish({ previews: { ...this.state.previews, [key]: next } })
+        if (next !== previous) {
+          if (type === 'preview')
+            this.previewDeadlines.set(key, this.previewDeadline(event as Preview, game))
+          else this.previewDeadlines.delete(key)
+        }
+        if (next)
+          this.publish({ previews: { ...this.state.previews, [key]: next }, peerRecoveryViews })
       } else if (type === 'preview.rejected') {
         const rejection = checked<PreviewRejected>('PreviewRejected', message)
         const view = this.state.recoveryView
@@ -816,18 +952,24 @@ export class LiveGame {
             event.day !== game.day
           ) {
             this.clearRecoveryView()
-            this.publish({ game: null, previews: {}, recoveryView: null })
+            this.clearPeerRecovery()
+            this.previewDeadlines.clear()
+            this.publish({ game: null, previews: {}, recoveryView: null, peerRecoveryViews: {} })
             if (epoch !== this.epoch) return
           }
         } else checked('ResyncRequired', message)
         this.resync('Game changed; resynchronizing.')
       } else if (type === 'error') {
         const error = checked<{ error: { code: string; message: string } }>('SocketError', message)
-        if (error.error.code === 'PUZZLE_UNAVAILABLE') this.clearRecoveryView()
+        if (error.error.code === 'PUZZLE_UNAVAILABLE') {
+          this.clearRecoveryView()
+          this.clearPeerRecovery()
+          this.previewDeadlines.clear()
+        }
         this.publish({
           issue: `${error.error.code}: ${error.error.message}`,
           ...(error.error.code === 'PUZZLE_UNAVAILABLE'
-            ? { game: null, previews: {}, recoveryView: null }
+            ? { game: null, previews: {}, recoveryView: null, peerRecoveryViews: {} }
             : {}),
         })
       } else throw new Error('Unsupported stream event')

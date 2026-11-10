@@ -229,11 +229,15 @@ export function useLiveBoard() {
       !turnId ? [] : (currentSummary?.movementCosts ?? null),
     )
   const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
-  const previews =
-    state.recoveryView?.actions ??
-    Object.values(state.previews).flatMap((turn) =>
-      turn.closed ? [] : Object.values(turn.actions),
-    )
+  const previews = [
+    ...Object.values(state.previews).flatMap((turn) =>
+      turn.closed || turn.turnId.toLowerCase() === state.recoveryView?.turn.turnId.toLowerCase()
+        ? []
+        : Object.values(turn.actions),
+    ),
+    ...(state.recoveryView?.actions ?? []),
+    ...Object.values(state.peerRecoveryViews).flatMap((view) => view.actions),
+  ]
   const previewOwners = new Map<string, string>()
   for (const action of previews)
     for (const id of action.affectedPieceIds) previewOwners.set(id.toLowerCase(), action.actionId)

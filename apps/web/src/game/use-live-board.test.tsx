@@ -99,7 +99,14 @@ function setup(override?: Partial<CurrentGame>, stateOverride?: Partial<LiveGame
     ...override,
   }
   mock.begin.mockImplementation(() => Promise.resolve(game.ownTurn))
-  mock.state = { connection: 'ready', game, previews: {}, cursors: {}, ...stateOverride }
+  mock.state = {
+    connection: 'ready',
+    game,
+    previews: {},
+    peerRecoveryViews: {},
+    cursors: {},
+    ...stateOverride,
+  }
   vi.stubGlobal('window', {
     location: { origin: 'http://127.0.0.1:5173' },
     setTimeout,
@@ -190,6 +197,35 @@ describe('three-piece group interaction', () => {
     expect(
       joined.pieceIds.every((id) => board.previewOwners.get(id.toLowerCase()) === action.actionId),
     ).toBe(true)
+    board.down(pointer(10, 20), joined)
+    expect(board.pending.current).toBeNull()
+    expect(mock.preview).not.toHaveBeenCalled()
+  })
+
+  it('renders peer, own recovery, and current previews together as overlays', () => {
+    const peer = { ...action, actionId: 'peer' }
+    const current = { ...action, actionId: 'current' }
+    const { board } = setup(
+      { ownTurn: turn },
+      {
+        connection: 'resyncing',
+        recoveryView: { turn, actions: [action] },
+        peerRecoveryViews: {
+          peer: { generation: 1, sequence: 0, actions: [peer], deadline: 1000 },
+        },
+        previews: {
+          current: {
+            puzzleId: turn.puzzleId,
+            turnId: 'current',
+            generation: 1,
+            sequence: 0,
+            closed: false,
+            actions: { current },
+          },
+        },
+      },
+    )
+    expect(board.previews).toEqual([current, action, peer])
     board.down(pointer(10, 20), joined)
     expect(board.pending.current).toBeNull()
     expect(mock.preview).not.toHaveBeenCalled()
