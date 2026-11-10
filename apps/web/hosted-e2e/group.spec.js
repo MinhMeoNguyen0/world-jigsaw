@@ -191,10 +191,12 @@ test('a three-piece group stays together when its middle is clicked and dragged'
         async () =>
           peer
             .locator('[data-preview-piece-ids]')
-            .evaluateAll((elements) =>
-              elements.some((e) =>
-                pieces.every((id) => e.dataset.previewPieceIds.split(',').includes(id)),
-              ),
+            .evaluateAll(
+              (elements, ids) =>
+                elements.some((e) =>
+                  ids.every((id) => e.dataset.previewPieceIds.split(',').includes(id)),
+                ),
+              pieces,
             ),
         { timeout: 20000 },
       )
