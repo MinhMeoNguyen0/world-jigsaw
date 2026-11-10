@@ -178,7 +178,7 @@ backend does not connect to it. A trusted operator can import a JSON document wi
 and `snapshot` fields, assigning its UTC day explicitly. For example, from `services/backend`:
 
 ```sh
-./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/hoi-an-expanded-60.json'
+./gradlew bootRun --args='--game-import-day=2026-11-07 --game-import-file=../../packages/generator/fixtures/hoi-an-compact-60.json'
 ```
 
 Replace the example date with the current UTC date. Import runs once during startup and fails startup on invalid input, a conflicting puzzle ID or UTC day, or an existing
@@ -188,9 +188,10 @@ snapshot identity, bounds, contour continuity, reciprocal edge geometry and comp
 membership. It commits the definition and canonical board together. It does not verify all geometry,
 collision or game rules; generated content needs further validation before production use.
 
-With a fresh disposable database and the Hoi An fixture imported, start the game, chat and web
-services and run `pnpm --filter @world-jigsaw/web test:integration` to exercise two independent
-browser sessions. This test changes the imported board; do not point it at data you want to keep.
+To exercise two independent browser sessions, use a separate fresh disposable database imported with
+`hoi-an-expanded-60.json`, start the game, chat and web services, and run
+`pnpm --filter @world-jigsaw/web test:integration`. This test changes the imported board; do not
+point it at data you want to keep.
 The reviewed collision-pair regression uses a separate disposable database imported with
 `hoi-an-surround-60.json` and runs with `pnpm --filter @world-jigsaw/web test:collision-integration`.
 

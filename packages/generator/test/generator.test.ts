@@ -330,7 +330,7 @@ test('expanded layout enlarges the shared surface while keeping loose contours o
   }
 })
 
-test('playable fixture has the expanded surface and a valid initial board', () => {
+test('expanded fixture retains its original surface and initial board', () => {
   const serialized = fixture('hoi-an-expanded-60')
   const board = JSON.parse(serialized)
   assert.equal(
@@ -353,11 +353,13 @@ test('playable fixture has the expanded surface and a valid initial board', () =
 test('default compact 60-piece boards surround the surface without overlapping contour bounds', () => {
   const { layout: _layout, placedPieces: _placed, ...defaults } = options
   for (const seed of ['review-60', 'another-seed', 'third-seed']) {
-    const board = generate({ ...defaults, seed })
+    const board = generate({ ...defaults, seed, image: 'fixture://hoi-an-generated' })
+    if (seed === 'review-60')
+      assert.equal(`${JSON.stringify(board, null, 2)}\n`, fixture('hoi-an-compact-60'))
     const expanded = generate({ ...defaults, seed, layout: 'expanded' })
     assert.equal(board.definition.shape.generatorVersion, 'world-jigsaw-grid-9')
     assert.notEqual(board.definition.puzzleId, expanded.definition.puzzleId)
-    assert.deepEqual(board, generate({ ...defaults, seed }))
+    assert.deepEqual(board, generate({ ...defaults, seed, image: 'fixture://hoi-an-generated' }))
     assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
     const members = board.snapshot.groups.flatMap((g) => g.pieceIds)
     assert.equal(members.length, 60)
