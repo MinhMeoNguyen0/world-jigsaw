@@ -9,7 +9,7 @@ import * as moveAvailability from './move-availability'
 
 const mock = vi.hoisted(() => ({
   state: {},
-  actions: [] as Action[],
+  actions: [] as Action[] | null,
   sendCursor: vi.fn(),
   recover: vi.fn(),
   preview: vi.fn(),
@@ -171,6 +171,98 @@ describe('three-piece group interaction', () => {
     expect(board.pending.current).toBeNull()
     expect(mock.preview).not.toHaveBeenCalled()
   })
+
+  it.each(['held', 'released'] as const)(
+    'resumes an existing joined drag %s during a peer resync',
+    async (mode) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = [action]
+      const { board } = setup({ ownTurn: turn })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      board.down(pointer(10, 20), joined)
+      board.move(pointer(30, 50))
+      await Promise.resolve()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      mock.preview.mockClear()
+      emit({ ...old, connection: 'resyncing', previewPending: false })
+      expect(mock.recover).toHaveBeenCalled()
+      board.move(pointer(100, 110))
+      if (mode === 'released') board.up(pointer(120, 140))
+      expect(mock.preview).not.toHaveBeenCalled()
+      emit({ ...old, connection: 'ready', previewPending: false })
+      await Promise.resolve()
+      expect(mock.preview).toHaveBeenCalledOnce()
+      expect(mock.preview.mock.calls[0][0]).toMatchObject({
+        affectedPieceIds: joined.pieceIds,
+        intendedTransform: {
+          ...joined.transform,
+          translation: {
+            x: joined.transform.translation.x + (mode === 'held' ? 90 : 110),
+            y: joined.transform.translation.y + (mode === 'held' ? 90 : 120),
+          },
+        },
+      })
+      cleanup?.()
+    },
+  )
+
+  it.each(['different turn', 'canceled turn', 'uncertain draft', 'failed recovery'] as const)(
+    'discards an existing drag after %s',
+    async (outcome) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = [action]
+      const { board } = setup({ ownTurn: turn })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      board.down(pointer(10, 20), joined)
+      board.move(pointer(30, 50))
+      await Promise.resolve()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      emit({ ...old, connection: 'resyncing', previewPending: false })
+      board.move(pointer(100, 110))
+      board.up(pointer(120, 140))
+      mock.preview.mockClear()
+      if (outcome === 'uncertain draft') mock.actions = null
+      emit(
+        outcome === 'failed recovery'
+          ? { ...old, connection: 'disconnected', issue: 'Recovery failed' }
+          : {
+              ...old,
+              connection: 'ready',
+              game: {
+                ...old.game!,
+                ownTurn:
+                  outcome === 'canceled turn'
+                    ? null
+                    : outcome === 'different turn'
+                      ? { ...turn!, generation: turn!.generation + 1 }
+                      : turn,
+              },
+            },
+      )
+      await Promise.resolve()
+      expect(board.pending.current).toBeNull()
+      expect(mock.preview).not.toHaveBeenCalled()
+      cleanup?.()
+    },
+  )
 
   it.each(['expiry', 'failed recovery', 'handoff without turn'] as const)(
     'discards an interrupted drag before %s and permits a later drag',

@@ -300,6 +300,12 @@ export function useLiveBoard() {
       return
     }
     if (!now.game?.ownTurn) return
+    if (p.waitingForTurn && !p.openingTurn) {
+      if (!p.initialTurn || !sameTurn(now.game.ownTurn, p.initialTurn) || !client.provenDraft())
+        return
+      p.waitingForTurn = false
+      if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
     if (p.openingTurn) {
       if (!p.openedTurn) return
       const turn = now.game.ownTurn
@@ -561,8 +567,7 @@ export function useLiveBoard() {
     }
     const d = pending.current
     const connection = client.getState().connection
-    if (!d?.active || (connection !== 'ready' && (!d.openingTurn || connection === 'disconnected')))
-      return
+    if (!d?.active || connection === 'disconnected') return
     const p = cursorPoint ?? point(event.clientX, event.clientY)
     if (!p) return
     if (!updateDragPosition(d, p, event.clientX, event.clientY)) return
@@ -577,7 +582,7 @@ export function useLiveBoard() {
     }
     const d = pending.current
     if (!d) return
-    if (event && d.active && d.openingTurn && d.waitingForTurn) {
+    if (event && d.active && d.waitingForTurn) {
       const p = point(event.clientX, event.clientY)
       if (p) updateDragPosition(d, p, event.clientX, event.clientY)
     }
@@ -694,8 +699,8 @@ export function useLiveBoard() {
       if (current && next.connection !== 'ready') {
         setGhost(null)
         setSelected(null)
-        if (current.openingTurn && next.connection !== 'disconnected') {
-          current.waitingForTurn = true
+        current.waitingForTurn = true
+        if (next.connection !== 'disconnected') {
           client.recoverInterruptedPreview()
         }
         if (
@@ -705,7 +710,7 @@ export function useLiveBoard() {
             next.connection === 'disconnected' &&
             stateRef.current.connection !== 'ready' &&
             stateRef.current.connection !== 'disconnected') ||
-          (!current.interrupted && !(current.openingTurn && next.connection !== 'disconnected'))
+          (!current.interrupted && next.connection === 'disconnected')
         ) {
           if (current.interrupted) client.abandonInterruptedPreview()
           pending.current = null
@@ -727,6 +732,19 @@ export function useLiveBoard() {
         setDragging(false)
         setSelected(null)
       } else if (current && previousTurn && nextTurn && !sameTurn(previousTurn, nextTurn)) {
+        if (current.interrupted) client.abandonInterruptedPreview()
+        pending.current = null
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (
+        current &&
+        current.waitingForTurn &&
+        !current.openingTurn &&
+        nextTurn &&
+        client.provenDraft() === null &&
+        (!current.interrupted || client.pendingUndoActionId() === null)
+      ) {
         if (current.interrupted) client.abandonInterruptedPreview()
         pending.current = null
         setGhost(null)
