@@ -59,9 +59,7 @@ function pendingStillValid(p: Pending, game: NonNullable<LiveGameState['game']>,
       { groupId: p.group.groupId, revision: p.group.revision },
     ]
     return (
-      members.every((id) =>
-        accepted.affectedPieceIds.some((member) => sameId(id, member)),
-      ) &&
+      members.every((id) => accepted.affectedPieceIds.some((member) => sameId(id, member))) &&
       revisions.every((base) =>
         accepted.baseRevisions.some(
           (revision) =>
@@ -74,15 +72,15 @@ function pendingStillValid(p: Pending, game: NonNullable<LiveGameState['game']>,
   const group = game.snapshot.groups.find((item) => sameId(item.groupId, p.group.groupId))
   return Boolean(
     group &&
-      group.revision === p.group.revision &&
-      group.finalPosition === p.group.finalPosition &&
-      sameMembers(group.pieceIds, p.group.pieceIds) &&
-      group.transform.rotation === p.group.transform.rotation &&
-      group.transform.translation.x === p.group.transform.translation.x &&
-      group.transform.translation.y === p.group.transform.translation.y &&
-      !draft.some((action) =>
-        action.affectedPieceIds.some((id) => p.group.pieceIds.some((member) => sameId(id, member))),
-      ),
+    group.revision === p.group.revision &&
+    group.finalPosition === p.group.finalPosition &&
+    sameMembers(group.pieceIds, p.group.pieceIds) &&
+    group.transform.rotation === p.group.transform.rotation &&
+    group.transform.translation.x === p.group.transform.translation.x &&
+    group.transform.translation.y === p.group.transform.translation.y &&
+    !draft.some((action) =>
+      action.affectedPieceIds.some((id) => p.group.pieceIds.some((member) => sameId(id, member))),
+    ),
   )
 }
 
@@ -365,6 +363,33 @@ export function useLiveBoard() {
       }
       p.waitingForTurn = false
       if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
+    if (recovering && !p.interrupted && p.finalPrepared) {
+      const accepted = client
+        .provenDraft()
+        ?.find((action) => sameId(action.actionId, p.action.actionId))
+      const finalAccepted =
+        accepted &&
+        sameMembers(accepted.affectedPieceIds, p.action.affectedPieceIds) &&
+        accepted.baseRevisions.length === p.action.baseRevisions.length &&
+        p.action.baseRevisions.every((base) =>
+          accepted.baseRevisions.some(
+            (revision) =>
+              sameId(base.groupId, revision.groupId) && base.revision === revision.revision,
+          ),
+        ) &&
+        accepted.intendedTransform.rotation === p.action.intendedTransform.rotation &&
+        accepted.intendedTransform.translation.x === p.action.intendedTransform.translation.x &&
+        accepted.intendedTransform.translation.y === p.action.intendedTransform.translation.y
+      if (!finalAccepted && !sameId(client.recoveredPreviewActionId() ?? '', p.action.actionId)) {
+        p.action = accepted ?? {
+          ...p.action,
+          affectedPieceIds: p.group.pieceIds,
+          baseRevisions: [{ groupId: p.group.groupId, revision: p.group.revision }],
+        }
+        p.finalPrepared = false
+        p.sent = ''
+      }
     }
     if (
       recovering &&
