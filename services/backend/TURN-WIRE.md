@@ -47,6 +47,10 @@ coordinator handoff. Identity-changing operations invalidate affected v2 subscri
 `resyncRequired`; clients must resubscribe before editing. The original `subscribe` and
 `subscribed` shapes remain unchanged.
 
+Clients may request `includeTurnBase` on `subscribe.v2`; when a turn exists, the handoff then
+includes its starting snapshot as `turnBase`. It is omitted for older subscribers and when no
+turn exists. Its board version identifies the active turn's base, not the current board.
+
 After installing a valid `preview.submit`, the coordinator sends only its originating v2 socket
 `preview.accepted`, echoing the submitted sequence and action ID along with the turn identity,
 the authoritative action set and its draft revision. The broadcast preview sequence remains a

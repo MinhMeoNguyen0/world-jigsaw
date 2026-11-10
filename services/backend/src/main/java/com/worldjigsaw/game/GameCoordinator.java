@@ -510,6 +510,11 @@ class GameCoordinator {
 
   synchronized void subscribe(
       UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink, boolean v2) {
+    subscribe(streamId, subject, puzzle, cursor, sink, v2, false);
+  }
+
+  synchronized void subscribe(
+      UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink, boolean v2, boolean includeTurnBase) {
     drainLeaseClears();
     JsonNode current = v2 ? mapper.valueToTree(current(subject)) : current(subject, puzzle);
     if (!puzzle.toString().equalsIgnoreCase(current.path("snapshot").path("puzzleId").asText()))
@@ -550,6 +555,7 @@ class GameCoordinator {
       if (!current.path("ownTurn").isNull()) {
         Turn turn = turns.get(BoardValidator.id(current.path("ownTurn"), "turnId"));
         if (turn == null) throw error("TURN_CLOSED", "Turn is closed");
+        if (includeTurnBase) reply.set("turnBase", turn.draft.base.deepCopy());
         nextSequence = Math.min(turn.lastClientSequence + 1, 9_007_199_254_740_991L);
         reply.put("draftRevision", turn.draftRevision);
         if (turn.lastSubmissionId != null)

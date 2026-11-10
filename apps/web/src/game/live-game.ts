@@ -25,12 +25,14 @@ import type {
   ShapeResult,
   CursorPresence,
   Point,
+  Snapshot,
 } from '@world-jigsaw/contracts'
 
 /** Provisional adapter for the private same-origin v1 service. It does not render a game. */
 export interface LiveGameState {
   connection: 'disconnected' | 'connecting' | 'ready' | 'resyncing'
   game: CurrentGame | null
+  turnBase: Snapshot | null
   previews: Record<string, PreviewState>
   /** Tentative appearance only; never used for commands or draft proof. */
   recoveryView: { turn: Turn; actions: Action[] } | null
@@ -124,6 +126,7 @@ export class LiveGame {
   private state: LiveGameState = {
     connection: 'disconnected',
     game: null,
+    turnBase: null,
     previews: {},
     recoveryView: null,
     peerRecoveryViews: {},
@@ -344,6 +347,7 @@ export class LiveGame {
     this.inFlight = null
     this.publish({
       connection: 'connecting',
+      turnBase: null,
       previews: {},
       recoveryView,
       peerRecoveryViews,
@@ -421,6 +425,7 @@ export class LiveGame {
               type: 'subscribe.v2',
               puzzleId: game.snapshot.puzzleId,
               afterBoardVersion: null,
+              includeTurnBase: true,
             }),
           )
       }
@@ -442,6 +447,7 @@ export class LiveGame {
         this.stopSocket()
         this.publish({
           connection: 'disconnected',
+          turnBase: null,
           cursors: {},
           previews: {},
           recoveryView,
@@ -488,6 +494,7 @@ export class LiveGame {
     this.stopSocket()
     this.publish({
       connection: 'disconnected',
+      turnBase: null,
       previews: {},
       recoveryView: null,
       peerRecoveryViews: {},
@@ -516,6 +523,7 @@ export class LiveGame {
     this.publish({
       issue: reason,
       connection: 'resyncing',
+      turnBase: null,
       game,
       previews: {},
       recoveryView,
@@ -682,9 +690,15 @@ export class LiveGame {
           reply.watermark !== reply.snapshot.boardVersion ||
           reply.watermark < game.snapshot.boardVersion ||
           (reply.ownTurn && !sameId(reply.ownTurn.puzzleId, reply.snapshot.puzzleId)) ||
+          (reply.ownTurn && reply.ownTurn.boardVersion > reply.snapshot.boardVersion) ||
           (!reply.ownTurn &&
             (reply.actions.length || reply.nextSequence || reply.draftRevision !== null)) ||
-          (reply.ownTurn && reply.draftRevision === null)
+          (reply.ownTurn && reply.draftRevision === null) ||
+          (reply.turnBase &&
+            (!reply.ownTurn ||
+              reply.turnBase.boardVersion !== reply.ownTurn.boardVersion ||
+              !sameId(reply.turnBase.puzzleId, reply.ownTurn.puzzleId) ||
+              !validateBoard(game.definition, reply.turnBase).valid))
         )
           throw new Error('Invalid subscription handoff')
         const previews: Record<string, PreviewState> = {}
@@ -738,6 +752,10 @@ export class LiveGame {
         this.clearRecoveryView()
         this.clearPeerRecovery()
         this.publish({
+          turnBase: reply.ownTurn
+            ? (reply.turnBase ??
+              (reply.snapshot.boardVersion === reply.ownTurn.boardVersion ? reply.snapshot : null))
+            : null,
           game: {
             ...game,
             snapshot: reply.snapshot,

@@ -521,6 +521,7 @@ export interface SubscribeV2 {
   type: 'subscribe.v2'
   puzzleId: string
   afterBoardVersion: number | null
+  includeTurnBase?: boolean
 }
 export interface SubscribedV2 {
   schemaVersion: 1
@@ -533,6 +534,7 @@ export interface SubscribedV2 {
   previews: Preview[]
   allowance: Allowance
   ownTurn: Turn | null
+  turnBase?: Snapshot
   /**
    * @maxItems 80
    */

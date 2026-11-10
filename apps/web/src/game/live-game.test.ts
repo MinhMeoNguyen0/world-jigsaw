@@ -62,6 +62,7 @@ function harness() {
   let beginReply: Promise<Response> | null = null
   let commandReply: Promise<Response> | null = null
   let undoReply: Promise<Response> | null = null
+  let cancelReply: Promise<Response> | null = null
   let shapeReply: Promise<Response> | null = null
   let currentUnavailable = false
   const calls: string[] = []
@@ -85,6 +86,10 @@ function harness() {
       if (typeof init?.body !== 'string') throw new Error('Missing undo payload')
       undoBodies.push(JSON.parse(init.body) as unknown)
       return undoReply
+    }
+    if (path.endsWith('/cancel')) {
+      if (!cancelReply) throw new Error('Missing cancel response')
+      return cancelReply
     }
     if (path.includes('/commands/') || path.endsWith('/confirm')) {
       if (!commandReply) throw new Error('Missing command response')
@@ -163,6 +168,9 @@ function harness() {
     },
     setUndoReply: (value: Promise<Response>) => {
       undoReply = value
+    },
+    setCancelReply: (value: Promise<Response>) => {
+      cancelReply = value
     },
     setShapeReply: (value: Promise<Response>) => {
       shapeReply = value
@@ -676,6 +684,56 @@ describe('versioned subscription and preview receipts', () => {
     nextSequence: draftRevision,
     draftRevision,
   })
+  it.each(['cancellation', 'expiry'] as const)(
+    'retains the authoritative turn base across board changes and clears it after %s',
+    async (outcome) => {
+      const h = harness()
+      const snapshot = fixture.confirmedSnapshot as CurrentGame['snapshot']
+      h.setGame({ ...current, snapshot, ownTurn: turn })
+      const socket = await h.start()
+      expect(socket.sent[0]).toMatchObject({ type: 'subscribe.v2', includeTurnBase: true })
+      socket.emit({
+        ...handoff(),
+        snapshot,
+        watermark: snapshot.boardVersion,
+        turnBase: current.snapshot,
+      })
+      expect(h.client.getState().turnBase).toEqual(current.snapshot)
+      h.setGame({ ...current, snapshot, ownTurn: null })
+      if (outcome === 'cancellation') {
+        h.setCancelReply(
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: 1,
+                puzzleId,
+                turnId: turn.turnId,
+                requestId: '00000000-0000-4000-8000-000000000001',
+                outcome: 'canceled',
+                boardVersion: snapshot.boardVersion,
+                allowance: current.allowance,
+                commandId: null,
+              }),
+            ),
+          ),
+        )
+        await h.client.cancel()
+      } else socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+      expect(h.client.getState().turnBase).toBeNull()
+      await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit({
+        ...handoff(),
+        snapshot,
+        watermark: snapshot.boardVersion,
+        ownTurn: null,
+        draftRevision: null,
+      })
+      expect(h.client.getState().turnBase).toBeNull()
+      h.client.disconnect()
+    },
+  )
   const accepted = (sequence: number, draftRevision: number) => ({
     schemaVersion: 1,
     type: 'preview.accepted',

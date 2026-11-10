@@ -103,6 +103,10 @@ function setup(override?: Partial<CurrentGame>, stateOverride?: Partial<LiveGame
   mock.state = {
     connection: 'ready',
     game,
+    turnBase:
+      game.ownTurn && game.ownTurn.boardVersion === game.snapshot.boardVersion
+        ? game.snapshot
+        : null,
     previews: {},
     peerRecoveryViews: {},
     cursors: {},
@@ -594,9 +598,17 @@ describe('three-piece group interaction', () => {
     },
   )
 
-  it.each(['drag', 'rotate'] as const)(
-    'joins an unchanged neighbor after another player confirms an unrelated move: %s',
-    async (interaction) => {
+  it.each([
+    ['drag', 'unchanged'],
+    ['held', 'unchanged'],
+    ['released', 'unchanged'],
+    ['rotate', 'unchanged'],
+    ['held', 'revised'],
+    ['released', 'revised'],
+    ['rotate', 'revised'],
+  ] as const)(
+    'uses the turn base for %s after a peer update with a %s neighbor',
+    async (interaction, targetChange) => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
       const multiplayer = multiplayerFixture as unknown as CurrentGame
       const [first, second] = multiplayer.snapshot.groups
@@ -607,7 +619,7 @@ describe('three-piece group interaction', () => {
         ...second,
         finalPosition: false,
         transform:
-          interaction === 'drag'
+          interaction !== 'rotate'
             ? { rotation: 0, translation: { x: 20, y: 30 } }
             : { rotation: 90000, translation: { x: 126667, y: 6667 } },
       }
@@ -645,17 +657,47 @@ describe('three-piece group interaction', () => {
       }
       mock.listener?.(mock.state as LiveGameState)
       await Promise.resolve()
-      if (interaction === 'drag') {
+      if (interaction !== 'rotate') {
         board.down(pointer(10, 20), moving)
         board.move(pointer(30, 50))
-        board.up(pointer(30, 50))
-      } else board.rotate(moving)
+        await Promise.resolve()
+        mock.actions = [firstPreview()]
+        if (interaction === 'released') board.up(pointer(30, 50))
+      }
+      if (interaction !== 'drag') {
+        const beforeRecovery = mock.state as LiveGameState
+        mock.state = { ...beforeRecovery, connection: 'resyncing' }
+        mock.listener?.(mock.state as LiveGameState)
+        const changed =
+          targetChange === 'revised' ? { ...target, revision: target.revision + 1 } : target
+        mock.state = {
+          ...beforeRecovery,
+          game: {
+            ...requireGame(beforeRecovery),
+            snapshot: {
+              ...requireGame(beforeRecovery).snapshot,
+              boardVersion: snapshot.boardVersion + 2,
+              groups: [moving, changed, peerMove],
+            },
+          },
+        }
+        mock.listener?.(mock.state as LiveGameState)
+        await Promise.resolve()
+      }
+      if (interaction === 'drag' || interaction === 'held') board.up(pointer(30, 50))
+      if (interaction === 'rotate') board.rotate(moving)
       await Promise.resolve()
-      expect(lastPreview().affectedPieceIds).toEqual([...moving.pieceIds, ...target.pieceIds])
-      expect(lastPreview().baseRevisions).toEqual([
-        { groupId: moving.groupId, revision: moving.revision },
-        { groupId: target.groupId, revision: target.revision },
-      ])
+      expect(lastPreview().affectedPieceIds).toEqual(
+        targetChange === 'unchanged' ? [...moving.pieceIds, ...target.pieceIds] : moving.pieceIds,
+      )
+      expect(lastPreview().baseRevisions).toEqual(
+        targetChange === 'unchanged'
+          ? [
+              { groupId: moving.groupId, revision: moving.revision },
+              { groupId: target.groupId, revision: target.revision },
+            ]
+          : [{ groupId: moving.groupId, revision: moving.revision }],
+      )
       cleanup?.()
     },
   )
