@@ -331,6 +331,90 @@ describe('three-piece group interaction', () => {
     cleanup?.()
   })
 
+  it.each([
+    ['drag', 'before'],
+    ['drag', 'after'],
+    ['rotation', 'before'],
+    ['rotation', 'after'],
+  ] as const)(
+    'retains the first %s when a no-turn handoff arrives %s begin resolves',
+    async (kind, order) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const { board, group } = setup()
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      let resolveBegin!: (value: CurrentGame['ownTurn']) => void
+      mock.begin.mockReturnValue(
+        new Promise((resolve) => {
+          resolveBegin = resolve
+        }),
+      )
+      if (kind === 'drag') {
+        board.down(pointer(10, 20), group)
+        board.move(pointer(30, 50))
+      } else board.rotate(group)
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      emit({ ...old, connection: 'resyncing' })
+      if (kind === 'drag') board.up(pointer(100, 110))
+      if (order === 'after') {
+        resolveBegin(turn)
+        await Promise.resolve()
+      }
+      emit({ ...old, connection: 'ready' })
+      expect(board.pending.current).not.toBeNull()
+      expect(mock.preview).not.toHaveBeenCalled()
+      if (order === 'before') {
+        resolveBegin(turn)
+        await Promise.resolve()
+      }
+      expect(mock.preview).not.toHaveBeenCalled()
+      emit({ ...old, connection: 'resyncing' })
+      emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+      await Promise.resolve()
+      expect(mock.preview).toHaveBeenCalledOnce()
+      if (kind === 'drag')
+        expect(mock.preview.mock.calls[0][0].intendedTransform.translation).toEqual({
+          x: group.transform.translation.x + 90,
+          y: group.transform.translation.y + 90,
+        })
+      cleanup?.()
+    },
+  )
+
+  it('discards the acquiring drag when begin rejects after a no-turn handoff', async () => {
+    vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+    const { board, group } = setup()
+    vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+    const cleanup = mock.effects[3]?.()
+    let rejectBegin!: (reason: Error) => void
+    mock.begin.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectBegin = reject
+      }),
+    )
+    board.down(pointer(10, 20), group)
+    board.move(pointer(30, 50))
+    const old = mock.state as LiveGameState
+    mock.state = { ...old, connection: 'resyncing' }
+    mock.listener?.(mock.state as LiveGameState)
+    mock.state = old
+    mock.listener?.(old)
+    rejectBegin(new Error('begin rejected'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(board.pending.current).toBeNull()
+    expect(mock.preview).not.toHaveBeenCalled()
+    cleanup?.()
+  })
+
   it.each(['restore', 'undo'] as const)(
     'reconciles a canceled drag after the lost preview is recovered: %s',
     async (outcome) => {

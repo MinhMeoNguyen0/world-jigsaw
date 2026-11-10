@@ -33,6 +33,7 @@ interface Pending {
   acquiring: boolean
   openingTurn: boolean
   openedTurn: Turn | null
+  waitingForTurn: boolean
   initialTurn: Turn | null
   puzzleId: string
   finalPrepared: boolean
@@ -305,6 +306,7 @@ export function useLiveBoard() {
         setSelected(null)
         return
       }
+      p.waitingForTurn = false
       if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
     }
     if (p.interrupted) {
@@ -435,6 +437,7 @@ export function useLiveBoard() {
     acquiring: false,
     openingTurn: !client.getState().game?.ownTurn,
     openedTurn: null,
+    waitingForTurn: false,
     initialTurn: client.getState().game?.ownTurn ?? null,
     puzzleId: client.getState().game!.snapshot.puzzleId,
     finalPrepared: false,
@@ -495,7 +498,7 @@ export function useLiveBoard() {
         y: Math.round(d.origin.translation.y + dy),
       },
     }
-    if (client.getState().connection === 'ready')
+    if (client.getState().connection === 'ready' && !d.waitingForTurn)
       setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
     return true
   }
@@ -557,7 +560,7 @@ export function useLiveBoard() {
     }
     const d = pending.current
     if (!d) return
-    if (event && d.active && d.openingTurn && client.getState().connection !== 'ready') {
+    if (event && d.active && d.openingTurn && d.waitingForTurn) {
       const p = point(event.clientX, event.clientY)
       if (p) updateDragPosition(d, p, event.clientX, event.clientY)
     }
@@ -674,8 +677,10 @@ export function useLiveBoard() {
       if (current && next.connection !== 'ready') {
         setGhost(null)
         setSelected(null)
-        if (current.openingTurn && next.connection !== 'disconnected')
+        if (current.openingTurn && next.connection !== 'disconnected') {
+          current.waitingForTurn = true
           client.recoverInterruptedPreview()
+        }
         if (
           !next.game ||
           next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
@@ -693,7 +698,7 @@ export function useLiveBoard() {
         current &&
         (!next.game ||
           next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
-          (!nextTurn && (!current.openingTurn || stateRef.current.connection !== 'ready')))
+          (!nextTurn && !current.openingTurn))
       ) {
         if (current.interrupted) client.abandonInterruptedPreview()
         pending.current = null
