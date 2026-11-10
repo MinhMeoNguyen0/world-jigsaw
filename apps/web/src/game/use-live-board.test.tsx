@@ -279,19 +279,57 @@ describe('three-piece group interaction', () => {
       if (kind === 'drag') {
         board.move(pointer(100, 100))
         expect(board.pending.current?.desired.translation).toEqual({
-          x: group.transform.translation.x + 20,
-          y: group.transform.translation.y + 30,
+          x: group.transform.translation.x + 90,
+          y: group.transform.translation.y + 80,
         })
-        board.up()
+        board.up(pointer(120, 130))
       }
       expect(mock.preview).not.toHaveBeenCalled()
       emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
       resolveBegin(turn)
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
+      if (kind === 'drag')
+        expect(mock.preview.mock.calls[0][0].intendedTransform.translation).toEqual({
+          x: group.transform.translation.x + 110,
+          y: group.transform.translation.y + 110,
+        })
       cleanup?.()
     },
   )
+
+  it('keeps a held first drag at its latest position through the handoff', async () => {
+    vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+    const { board, group } = setup()
+    vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+    const cleanup = mock.effects[3]?.()
+    let resolveBegin!: (value: CurrentGame['ownTurn']) => void
+    mock.begin.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBegin = resolve
+      }),
+    )
+    board.down(pointer(10, 20), group)
+    board.move(pointer(30, 50))
+    const old = mock.state as LiveGameState
+    const emit = (next: LiveGameState) => {
+      mock.state = next
+      mock.listener?.(next)
+    }
+    emit({ ...old, connection: 'resyncing' })
+    board.move(pointer(100, 100))
+    resolveBegin(turn)
+    await Promise.resolve()
+    expect(mock.preview).not.toHaveBeenCalled()
+    emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+    await Promise.resolve()
+    expect(board.pending.current?.active).toBe(true)
+    expect(mock.preview.mock.calls[0][0].intendedTransform.translation).toEqual({
+      x: group.transform.translation.x + 90,
+      y: group.transform.translation.y + 80,
+    })
+    cleanup?.()
+  })
 
   it.each(['restore', 'undo'] as const)(
     'reconciles a canceled drag after the lost preview is recovered: %s',

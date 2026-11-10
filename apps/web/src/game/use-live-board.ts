@@ -305,6 +305,7 @@ export function useLiveBoard() {
         setSelected(null)
         return
       }
+      if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
     }
     if (p.interrupted) {
       if (p.undoStarted && !p.restoring) {
@@ -481,6 +482,23 @@ export function useLiveBoard() {
     setError(null)
     setDragging(true)
   }
+  const updateDragPosition = (d: Pending, p: Point, x: number, y: number) => {
+    const dx = p.x - d.start.x,
+      dy = p.y - d.start.y
+    if (!d.moved && d.startScreen && Math.hypot(x - d.startScreen.x, y - d.startScreen.y) < 5)
+      return false
+    d.moved = true
+    d.desired = {
+      ...d.origin,
+      translation: {
+        x: Math.round(d.origin.translation.x + dx),
+        y: Math.round(d.origin.translation.y + dy),
+      },
+    }
+    if (client.getState().connection === 'ready')
+      setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
+    return true
+  }
   const move = (event: PointerEvent<SVGSVGElement>) => {
     const cursorPoint = point(event.clientX, event.clientY)
     if (cursorPoint) {
@@ -522,37 +540,27 @@ export function useLiveBoard() {
       return
     }
     const d = pending.current
-    if (!d?.active || client.getState().connection !== 'ready') return
+    const connection = client.getState().connection
+    if (!d?.active || (connection !== 'ready' && (!d.openingTurn || connection === 'disconnected')))
+      return
     const p = cursorPoint ?? point(event.clientX, event.clientY)
     if (!p) return
-    const dx = p.x - d.start.x,
-      dy = p.y - d.start.y
-    if (
-      !d.moved &&
-      d.startScreen &&
-      Math.hypot(event.clientX - d.startScreen.x, event.clientY - d.startScreen.y) < 5
-    )
-      return
-    d.moved = true
+    if (!updateDragPosition(d, p, event.clientX, event.clientY)) return
     setAccepted(false)
-    d.desired = {
-      ...d.origin,
-      translation: {
-        x: Math.round(d.origin.translation.x + dx),
-        y: Math.round(d.origin.translation.y + dy),
-      },
-    }
-    setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
     begin(d)
     flush()
   }
-  const up = () => {
+  const up = (event?: PointerEvent<SVGSVGElement>) => {
     if (pan.current) {
       pan.current = null
       return
     }
     const d = pending.current
     if (!d) return
+    if (event && d.active && d.openingTurn && client.getState().connection !== 'ready') {
+      const p = point(event.clientX, event.clientY)
+      if (p) updateDragPosition(d, p, event.clientX, event.clientY)
+    }
     if (!d.moved) {
       pending.current = null
       setDragging(false)
