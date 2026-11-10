@@ -356,7 +356,9 @@ describe('three-piece group interaction', () => {
 
   it('finishes a recovered server-authored join without resubmitting it', async () => {
     vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
-    const merged = { ...action, affectedPieceIds: source.flatMap((group) => group.pieceIds) }
+    const [firstPiece, ...otherPieces] = source.flatMap((group) => group.pieceIds)
+    if (!firstPiece) throw new Error('Missing fixture piece')
+    const merged: Action = { ...action, affectedPieceIds: [firstPiece, ...otherPieces] }
     vi.spyOn(join, 'suggestJoin').mockReturnValue(merged)
     mock.actions = [action]
     const { board } = setup({ ownTurn: turn })
@@ -371,9 +373,11 @@ describe('three-piece group interaction', () => {
     board.move(pointer(30, 50))
     await Promise.resolve()
     board.up(pointer(30, 50))
+    const mergedGroup = fixture.mergedSnapshot.groups[0]
+    if (!mergedGroup) throw new Error('Missing merged fixture group')
     const serverJoin = {
       ...lastPreview(),
-      targetId: fixture.mergedSnapshot.groups[0].groupId,
+      targetId: mergedGroup.groupId,
       intendedTransform: joined.transform,
     }
     mock.preview.mockClear()
@@ -1208,10 +1212,12 @@ describe('three-piece group interaction', () => {
     if (timing === 'release') board.up(pointer(100, 110))
     const game = requireGame(old)
     const groups = [...game.snapshot.groups] as CurrentGame['snapshot']['groups']
+    const neighbor = groups[1]
+    if (!neighbor) throw new Error('Missing neighbor fixture group')
     groups[0] =
       change === 'moved'
         ? { ...group, revision: group.revision + 1 }
-        : { ...group, pieceIds: [...group.pieceIds, groups[1].pieceIds[0]] }
+        : { ...group, pieceIds: [...group.pieceIds, neighbor.pieceIds[0]] }
     emit({ ...old, game: { ...game, snapshot: { ...game.snapshot, groups } } })
     await Promise.resolve()
     if (timing === 'held') board.move(pointer(100, 110))

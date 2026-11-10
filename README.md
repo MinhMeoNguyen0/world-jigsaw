@@ -57,6 +57,11 @@ are temporary and may disappear when updates stop. If no moves remain, dragging 
 disabled; confirm or undo pending moves when prompted, or retry move availability if it cannot be
 loaded. An invalid placement leaves the last accepted preview in place. The board opens fitted at
 1×; use the zoom controls to inspect it more closely or fit the whole canvas again.
+During reconnection or resynchronization, recently visible joined previews may remain on screen
+temporarily, marked unconfirmed; they can change when synchronization completes.
+
+The [multiplayer latency assessment](docs/multiplayer-latency-assessment.md) describes the local
+measurements, gameplay networking options, and infrastructure observations.
 
 To run the Playwright smoke test you also need its browser, once per machine:
 

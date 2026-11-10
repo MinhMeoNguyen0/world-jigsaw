@@ -191,7 +191,12 @@ class GameStream extends TextWebSocketHandler {
                 ? null
                 : payload.path("afterBoardVersion").longValue();
         game.subscribe(
-            peer.id, peer.subject, puzzle, cursor, peer, "subscribe.v2".equals(type),
+            peer.id,
+            peer.subject,
+            puzzle,
+            cursor,
+            peer,
+            "subscribe.v2".equals(type),
             payload.path("includeTurnBase").asBoolean(false));
       } catch (RuntimeException ex) {
         peer.sendError(code(ex), message(ex), retryable(ex));

@@ -695,8 +695,7 @@ export class LiveGame {
             (reply.actions.length || reply.nextSequence || reply.draftRevision !== null)) ||
           (reply.ownTurn && reply.draftRevision === null) ||
           (reply.turnBase &&
-            (!reply.ownTurn ||
-              reply.turnBase.boardVersion !== reply.ownTurn.boardVersion ||
+            (reply.turnBase.boardVersion !== reply.ownTurn?.boardVersion ||
               !sameId(reply.turnBase.puzzleId, reply.ownTurn.puzzleId) ||
               !validateBoard(game.definition, reply.turnBase).valid))
         )
@@ -860,7 +859,7 @@ export class LiveGame {
           return
         const peerRecoveryViews = { ...this.state.peerRecoveryViews }
         if (peerView && event.generation >= peerView.generation) {
-          delete peerRecoveryViews[key]
+          Reflect.deleteProperty(peerRecoveryViews, key)
           this.schedulePeerRecovery(peerRecoveryViews)
         }
         const previous = this.state.previews[key] ?? null

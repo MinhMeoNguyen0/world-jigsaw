@@ -70,9 +70,8 @@ function pendingStillValid(p: Pending, game: NonNullable<LiveGameState['game']>,
   }
   if (p.original) return false
   const group = game.snapshot.groups.find((item) => sameId(item.groupId, p.group.groupId))
-  return Boolean(
-    group &&
-    group.revision === p.group.revision &&
+  return (
+    group?.revision === p.group.revision &&
     group.finalPosition === p.group.finalPosition &&
     sameMembers(group.pieceIds, p.group.pieceIds) &&
     group.transform.rotation === p.group.transform.rotation &&
@@ -80,7 +79,7 @@ function pendingStillValid(p: Pending, game: NonNullable<LiveGameState['game']>,
     group.transform.translation.y === p.group.transform.translation.y &&
     !draft.some((action) =>
       action.affectedPieceIds.some((id) => p.group.pieceIds.some((member) => sameId(id, member))),
-    ),
+    )
   )
 }
 
@@ -475,8 +474,7 @@ export function useLiveBoard() {
       const candidates = now.game.snapshot.groups.filter((group) => {
         const original = base?.groups.find((item) => sameId(item.groupId, group.groupId))
         return (
-          original &&
-          original.revision === group.revision &&
+          original?.revision === group.revision &&
           original.finalPosition === group.finalPosition &&
           sameMembers(original.pieceIds, group.pieceIds) &&
           original.transform.rotation === group.transform.rotation &&

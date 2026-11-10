@@ -514,7 +514,13 @@ class GameCoordinator {
   }
 
   synchronized void subscribe(
-      UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink, boolean v2, boolean includeTurnBase) {
+      UUID streamId,
+      UUID subject,
+      UUID puzzle,
+      Long cursor,
+      Sink sink,
+      boolean v2,
+      boolean includeTurnBase) {
     drainLeaseClears();
     JsonNode current = v2 ? mapper.valueToTree(current(subject)) : current(subject, puzzle);
     if (!puzzle.toString().equalsIgnoreCase(current.path("snapshot").path("puzzleId").asText()))

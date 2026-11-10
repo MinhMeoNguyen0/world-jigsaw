@@ -520,8 +520,8 @@ export interface SubscribeV2 {
   schemaVersion: 1
   type: 'subscribe.v2'
   puzzleId: string
-  afterBoardVersion: number | null
   includeTurnBase?: boolean
+  afterBoardVersion: number | null
 }
 export interface SubscribedV2 {
   schemaVersion: 1

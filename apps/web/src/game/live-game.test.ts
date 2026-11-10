@@ -799,7 +799,7 @@ describe('versioned subscription and preview receipts', () => {
           .groups[0] as CurrentGame['snapshot']['groups'][number]
         const unchangedGroup = current.snapshot.groups[1]
         if (!unchangedGroup) throw new Error('Missing fixture group')
-        const snapshot = {
+        const snapshot: CurrentGame['snapshot'] = {
           ...current.snapshot,
           boardVersion: fixture.boardChanged.boardVersion,
           groups: [changedGroup, unchangedGroup],

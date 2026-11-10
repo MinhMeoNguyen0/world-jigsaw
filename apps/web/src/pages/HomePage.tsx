@@ -529,7 +529,7 @@ export function HomePage() {
           )}
         </div>
         <div className="feedback" aria-live="polite" role="status">
-          {(state.recoveryView || Object.keys(state.peerRecoveryViews).length > 0) && (
+          {(Boolean(state.recoveryView) || Object.keys(state.peerRecoveryViews).length > 0) && (
             <>
               {t('game.recoveryView')}
               <br />
