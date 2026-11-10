@@ -121,7 +121,7 @@
   "symbol.zoomOut": "−",
   "symbol.fitCanvas": "⤢",
   "home.placedCompact": "{count} / 60 correct",
-  "home.canvasHelp": "Rearrange loose pieces on the table for free; bringing one onto the puzzle uses a move. Right-click to turn a piece 90°. On touch, select a piece and use the rotate control. Scroll to explore the table. Use the view controls to zoom. Drag empty canvas to pan while zoomed.",
+  "home.canvasHelp": "Rearrange loose pieces on the table for free; bringing one onto the puzzle uses a move. Right-click to turn a piece 90°. On touch, select a piece and use the rotate control. Use the view controls to zoom. Drag empty canvas to pan while zoomed.",
   "live.brand": "World Jigsaw",
   "live.local": "PRIVATE LOCAL · SHARED BOARD",
   "live.groups": "{count} groups",

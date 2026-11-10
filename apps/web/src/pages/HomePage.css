@@ -807,10 +807,9 @@ input:focus-visible,
   background: #fbfbf6;
 }
 
-/* Keep the workspace accessible at a useful scale, including on narrow screens. */
+/* Fit the saved workspace at 1×; the view controls provide closer inspection. */
 .board-scroll {
   --board-chrome: 107px;
-  --board-min-width: 0px;
   position: absolute;
   inset: 60px 0 47px;
   overflow: auto;
@@ -832,7 +831,6 @@ input:focus-visible,
 @media (max-width: 700px) {
   .board-scroll {
     --board-chrome: 99px;
-    --board-min-width: 1200px;
     top: 52px;
   }
 }

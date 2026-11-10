@@ -122,14 +122,6 @@ export function HomePage() {
   const pillDrag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const pillMoved = useRef(false)
   const zoomFocus = useRef<string | null>(null)
-  const boardScroll = useRef<HTMLDivElement>(null)
-  const puzzleId = game?.snapshot.puzzleId
-  useEffect(() => {
-    const container = boardScroll.current
-    if (!container || !puzzleId) return
-    container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2
-    container.scrollTop = (container.scrollHeight - container.clientHeight) / 2
-  }, [puzzleId])
   const serverTime = game?.serverTime,
     endsAt = game?.endsAt
   useEffect(() => {
@@ -295,12 +287,12 @@ export function HomePage() {
       </header>
       <section className="workspace">
         <div className="board-wrap">
-          <div className="board-scroll" ref={boardScroll}>
+          <div className="board-scroll">
             <svg
               ref={board}
               style={{
                 aspectRatio: `${width} / ${height}`,
-                width: `max(var(--board-min-width), min(100%, calc((100dvh - var(--board-chrome)) * ${width / height})))`,
+                width: `min(100%, calc((100dvh - var(--board-chrome)) * ${width / height}))`,
               }}
               className={camera.zoom > 1 ? 'board is-zoomed' : 'board'}
               viewBox={bounds}
