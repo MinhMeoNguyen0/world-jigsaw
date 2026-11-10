@@ -4,6 +4,11 @@ import fixture from '../../../packages/generator/fixtures/hoi-an-compact-60.json
 
 const allowance = { limit: 5, used: 0, remaining: 5 }
 
+function requireValue<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('Expected a value')
+  return value
+}
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 700, height: 500 },
@@ -24,7 +29,7 @@ for (const viewport of [
   { width: 700, height: 400 },
   { width: 700, height: 401 },
 ]) {
-  test(`compact board is visible and selectable at ${viewport.width}x${viewport.height}`, async ({
+  test(`compact board is visible and selectable at ${String(viewport.width)}x${String(viewport.height)}`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport)
@@ -48,7 +53,7 @@ for (const viewport of [
     )
     await page.routeWebSocket('**/api/v1/game/stream', (socket) => {
       socket.onMessage((message) => {
-        if (JSON.parse(String(message)).type !== 'subscribe.v2') return
+        if ((JSON.parse(String(message)) as { type?: unknown }).type !== 'subscribe.v2') return
         socket.send(
           JSON.stringify({
             schemaVersion: 1,
@@ -71,14 +76,18 @@ for (const viewport of [
     const pieces = await page.locator('[data-group-id]').evaluateAll(
       (groups, definition) =>
         groups.map((group) => {
-          const id = (group as SVGGElement).dataset.pieceIds!
-          const piece = definition.pieces.find((item) => item.pieceId === id)!
-          const path = group.querySelector(':scope > path')!
+          const id = (group as SVGGElement).dataset.pieceIds
+          const piece = definition.pieces.find((item) => item.pieceId === id)
+          const path = group.querySelector(':scope > path')
+          const matrix = (group as SVGGElement).getScreenCTM()
+          if (id == null || piece == null || path == null || matrix == null) {
+            throw new Error('Expected a piece, path, and screen transform for each group')
+          }
           const rect = path.getBoundingClientRect()
           const point = new DOMPoint(
             piece.solvedPosition.x + piece.referencePoint.x,
             piece.solvedPosition.y + piece.referencePoint.y,
-          ).matrixTransform((group as SVGGElement).getScreenCTM()!)
+          ).matrixTransform(matrix)
           return {
             id,
             visible:
@@ -121,7 +130,9 @@ for (const viewport of [
     expect(controls.filter((control) => !control.usable)).toEqual([])
     if (viewport.height <= 401) {
       const pictureWidth = await page.locator('[data-picture-overlay]').evaluate((image) => {
-        return Number(image.getAttribute('width')) * (image as SVGImageElement).getScreenCTM()!.a
+        const matrix = (image as SVGImageElement).getScreenCTM()
+        if (matrix == null) throw new Error('Expected a screen transform for the picture')
+        return Number(image.getAttribute('width')) * matrix.a
       })
       expect(pictureWidth).toBeGreaterThan(63)
     }
@@ -135,27 +146,27 @@ for (const viewport of [
       await expect(page.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
       const pill = page.locator('.move-pill')
       const handle = page.getByRole('button', { name: 'Move controls' })
-      const before = (await pill.boundingBox())!
-      const grip = (await handle.boundingBox())!
+      const before = requireValue(await pill.boundingBox())
+      const grip = requireValue(await handle.boundingBox())
       await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
       await page.mouse.down()
       await page.mouse.move(grip.x + grip.width / 2 + 1, grip.y + grip.height / 2 + 1)
-      const moved = (await pill.boundingBox())!
+      const moved = requireValue(await pill.boundingBox())
       expect(moved.x).toBeCloseTo(before.x + 1, 0)
       expect(moved.y).toBeCloseTo(before.y + 1, 0)
       await page.mouse.move(-100, -100)
-      const upperLeft = (await pill.boundingBox())!
+      const upperLeft = requireValue(await pill.boundingBox())
       expect(upperLeft.x).toBeCloseTo(0, 0)
       expect(upperLeft.y).toBeCloseTo(0, 0)
       await page.mouse.move(viewport.width + 100, viewport.height + 100)
-      const clamped = (await pill.boundingBox())!
+      const clamped = requireValue(await pill.boundingBox())
       expect(clamped.x + clamped.width).toBeCloseTo(viewport.width, 0)
       expect(clamped.y + clamped.height).toBeCloseTo(viewport.height, 0)
       await page.mouse.up()
       await page.setViewportSize({ width: 320, height: 700 })
       await expect
         .poll(async () => {
-          const rect = (await pill.boundingBox())!
+          const rect = requireValue(await pill.boundingBox())
           return (
             rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= 320 && rect.y + rect.height <= 700
           )
