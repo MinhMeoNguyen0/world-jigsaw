@@ -8,7 +8,16 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 700, height: 500 },
   { width: 375, height: 700 },
+  { width: 399, height: 320 },
+  { width: 400, height: 320 },
+  { width: 460, height: 320 },
+  { width: 461, height: 320 },
   { width: 700, height: 320 },
+  { width: 400, height: 399 },
+  { width: 400, height: 400 },
+  { width: 400, height: 401 },
+  { width: 700, height: 400 },
+  { width: 700, height: 401 },
 ]) {
   test(`compact board is visible and selectable at ${viewport.width}x${viewport.height}`, async ({
     page,
@@ -85,7 +94,27 @@ for (const viewport of [
       new Set(fixture.definition.pieces.map((piece) => piece.pieceId)),
     )
     expect(pieces.every((piece) => piece.visible && piece.selectable)).toBe(true)
-    if (viewport.height === 320) {
+    const controls = await page.locator('.board-controls button').evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect()
+        const target = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        )
+        return {
+          label: button.getAttribute('aria-label'),
+          usable:
+            rect.left >= 0 &&
+            rect.top >= 0 &&
+            rect.right <= innerWidth &&
+            rect.bottom <= innerHeight &&
+            (target === button || button.contains(target)),
+        }
+      }),
+    )
+    expect(controls).toHaveLength(8)
+    expect(controls.filter((control) => !control.usable)).toEqual([])
+    if (viewport.height <= 401) {
       const pictureWidth = await page.locator('[data-picture-overlay]').evaluate((image) => {
         return Number(image.getAttribute('width')) * (image as SVGImageElement).getScreenCTM()!.a
       })

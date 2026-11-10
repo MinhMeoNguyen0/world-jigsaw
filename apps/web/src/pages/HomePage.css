@@ -854,16 +854,19 @@ input:focus-visible,
     gap: 4px;
   }
 }
-@media (min-width: 461px) and (max-height: 400px) {
+@media (orientation: landscape) and (max-height: 400px) {
+  .app {
+    --control-rail-width: 216px;
+  }
   .board-scroll {
     --board-chrome: calc(var(--topbar-height) + var(--footer-height));
-    inset: var(--topbar-height) 250px var(--footer-height) 0;
+    inset: var(--topbar-height) var(--control-rail-width) var(--footer-height) 0;
   }
   .board-controls {
     left: auto;
     top: calc(var(--topbar-height) + 30px);
     bottom: var(--footer-height);
-    width: 250px;
+    width: var(--control-rail-width);
     height: auto;
     flex-direction: column;
     gap: 4px;
@@ -871,8 +874,17 @@ input:focus-visible,
   .feedback {
     left: auto;
     right: 0;
-    width: 250px;
+    width: var(--control-rail-width);
     transform: none;
+  }
+  .pill-slot {
+    width: var(--control-rail-width);
+  }
+  .move-pill {
+    gap: 3px;
+  }
+  .pill-handle {
+    padding-inline: 2px;
   }
 }
 .reconnect {
