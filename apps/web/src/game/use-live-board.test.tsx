@@ -533,14 +533,9 @@ describe('three-piece group interaction', () => {
     cleanup?.()
   })
 
-  it.each([
-    ['drag', 'before'],
-    ['drag', 'after'],
-    ['rotation', 'before'],
-    ['rotation', 'after'],
-  ] as const)(
-    'retains the first %s when a no-turn handoff arrives %s begin resolves',
-    async (kind, order) => {
+  it.each(['drag', 'rotation'] as const)(
+    'retains the first %s when a no-turn handoff precedes begin resolution',
+    async (kind) => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
       const { board, group } = setup()
       vi.stubGlobal('sessionStorage', {
@@ -566,17 +561,13 @@ describe('three-piece group interaction', () => {
       }
       emit({ ...old, connection: 'resyncing' })
       if (kind === 'drag') board.up(pointer(100, 110))
-      if (order === 'after') {
-        resolveBegin(turn)
-        await Promise.resolve()
-      }
       emit({ ...old, connection: 'ready' })
       expect(board.pending.current).not.toBeNull()
       expect(mock.preview).not.toHaveBeenCalled()
-      if (order === 'before') {
-        resolveBegin(turn)
-        await Promise.resolve()
-      }
+      resolveBegin(turn)
+      await Promise.resolve()
+      emit({ ...old, connection: 'ready' })
+      expect(board.pending.current).not.toBeNull()
       expect(mock.preview).not.toHaveBeenCalled()
       emit({ ...old, connection: 'resyncing' })
       emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
@@ -587,6 +578,74 @@ describe('three-piece group interaction', () => {
           x: group.transform.translation.x + 90,
           y: group.transform.translation.y + 90,
         })
+      cleanup?.()
+    },
+  )
+
+  it.each(['drag', 'rotation'] as const)(
+    'discards an opening %s when a later handoff has no turn',
+    async (kind) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const { board, group } = setup()
+      vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+      const cleanup = mock.effects[3]?.()
+      let resolveBegin!: (value: CurrentGame['ownTurn']) => void
+      mock.begin.mockReturnValue(
+        new Promise((resolve) => {
+          resolveBegin = resolve
+        }),
+      )
+      if (kind === 'drag') {
+        board.down(pointer(10, 20), group)
+        board.move(pointer(30, 50))
+      } else board.rotate(group)
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      emit({ ...old, connection: 'resyncing' })
+      resolveBegin(turn)
+      await Promise.resolve()
+      emit({ ...old, connection: 'ready' })
+      await Promise.resolve()
+      expect(board.pending.current).toBeNull()
+      expect(mock.preview).not.toHaveBeenCalled()
+      board.down(pointer(10, 20), group)
+      expect(board.pending.current).not.toBeNull()
+      cleanup?.()
+    },
+  )
+
+  it.each(['opening', 'existing'] as const)(
+    'uses release coordinates after a recovered %s drag handoff',
+    async (kind) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = kind === 'existing' ? [action] : []
+      const { board, group } = setup({ ownTurn: kind === 'existing' ? turn : null })
+      vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      const ready = { ...old, game: { ...requireGame(old), ownTurn: turn } }
+      if (kind === 'opening') mock.begin.mockResolvedValue(turn)
+      const target = kind === 'existing' ? joined : group
+      board.down(pointer(10, 20), target)
+      board.move(pointer(30, 50))
+      emit({ ...old, connection: 'resyncing' })
+      board.move(pointer(100, 110))
+      await Promise.resolve()
+      emit(ready)
+      await Promise.resolve()
+      mock.preview.mockClear()
+      board.up(pointer(120, 140))
+      expect(lastPreview().intendedTransform.translation).toEqual({
+        x: target.transform.translation.x + 110,
+        y: target.transform.translation.y + 120,
+      })
       cleanup?.()
     },
   )

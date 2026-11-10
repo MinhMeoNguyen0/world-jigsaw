@@ -613,7 +613,7 @@ export function useLiveBoard() {
     }
     const d = pending.current
     if (!d) return
-    if (event && d.active && d.waitingForTurn) {
+    if (event && d.active) {
       const p = point(event.clientX, event.clientY)
       if (p) updateDragPosition(d, p, event.clientX, event.clientY)
     }
@@ -750,9 +750,9 @@ export function useLiveBoard() {
         (next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
           (!nextTurn &&
             (!current.openingTurn ||
-              (current.initialTurn &&
-                current.openedTurn &&
-                sameTurn(current.initialTurn, current.openedTurn)))))
+              (current.openedTurn &&
+                (stateRef.current.connection !== 'ready' ||
+                  (current.initialTurn && sameTurn(current.initialTurn, current.openedTurn)))))))
       ) {
         discardPending()
         setGhost(null)
