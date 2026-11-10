@@ -11,6 +11,10 @@ jobs:
   group-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [continuity, cancel, undo, expiry, failed-recovery]
     services:
       postgres:
         image: postgres:18-alpine
@@ -57,13 +61,15 @@ jobs:
           echo 'SETUP FAILURE: fixture stack did not become healthy' >&2
           exit 1
       - name: Exercise group interaction
+        env:
+          GROUP_SCENARIO: ${{ matrix.scenario }}
         run: pnpm --filter @world-jigsaw/web exec playwright test --config hosted-playwright.config.js 2>&1 | tee "$RUNNER_TEMP/group-logs/test.log"
         shell: bash
       - name: Upload failure evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hosted-group-failure
+          name: hosted-group-failure-${{ matrix.scenario }}
           path: |
             ${{ runner.temp }}/group-logs/
             apps/web/test-results/

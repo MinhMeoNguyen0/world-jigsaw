@@ -8,6 +8,7 @@ const fixture = JSON.parse(
 )
 const groups = fixture.snapshot.groups.slice(0, 3)
 const pieces = groups.map((group) => group.pieceIds[0])
+const scenario = process.env.GROUP_SCENARIO || 'continuity'
 test('a three-piece group stays together when its middle is clicked and dragged', async ({
   page,
   browser,
@@ -16,6 +17,7 @@ test('a three-piece group stays together when its middle is clicked and dragged'
   const wire = []
   let socket
   let holdReceipt = false
+  let holdHandoff = false
   let queued = []
   await page.routeWebSocket(/.*/, (route) => {
     socket = route
@@ -28,7 +30,12 @@ test('a three-piece group stays together when its middle is clicked and dragged'
         /* retain opaque frames */
       }
       wire.push({ at: Date.now(), direction: 'received', type, message: String(message) })
-      if (holdReceipt && (type === 'preview.accepted' || queued.length)) queued.push(message)
+      if (
+        (holdReceipt && type === 'preview.accepted') ||
+        (holdHandoff && type === 'subscribed.v2') ||
+        queued.length
+      )
+        queued.push(message)
       else {
         if (type === 'preview.accepted') receipts.push(JSON.parse(String(message)))
         route.send(message)
@@ -138,6 +145,20 @@ test('a three-piece group stays together when its middle is clicked and dragged'
       console.log('rendered component', JSON.stringify(matching[0]))
       return matching[0].transform
     }
+    async function expectSources() {
+      const matching = await page
+        .locator('[data-piece-ids], [data-preview-piece-ids]')
+        .evaluateAll(
+          (elements, ids) =>
+            elements
+              .map((e) => (e.dataset.pieceIds || e.dataset.previewPieceIds || '').split(','))
+              .filter((group) => group.some((id) => ids.includes(id))),
+          pieces,
+        )
+      expect(matching).toHaveLength(3)
+      expect(matching.flat().sort()).toEqual(pieces.slice().sort())
+      await expect(page.locator('[data-local-ghost=true]')).toHaveCount(0)
+    }
     async function middleClick() {
       const point = await page.evaluate(
         ({ piece, definition }) => {
@@ -204,6 +225,52 @@ test('a three-piece group stays together when its middle is clicked and dragged'
     const beforeClick = await rendered('[data-preview-piece-ids]')
     await middleClick()
     expect(await rendered('[data-preview-piece-ids]')).toBe(beforeClick)
+    if (scenario === 'undo') {
+      const undoResponse = page.waitForResponse(
+        (r) => r.url().endsWith('/undo') && r.request().method() === 'POST',
+      )
+      await page.getByRole('button', { name: 'Undo last change' }).click()
+      const response = await undoResponse
+      expect(response.ok()).toBe(true)
+      const result = await response.json()
+      expect(result.actions.length).toBeGreaterThan(0)
+      expect(result.actions.some((action) => action.actionId === result.actionId)).toBe(false)
+      const surviving = [
+        ...new Set(result.actions.flatMap((action) => action.affectedPieceIds)),
+      ].sort()
+      const previewIds = (target) =>
+        target
+          .locator('[data-preview-piece-ids]')
+          .evaluateAll((elements) =>
+            [
+              ...new Set(elements.flatMap((element) => element.dataset.previewPieceIds.split(','))),
+            ].sort(),
+          )
+      await page.locator('[data-connection=ready]').waitFor({ timeout: 20000 })
+      await expect.poll(() => previewIds(page), { timeout: 20000 }).toEqual(surviving)
+      await expect.poll(() => previewIds(peer), { timeout: 20000 }).toEqual(surviving)
+    }
+    if (scenario === 'cancel' || scenario === 'undo') {
+      const response = page.waitForResponse(
+        (r) => r.url().endsWith('/cancel') && r.request().method() === 'POST',
+      )
+      await page.getByRole('button', { name: 'Cancel batch' }).click()
+      const result = await (await response).json()
+      expect(['canceled', 'already_canceled']).toContain(result.outcome)
+      await page.locator('[data-connection=ready]').waitFor({ timeout: 20000 })
+      await expect(page.locator('[data-preview-piece-ids]')).toHaveCount(0)
+      await expectSources()
+      await expect
+        .poll(async () => peer.locator('[data-preview-piece-ids]').count(), { timeout: 20000 })
+        .toBe(0)
+      const afterCancel = await page.evaluate(async () =>
+        (await fetch('/api/v1/game/current')).json(),
+      )
+      expect(
+        afterCancel.snapshot.groups.filter((g) => g.pieceIds.some((id) => pieces.includes(id))),
+      ).toHaveLength(3)
+      return
+    }
     // Hold the real receipt and every subsequent server frame in order, never fabricate a reply.
     holdReceipt = true
     const pendingPoint = await drag(pieces[1], { x: 800000, y: 600000 }, false)
@@ -247,32 +314,95 @@ test('a three-piece group stays together when its middle is clicked and dragged'
     await expect(page.locator('[data-preview-pending=false]')).toBeAttached({ timeout: 20000 })
     await accepted()
     await rendered('[data-preview-piece-ids]')
-    // Socket loss clears overlays. The separated canonical sources are expected until handoff.
+    // An accepted draft is tentative while disconnected; it must not become actionable.
+    const stableTransform = await rendered('[data-preview-piece-ids]')
+    const recoveryStart = await page.evaluate(() => performance.now())
     await socket.close({ code: 1001, reason: 'hosted reconnect test' })
     await page.locator('[data-connection=disconnected]').waitFor({ timeout: 20000 })
-    expect(await page.locator('[data-preview-piece-ids]').count()).toBe(0)
-    const exposed = await page.locator('[data-piece-ids]').evaluateAll(
-      (elements, ids) =>
-        elements
-          .filter((e) => e.dataset.pieceIds.split(',').some((id) => ids.includes(id)))
-          .map((e) => ({
-            ids: e.dataset.pieceIds.split(','),
-            transform: e.getAttribute('transform'),
-          })),
-      pieces,
-    )
-    expect(exposed).toHaveLength(3)
-    expect(exposed.flatMap((e) => e.ids).sort()).toEqual(pieces.slice().sort())
-    expect(exposed.every((e) => e.transform)).toBe(true)
     const disconnected = await page.evaluate(async () =>
       (await fetch('/api/v1/game/current')).json(),
     )
     expect(
       disconnected.snapshot.groups.filter((g) => g.pieceIds.some((id) => pieces.includes(id))),
     ).toHaveLength(3)
+
+    if (scenario === 'expiry') {
+      // No heartbeat is sent while disconnected. Wait past the 30-second lease and grace.
+      await page.waitForTimeout(35000)
+      await page.locator('button.reconnect').click()
+      await page.locator('[data-connection=ready]').waitFor({ timeout: 20000 })
+      await expect(page.locator('[data-preview-piece-ids]')).toHaveCount(0)
+      await expectSources()
+      await expect
+        .poll(async () => peer.locator('[data-preview-piece-ids]').count(), { timeout: 20000 })
+        .toBe(0)
+      const afterExpiry = await page.evaluate(async () =>
+        (await fetch('/api/v1/game/current')).json(),
+      )
+      expect(afterExpiry.ownTurn).toBeFalsy()
+      expect(
+        afterExpiry.snapshot.groups.filter((g) => g.pieceIds.some((id) => pieces.includes(id))),
+      ).toHaveLength(3)
+      return
+    }
+    if (scenario === 'failed-recovery') {
+      await page.route('**/api/v1/game/current', (route) => route.abort('failed'))
+      const attempted = page.waitForRequest((request) =>
+        request.url().endsWith('/api/v1/game/current'),
+      )
+      await page.locator('button.reconnect').click()
+      await attempted
+      await expect(page.locator('[data-connection=disconnected]')).toBeAttached({ timeout: 20000 })
+      await expect(page.locator('[data-preview-piece-ids]')).toHaveCount(0)
+      await expectSources()
+      const afterFailure = await peer.evaluate(async () =>
+        (await fetch('/api/v1/game/current')).json(),
+      )
+      expect(
+        afterFailure.snapshot.groups.filter((g) => g.pieceIds.some((id) => pieces.includes(id))),
+      ).toHaveLength(3)
+      return
+    }
+
+    expect(await rendered('[data-piece-ids], [data-preview-piece-ids]')).toBe(stableTransform)
+    await expect(page.getByRole('button', { name: 'Confirm changes' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Undo last change' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Cancel batch' })).toBeDisabled()
+    const sentBeforeDisconnectedInput = wire.filter((entry) => entry.direction === 'sent').length
+    await page.mouse.move(pendingPoint.tx, pendingPoint.ty)
+    await page.mouse.down()
+    await page.mouse.move(pendingPoint.tx + 30, pendingPoint.ty + 30, { steps: 4 })
+    await page.mouse.up()
+    expect(await rendered('[data-piece-ids], [data-preview-piece-ids]')).toBe(stableTransform)
+    expect(wire.filter((entry) => entry.direction === 'sent').length).toBe(
+      sentBeforeDisconnectedInput,
+    )
+
+    // Delay the genuine v2 handoff, including all subsequent frames, to observe recovery.
+    holdHandoff = true
     await page.locator('button.reconnect').click()
+    await expect.poll(() => queued.length, { timeout: 20000 }).toBeGreaterThan(0)
+    expect(JSON.parse(String(queued[0])).type).toBe('subscribed.v2')
+    expect(await rendered('[data-piece-ids], [data-preview-piece-ids]')).toBe(stableTransform)
+    await expect(page.getByRole('button', { name: 'Confirm changes' })).toBeDisabled()
+    holdHandoff = false
+    for (const message of queued) socket.send(message)
+    queued = []
     await page.locator('[data-connection=ready]').waitFor({ timeout: 20000 })
-    await rendered('[data-preview-piece-ids]')
+    expect(await rendered('[data-preview-piece-ids]')).toBe(stableTransform)
+    const recoveryFrames = await page.evaluate(
+      (start) => window.groupSamples.filter((s) => s.reason === 'frame' && s.at >= start),
+      recoveryStart,
+    )
+    expect(recoveryFrames.length).toBeGreaterThan(0)
+    for (const frame of recoveryFrames) {
+      const matching = frame.elements.filter(
+        (e) => e.ids !== 'ghost' && e.ids.split(',').some((id) => pieces.includes(id)),
+      )
+      expect(matching).toHaveLength(1)
+      expect(matching[0].ids.split(',').sort()).toEqual(pieces.slice().sort())
+      expect(matching[0].transform).toBe(stableTransform)
+    }
     await page.getByRole('button', { name: 'Confirm changes' }).click()
     await expect
       .poll(
