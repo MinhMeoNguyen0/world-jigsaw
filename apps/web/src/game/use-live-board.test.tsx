@@ -13,6 +13,14 @@ const mock = vi.hoisted(() => ({
   sendCursor: vi.fn(),
   recover: vi.fn(),
   preview: vi.fn(),
+  effects: [] as (() => void | (() => void))[],
+  listener: null as ((state: LiveGameState) => void) | null,
+}))
+vi.mock('react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react')>()),
+  useEffect: (effect: () => void | (() => void)) => {
+    mock.effects.push(effect)
+  },
 }))
 vi.mock('./live-game.ts', () => ({
   LiveGame: class {
@@ -34,6 +42,17 @@ vi.mock('./live-game.ts', () => ({
     sendCursor = mock.sendCursor
     recoverInterruptedPreview = mock.recover
     preview = mock.preview
+    subscribe(listener: (state: LiveGameState) => void) {
+      mock.listener = listener
+      listener(mock.state as LiveGameState)
+      return () => {
+        mock.listener = null
+      }
+    }
+    connect() {
+      return Promise.resolve()
+    }
+    disconnect() {}
     begin() {
       return Promise.resolve(null)
     }
@@ -103,6 +122,8 @@ afterEach(() => {
   mock.preview.mockClear()
   mock.sendCursor.mockClear()
   mock.recover.mockClear()
+  mock.effects = []
+  mock.listener = null
 })
 
 describe('three-piece group interaction', () => {
@@ -142,6 +163,52 @@ describe('three-piece group interaction', () => {
     expect(board.pending.current).toBeNull()
     expect(mock.preview).not.toHaveBeenCalled()
   })
+
+  it.each(['expiry', 'failed recovery', 'handoff without turn'] as const)(
+    'discards an interrupted drag before %s and permits a later drag',
+    (outcome) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = [action]
+      const { board } = setup({ ownTurn: turn })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const subscribeEffect = mock.effects[3]
+      if (!subscribeEffect) throw new Error('Missing subscription effect')
+      const cleanup = subscribeEffect()
+      board.down(pointer(10, 20), joined)
+      board.move(pointer(30, 50))
+      expect(board.pending.current).not.toBeNull()
+      const old = mock.state as LiveGameState
+      const view = { snapshot: old.game!.snapshot, turn: turn!, actions: [action] }
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      emit({ ...old, connection: 'disconnected', recoveryView: view })
+      expect(board.pending.current).toBeNull()
+      mock.preview.mockClear()
+      board.move(pointer(50, 70))
+      board.up()
+      expect(mock.preview).not.toHaveBeenCalled()
+      if (outcome === 'expiry') emit({ ...old, connection: 'disconnected', recoveryView: null })
+      else if (outcome === 'failed recovery')
+        emit({ ...old, connection: 'disconnected', recoveryView: null, game: null })
+      else
+        emit({
+          ...old,
+          connection: 'ready',
+          recoveryView: null,
+          game: { ...old.game!, ownTurn: null },
+        })
+      emit(old)
+      board.down(pointer(10, 20), joined)
+      expect(board.pending.current).not.toBeNull()
+      cleanup?.()
+    },
+  )
 
   it.each(['confirmed', 'draft'] as const)(
     'keeps the complete %s component for a click and subsequent drag',

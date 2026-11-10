@@ -290,14 +290,16 @@ export function useLiveBoard() {
         void client
           .undo(p.action.actionId)
           .then(() => {
+            if (pending.current !== p) return
             pending.current = null
             setGhost(null)
             setDragging(false)
             setSelected(null)
           })
           .catch((e: unknown) => {
+            if (pending.current !== p) return
             p.restoring = false
-            if (client.pendingUndoActionId() === null && pending.current === p) {
+            if (client.pendingUndoActionId() === null) {
               pending.current = null
               setGhost(null)
               setDragging(false)
@@ -385,9 +387,10 @@ export function useLiveBoard() {
     void client
       .begin()
       .then(() => {
-        flush()
+        if (pending.current === p) flush()
       })
       .catch((e: unknown) => {
+        if (pending.current !== p) return
         setError(String(e))
         pending.current = null
         setGhost(null)
@@ -627,6 +630,27 @@ export function useLiveBoard() {
       })
     }
     const unsubscribe = client.subscribe((next) => {
+      const previousTurn = stateRef.current.game?.ownTurn
+      const nextTurn = next.game?.ownTurn
+      if (
+        pending.current &&
+        (next.connection !== 'ready' ||
+          !next.game ||
+          (stateRef.current.game &&
+            stateRef.current.game.snapshot.puzzleId.toLowerCase() !==
+              next.game.snapshot.puzzleId.toLowerCase()) ||
+          (previousTurn &&
+            (!nextTurn ||
+              previousTurn.turnId.toLowerCase() !== nextTurn.turnId.toLowerCase() ||
+              previousTurn.puzzleId.toLowerCase() !== nextTurn.puzzleId.toLowerCase() ||
+              previousTurn.generation !== nextTurn.generation ||
+              previousTurn.turnRevision !== nextTurn.turnRevision)))
+      ) {
+        pending.current = null
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      }
       if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
         client.sendCursor(cursorPosition.current)
       if (next.pendingConfirm)
