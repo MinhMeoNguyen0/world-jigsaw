@@ -1,5 +1,21 @@
 # Multiplayer latency assessment
 
+## Infrastructure status
+
+The repository describes a private-local prototype, not a completed production deployment; public
+authentication, TLS, authorization and deployment security remain open ([handoff](HANDOFF.md)).
+The local Compose file defines only two PostgreSQL containers. The README starts the game service,
+chat service and web client separately on the host, so those processes would not appear as Compose
+containers in Docker Desktop. Testcontainers creates temporary database containers for integration
+tests. The recorded latency experiment instead used a separate local PostgreSQL cluster and host
+processes; its Docker-backed coordinator test could not initialize because Docker was unavailable.
+
+Those records do not establish the current deployment or what Docker Desktop is connected to. A
+different Docker daemon or context could also explain a different container list, but this has not
+been verified here. Check the active Docker context and daemon alongside the running host processes
+before attributing the observation to either cause. No current infrastructure inventory or external
+firstmate investigation records were available within this worktree.
+
 ## Pointer coordinate reuse
 
 During an active drag, each pointer move previously converted the same screen position into board

@@ -32,7 +32,7 @@ export interface LiveGameState {
   connection: 'disconnected' | 'connecting' | 'ready' | 'resyncing'
   game: CurrentGame | null
   previews: Record<string, PreviewState>
-  /** Last acknowledged appearance only; never used for commands or draft proof. */
+  /** Tentative appearance only; never used for commands or draft proof. */
   recoveryView: { snapshot: CurrentGame['snapshot']; turn: Turn; actions: Action[] } | null
   previewPending: boolean
   previewRejection: PreviewRejected | null
@@ -205,23 +205,19 @@ export class LiveGame {
 
   private retainRecoveryView(): LiveGameState['recoveryView'] {
     const game = this.state.game
-    const actions = this.provenDraft()
     const turn = game?.ownTurn
     const preview = turn && this.state.previews[turn.turnId.toLowerCase()]
     if (
       !game ||
       !turn ||
-      !actions ||
+      this.state.connection !== 'ready' ||
       !preview ||
       preview.closed ||
       preview.generation !== turn.generation ||
-      !actions.some((action) => action.affectedPieceIds.length > 1)
+      !Object.values(preview.actions).some((action) => action.affectedPieceIds.length > 1)
     )
       return null
     const displayed = Object.values(preview.actions)
-    const sorted = (items: Action[]) =>
-      [...items].sort((a, b) => a.actionId.localeCompare(b.actionId))
-    if (canonical(sorted(displayed)) !== canonical(sorted(actions))) return null
     // The server sampled serverTime after the current-game request began. Subtracting
     // the entire elapsed request time gives a conservative lease/rollover bound.
     const remaining =
@@ -230,13 +226,10 @@ export class LiveGame {
       (performance.now() - this.currentReadStarted)
     if (!Number.isFinite(remaining) || remaining <= 0) return null
     this.clearRecoveryView()
-    this.recoveryTimer = setTimeout(
-      () => {
-        this.recoveryTimer = null
-        this.publish({ recoveryView: null })
-      },
-      Math.min(2000, remaining),
-    )
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null
+      this.publish({ recoveryView: null })
+    }, remaining)
     return { snapshot: game.snapshot, turn, actions: displayed }
   }
 
@@ -267,6 +260,7 @@ export class LiveGame {
 
   /** Reconnect always obtains a fresh current game and a fresh atomic subscription. */
   async connect(): Promise<void> {
+    const recoveryView = this.retainRecoveryView() ?? this.state.recoveryView
     const epoch = ++this.epoch
     this.stopSocket()
     if (this.inFlight) {
@@ -277,6 +271,7 @@ export class LiveGame {
     this.publish({
       connection: 'connecting',
       previews: {},
+      recoveryView,
       cursors: {},
       previewPending: false,
       previewRejection: null,
@@ -311,8 +306,7 @@ export class LiveGame {
         sameId(game.ownTurn.turnId, view.turn.turnId) &&
         game.ownTurn.generation === view.turn.generation &&
         game.ownTurn.turnRevision === view.turn.turnRevision &&
-        canonical(this.state.game.definition) === canonical(game.definition) &&
-        canonical(view.snapshot) === canonical(game.snapshot)
+        canonical(this.state.game.definition) === canonical(game.definition)
       if (!keepView) this.clearRecoveryView()
       this.publish({ game, connection: 'resyncing', recoveryView: keepView ? view : null })
       if (epoch !== this.epoch) return
@@ -405,14 +399,16 @@ export class LiveGame {
     }
   }
 
-  private resync(reason: string) {
+  private resync(reason: string, game = this.state.game, discardView = false) {
     const epoch = this.epoch
-    this.clearRecoveryView()
+    const recoveryView = discardView ? null : (this.retainRecoveryView() ?? this.state.recoveryView)
+    if (!recoveryView) this.clearRecoveryView()
     this.publish({
       issue: reason,
       connection: 'resyncing',
+      game,
       previews: {},
-      recoveryView: null,
+      recoveryView,
       cursors: {},
     })
     if (epoch !== this.epoch) return
@@ -716,7 +712,7 @@ export class LiveGame {
           sameId(event.turnId, view.turn.turnId) &&
           event.generation >= view.turn.generation
         ) {
-          this.resync('Turn changed; refreshing turn and previews.')
+          this.resync('Turn changed; refreshing turn and previews.', game, true)
           return
         }
         const key = event.turnId.toLowerCase()
@@ -732,6 +728,8 @@ export class LiveGame {
           this.uncertainDraft = true
           this.resync(
             'Turn changed without a correlated receipt; resynchronizing before cancellation.',
+            game,
+            true,
           )
           return
         }
@@ -745,7 +743,7 @@ export class LiveGame {
           sameId(rejection.turnId, view.turn.turnId) &&
           rejection.generation === view.turn.generation
         ) {
-          this.resync('Preview rejected; refreshing turn and previews.')
+          this.resync('Preview rejected; refreshing turn and previews.', game, true)
           return
         }
         if (
@@ -773,6 +771,8 @@ export class LiveGame {
             this.uncertainDraft = true
             this.resync(
               `Preview rejected: ${rejection.error.code}: ${rejection.error.message}; resynchronizing.`,
+              game,
+              true,
             )
           }
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
@@ -790,12 +790,11 @@ export class LiveGame {
         if (result.status === 'applied') {
           this.history = result.seenEvents
           // An event does not carry this session's allowance or turn; refresh both.
-          this.clearRecoveryView()
-          this.publish({
-            game: { ...game, snapshot: result.snapshot, allowance: null },
-            recoveryView: null,
+          this.resync('Board changed; refreshing allowance and turn.', {
+            ...game,
+            snapshot: result.snapshot,
+            allowance: null,
           })
-          if (epoch === this.epoch) this.resync('Board changed; refreshing allowance and turn.')
         }
       } else if (type === 'leaseRenewed') {
         const renewed = checked<LeaseRenewed>('LeaseRenewed', message)
@@ -1100,6 +1099,8 @@ export class LiveGame {
         (result.outcome === 'canceled' || result.outcome === 'already_canceled')
       ) {
         this.cancelRequest = null
+        this.clearRecoveryView()
+        this.publish({ recoveryView: null })
         return result
       }
       this.requireEpoch(epoch)
@@ -1108,7 +1109,7 @@ export class LiveGame {
     if (result.outcome === 'canceled' || result.outcome === 'already_canceled') {
       this.inFlight = null
       this.uncertainDraft = false
-      this.resync('Canceled; synchronizing the latest board.')
+      this.resync('Canceled; synchronizing the latest board.', this.state.game, true)
     } else {
       this.uncertainDraft = true
       this.publish({

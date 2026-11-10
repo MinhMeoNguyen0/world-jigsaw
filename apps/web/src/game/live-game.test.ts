@@ -639,7 +639,7 @@ describe('versioned subscription and preview receipts', () => {
     return { h, socket }
   }
 
-  it('shows only the acknowledged joined draft during a bounded reconnect and replaces it with the handoff', async () => {
+  it('shows the joined draft during reconnect and replaces it with the handoff', async () => {
     const { h, socket } = await acceptedJoined()
     socket.drop()
     expect(h.client.getState().recoveryView).toEqual({
@@ -661,14 +661,15 @@ describe('versioned subscription and preview receipts', () => {
     expect(h.client.getState().game?.ownTurn).toBeNull()
   })
 
-  it('discards the tentative view after the bounded recovery window', async () => {
+  it('retains the tentative view beyond two seconds while its lease is valid', async () => {
     const { h, socket } = await acceptedJoined()
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       socket.drop()
       expect(h.client.getState().recoveryView).not.toBeNull()
       vi.advanceTimersByTime(2000)
-      expect(h.client.getState().recoveryView).toBeNull()
+      expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+      h.client.disconnect()
     } finally {
       vi.useRealTimers()
     }
@@ -760,12 +761,80 @@ describe('versioned subscription and preview receipts', () => {
     expect(Object.values(h.client.getState().previews)[0]?.actions[joined.actionId]).toEqual(joined)
   })
 
-  it('does not retain a draft with a preview submission in flight', async () => {
+  it('retains the displayed draft when a preview submission is in flight', async () => {
     const { h, socket } = await acceptedJoined()
     h.client.preview(joined)
     socket.drop()
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    expect(h.client.provenDraft()).toBeNull()
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...handoff(), ownTurn: null, draftRevision: null })
+    expect(h.client.getState().recoveryView).toBeNull()
+  })
+
+  it('retains an unacknowledged displayed join without treating it as proof', async () => {
+    const h = harness()
+    h.setGame({ ...current, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(joined)
+    socket.emit({
+      ...fixture.preview,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 0,
+      action: joined,
+    })
+    socket.drop()
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    expect(h.client.provenDraft()).toBeNull()
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([joined], 1))
     expect(h.client.getState().recoveryView).toBeNull()
     expect(h.client.provenDraft()).toBeNull()
+  })
+
+  it('keeps the joined view throughout a board change until the atomic handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    const changedGroup = fixture.boardChanged.groups[0]
+    const unchangedGroup = current.snapshot.groups[1]
+    if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
+    const snapshot: CurrentGame['snapshot'] = {
+      ...current.snapshot,
+      boardVersion: fixture.boardChanged.boardVersion,
+      groups: [changedGroup, unchangedGroup],
+    }
+    h.setGame({ ...current, snapshot, ownTurn: turn })
+    const states: ReturnType<typeof h.client.getState>[] = []
+    const unsubscribe = h.client.subscribe((state) => states.push(state))
+    socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    expect(h.client.provenDraft()).toBeNull()
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    expect(states.slice(1).every((state) => state.recoveryView?.actions.length === 1)).toBe(true)
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({
+      ...handoff([joined], 1),
+      snapshot,
+      watermark: snapshot.boardVersion,
+      previews: [
+        {
+          ...fixture.preview,
+          turnId: turn.turnId,
+          generation: turn.generation,
+          sequence: 0,
+          action: joined,
+        },
+      ],
+    })
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.provenDraft()).toEqual([joined])
+    unsubscribe()
   })
 
   it('does not retain an acknowledged draft when the displayed preview has not caught up', async () => {
