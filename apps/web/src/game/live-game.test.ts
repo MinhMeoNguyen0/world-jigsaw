@@ -884,6 +884,38 @@ describe('versioned subscription and preview receipts', () => {
     },
   )
 
+  it('does not prove an abandoned preview after a failed recovery and later handoff', async () => {
+    const h = harness()
+    h.setGame({ ...current, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    const moved = {
+      ...action,
+      intendedTransform: {
+        ...action.intendedTransform,
+        translation: {
+          ...action.intendedTransform.translation,
+          x: action.intendedTransform.translation.x + 1000,
+        },
+      },
+    }
+    h.client.preview(moved)
+    h.client.recoverInterruptedPreview()
+    h.setCurrentUnavailable(true)
+    socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+    await vi.waitFor(() => expect(h.client.getState().connection).toBe('disconnected'))
+    h.client.abandonInterruptedPreview()
+    h.setCurrentUnavailable(false)
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([moved], 2))
+    expect(h.client.provenDraft()).toBeNull()
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+  })
+
   it('confirms only the latest correlated receipt and retains its exact action and revision', async () => {
     const h = harness()
     const socket = await h.start()

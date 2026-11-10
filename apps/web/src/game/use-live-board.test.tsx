@@ -289,54 +289,73 @@ describe('three-piece group interaction', () => {
     },
   )
 
-  it.each(['different turn', 'canceled turn', 'uncertain draft', 'failed recovery'] as const)(
-    'discards an existing drag after %s',
-    async (outcome) => {
-      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
-      mock.actions = [action]
-      const { board } = setup({ ownTurn: turn })
-      vi.stubGlobal('sessionStorage', {
-        getItem: () => null,
-        removeItem: vi.fn(),
-        setItem: vi.fn(),
-      })
-      const cleanup = mock.effects[3]?.()
-      board.down(pointer(10, 20), joined)
-      board.move(pointer(30, 50))
-      await Promise.resolve()
-      const old = mock.state as LiveGameState
-      const emit = (next: LiveGameState) => {
-        mock.state = next
-        mock.listener?.(next)
-      }
-      emit({ ...old, connection: 'resyncing', previewPending: false })
-      board.move(pointer(100, 110))
-      board.up(pointer(120, 140))
-      mock.preview.mockClear()
-      if (outcome === 'uncertain draft') mock.actions = null
-      emit(
-        outcome === 'failed recovery'
-          ? { ...old, connection: 'disconnected', issue: 'Recovery failed' }
-          : {
-              ...old,
-              connection: 'ready',
-              game: {
-                ...old.game!,
-                ownTurn:
-                  outcome === 'canceled turn'
-                    ? null
-                    : outcome === 'different turn'
-                      ? { ...turn!, generation: turn!.generation + 1 }
-                      : turn,
+  it.each([
+    'different turn',
+    'canceled turn',
+    'uncertain draft',
+    'failed recovery',
+    'missing game',
+    'different game',
+  ] as const)('discards an existing drag after %s', async (outcome) => {
+    vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+    mock.actions = [action]
+    const { board } = setup({ ownTurn: turn })
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => null,
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    })
+    const cleanup = mock.effects[3]?.()
+    board.down(pointer(10, 20), joined)
+    board.move(pointer(30, 50))
+    await Promise.resolve()
+    const old = mock.state as LiveGameState
+    const emit = (next: LiveGameState) => {
+      mock.state = next
+      mock.listener?.(next)
+    }
+    emit({ ...old, connection: 'resyncing', previewPending: false })
+    board.move(pointer(100, 110))
+    board.up(pointer(120, 140))
+    mock.preview.mockClear()
+    if (outcome === 'uncertain draft') mock.actions = null
+    emit(
+      outcome === 'failed recovery'
+        ? { ...old, connection: 'disconnected', issue: 'Recovery failed' }
+        : outcome === 'missing game'
+          ? { ...old, connection: 'resyncing', game: null }
+          : outcome === 'different game'
+            ? {
+                ...old,
+                connection: 'resyncing',
+                game: {
+                  ...old.game!,
+                  snapshot: {
+                    ...old.game!.snapshot,
+                    puzzleId: '00000000-0000-4000-8000-000000000099',
+                  },
+                },
+              }
+            : {
+                ...old,
+                connection: 'ready',
+                game: {
+                  ...old.game!,
+                  ownTurn:
+                    outcome === 'canceled turn'
+                      ? null
+                      : outcome === 'different turn'
+                        ? { ...turn!, generation: turn!.generation + 1 }
+                        : turn,
+                },
               },
-            },
-      )
-      await Promise.resolve()
-      expect(board.pending.current).toBeNull()
-      expect(mock.preview).not.toHaveBeenCalled()
-      cleanup?.()
-    },
-  )
+    )
+    await Promise.resolve()
+    expect(board.pending.current).toBeNull()
+    expect(mock.abandon).toHaveBeenCalledOnce()
+    expect(mock.preview).not.toHaveBeenCalled()
+    cleanup?.()
+  })
 
   it.each(['expiry', 'failed recovery', 'handoff without turn'] as const)(
     'discards an interrupted drag before %s and permits a later drag',
@@ -689,9 +708,11 @@ describe('three-piece group interaction', () => {
       }
       emit({ ...old, connection: 'disconnected', previewPending: false })
       expect(board.pending.current?.interrupted).toBe(true)
+      expect(mock.abandon).not.toHaveBeenCalled()
       mock.actions = [submitted]
       mock.preview.mockClear()
       emit({ ...old, connection: 'ready', previewPending: false })
+      expect(mock.abandon).not.toHaveBeenCalled()
       await Promise.resolve()
       if (outcome === 'restore') expect(mock.preview).toHaveBeenCalledWith(action, true)
       else expect(mock.undo).toHaveBeenCalledWith(submitted.actionId)

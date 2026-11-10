@@ -291,6 +291,10 @@ export function useLiveBoard() {
     const p = new DOMPoint(x, y).matrixTransform(m.inverse())
     return { x: p.x, y: p.y }
   }
+  const discardPending = () => {
+    if (pending.current) client.abandonInterruptedPreview()
+    pending.current = null
+  }
   const flush = () => {
     const p = pending.current,
       now = client.getState()
@@ -311,7 +315,7 @@ export function useLiveBoard() {
       if (!p.openedTurn) return
       const turn = now.game.ownTurn
       if (!sameTurn(turn, p.openedTurn) || client.provenDraft() === null) {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
@@ -345,7 +349,7 @@ export function useLiveBoard() {
           .undo(p.action.actionId)
           .then(() => {
             if (pending.current !== p) return
-            pending.current = null
+            discardPending()
             setGhost(null)
             setDragging(false)
             setSelected(null)
@@ -354,7 +358,7 @@ export function useLiveBoard() {
             if (pending.current !== p) return
             p.restoring = false
             if (client.pendingUndoActionId() === null) {
-              pending.current = null
+              discardPending()
               setGhost(null)
               setDragging(false)
               setSelected(null)
@@ -369,7 +373,7 @@ export function useLiveBoard() {
         (action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase(),
       )
       if (!current) {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
       } else if (!p.original) {
@@ -388,7 +392,7 @@ export function useLiveBoard() {
           setError(String(e))
         }
       } else {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
@@ -433,7 +437,7 @@ export function useLiveBoard() {
         })
         setGhost(null)
         setDragging(false)
-        pending.current = null
+        discardPending()
       }
     }
   }
@@ -452,7 +456,7 @@ export function useLiveBoard() {
             client.getState().connection === 'ready' &&
             !client.getState().game?.ownTurn
           ) {
-            pending.current = null
+            discardPending()
             setGhost(null)
             setDragging(false)
             setSelected(null)
@@ -464,7 +468,7 @@ export function useLiveBoard() {
       .catch((e: unknown) => {
         if (pending.current !== p) return
         setError(String(e))
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
       })
@@ -608,7 +612,7 @@ export function useLiveBoard() {
       if (p) updateDragPosition(d, p, event.clientX, event.clientY)
     }
     if (!d.moved) {
-      pending.current = null
+      discardPending()
       setDragging(false)
       return
     }
@@ -627,7 +631,7 @@ export function useLiveBoard() {
     setSelected(null)
     setError(t('probe.interrupted'))
     if (!d.moved || !d.acquiring) {
-      pending.current = null
+      discardPending()
       setGhost(null)
       setDragging(false)
       return
@@ -733,8 +737,7 @@ export function useLiveBoard() {
             stateRef.current.connection !== 'disconnected') ||
           (!current.interrupted && next.connection === 'disconnected')
         ) {
-          if (current.interrupted) client.abandonInterruptedPreview()
-          pending.current = null
+          discardPending()
           setDragging(false)
         }
       } else if (
@@ -747,14 +750,12 @@ export function useLiveBoard() {
                 current.openedTurn &&
                 sameTurn(current.initialTurn, current.openedTurn)))))
       ) {
-        if (current.interrupted) client.abandonInterruptedPreview()
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
       } else if (current && previousTurn && nextTurn && !sameTurn(previousTurn, nextTurn)) {
-        if (current.interrupted) client.abandonInterruptedPreview()
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
@@ -766,8 +767,7 @@ export function useLiveBoard() {
         client.provenDraft() === null &&
         (!current.interrupted || client.pendingUndoActionId() === null)
       ) {
-        if (current.interrupted) client.abandonInterruptedPreview()
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
@@ -788,7 +788,7 @@ export function useLiveBoard() {
         if (current?.sentFor === 'active' && !current.interrupted) {
           if (!current.active) current.sent = ''
         } else {
-          pending.current = null
+          discardPending()
           setGhost(null)
           setDragging(false)
           setSelected(null)
@@ -798,7 +798,7 @@ export function useLiveBoard() {
       if (next.previewRejection && !stateRef.current.previewRejection) {
         const current = pending.current
         if (current && current.sentFor !== 'active') {
-          pending.current = null
+          discardPending()
           setGhost(null)
           setDragging(false)
           setSelected(null)
@@ -850,7 +850,7 @@ export function useLiveBoard() {
       .cancel()
       .then(() => {
         setError(null)
-        pending.current = null
+        discardPending()
         setAccepted(false)
         setGhost(null)
         setDragging(false)
@@ -888,7 +888,7 @@ export function useLiveBoard() {
       .confirm()
       .then((result) => {
         if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
-          pending.current = null
+          discardPending()
           setAccepted(false)
           setGhost(null)
           setDragging(false)
