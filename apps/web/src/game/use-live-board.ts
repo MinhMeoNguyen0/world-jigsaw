@@ -450,8 +450,6 @@ export function useLiveBoard() {
           if (p.openingTurn) p.openedTurn = turn
           if (
             p.openingTurn &&
-            p.initialTurn &&
-            sameTurn(p.initialTurn, turn) &&
             client.getState().connection === 'ready' &&
             !client.getState().game?.ownTurn
           ) {
@@ -749,10 +747,7 @@ export function useLiveBoard() {
         current &&
         (next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
           (!nextTurn &&
-            (!current.openingTurn ||
-              (current.openedTurn &&
-                (stateRef.current.connection !== 'ready' ||
-                  (current.initialTurn && sameTurn(current.initialTurn, current.openedTurn)))))))
+            (!current.openingTurn || current.openedTurn)))
       ) {
         discardPending()
         setGhost(null)
@@ -776,7 +771,12 @@ export function useLiveBoard() {
         setDragging(false)
         setSelected(null)
       }
-      if (pending.current && next.connection === 'ready' && pending.current.openingTurn && nextTurn)
+      if (
+        pending.current?.openingTurn &&
+        pending.current.openedTurn &&
+        next.connection === 'ready' &&
+        nextTurn
+      )
         pending.current.initialTurn = nextTurn
       if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
         client.sendCursor(cursorPosition.current)

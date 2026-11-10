@@ -488,7 +488,11 @@ describe('three-piece group interaction', () => {
       }
       expect(mock.preview).not.toHaveBeenCalled()
       emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
+      emit({ ...old, connection: 'resyncing' })
       resolveBegin(turn)
+      await Promise.resolve()
+      expect(mock.preview).not.toHaveBeenCalled()
+      emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
       if (kind === 'drag')
@@ -533,9 +537,14 @@ describe('three-piece group interaction', () => {
     cleanup?.()
   })
 
-  it.each(['drag', 'rotation'] as const)(
-    'retains the first %s when a no-turn handoff precedes begin resolution',
-    async (kind) => {
+  it.each([
+    ['drag', 'open'],
+    ['drag', 'canceled'],
+    ['rotation', 'open'],
+    ['rotation', 'canceled'],
+  ] as const)(
+    'reconciles the first %s after an older no-turn handoff when the turn is %s',
+    async (kind, outcome) => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
       const { board, group } = setup()
       vi.stubGlobal('sessionStorage', {
@@ -564,20 +573,30 @@ describe('three-piece group interaction', () => {
       emit({ ...old, connection: 'ready' })
       expect(board.pending.current).not.toBeNull()
       expect(mock.preview).not.toHaveBeenCalled()
+      emit({ ...old, connection: 'resyncing' })
       resolveBegin(turn)
       await Promise.resolve()
-      emit({ ...old, connection: 'ready' })
       expect(board.pending.current).not.toBeNull()
       expect(mock.preview).not.toHaveBeenCalled()
-      emit({ ...old, connection: 'resyncing' })
-      emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
+      emit({
+        ...old,
+        connection: 'ready',
+        game: { ...requireGame(old), ownTurn: outcome === 'open' ? turn : null },
+      })
       await Promise.resolve()
-      expect(mock.preview).toHaveBeenCalledOnce()
-      if (kind === 'drag')
-        expect(firstPreview().intendedTransform.translation).toEqual({
-          x: group.transform.translation.x + 90,
-          y: group.transform.translation.y + 90,
-        })
+      if (outcome === 'open') {
+        expect(mock.preview).toHaveBeenCalledOnce()
+        if (kind === 'drag')
+          expect(firstPreview().intendedTransform.translation).toEqual({
+            x: group.transform.translation.x + 90,
+            y: group.transform.translation.y + 90,
+          })
+      } else {
+        expect(mock.preview).not.toHaveBeenCalled()
+        expect(board.pending.current).toBeNull()
+        board.down(pointer(10, 20), group)
+        expect(board.pending.current).not.toBeNull()
+      }
       cleanup?.()
     },
   )

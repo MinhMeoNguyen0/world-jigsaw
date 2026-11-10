@@ -886,23 +886,30 @@ export class LiveGame {
       requestId: this.deps.id(),
     }
     const epoch = this.epoch
+    const beginRequest = this.beginRequest
     let turn: Turn
     try {
-      turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', this.beginRequest)
+      turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', beginRequest)
     } catch (error) {
       if (epoch === this.epoch && error instanceof GameRequestError && error.definitive)
         this.beginRequest = null
       throw error
     }
     if (!sameId(turn.puzzleId, game.snapshot.puzzleId)) throw new Error('Turn puzzle mismatch')
-    if (epoch !== this.epoch) return turn
-    this.beginRequest = null
-    this.sequence = 0
-    this.draftRevision = 0
-    this.acceptedActions = []
-    this.draftProof = { turn, revision: 0, nextSequence: 0, actions: [] }
-    this.uncertainDraft = false
-    this.publish({ game: { ...this.readyGame(), ownTurn: turn }, issue: null })
+    if (this.beginRequest === beginRequest) this.beginRequest = null
+    if (epoch === this.epoch) {
+      this.sequence = 0
+      this.draftRevision = 0
+      this.acceptedActions = []
+      this.draftProof = { turn, revision: 0, nextSequence: 0, actions: [] }
+      this.uncertainDraft = false
+    }
+    if (
+      this.state.connection !== 'disconnected' &&
+      this.state.game &&
+      sameId(this.state.game.snapshot.puzzleId, turn.puzzleId)
+    )
+      this.resync('Turn opened; synchronizing the latest board.')
     return turn
   }
 

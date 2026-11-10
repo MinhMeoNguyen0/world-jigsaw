@@ -59,6 +59,7 @@ function socketAt(sockets: TestSocket[], index: number) {
 function harness() {
   const sockets: TestSocket[] = []
   let game = structuredClone(current)
+  let beginReply: Promise<Response> | null = null
   let commandReply: Promise<Response> | null = null
   let undoReply: Promise<Response> | null = null
   let shapeReply: Promise<Response> | null = null
@@ -69,6 +70,10 @@ function harness() {
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     calls.push(path)
+    if (path === '/api/v1/game/turns') {
+      if (!beginReply) throw new Error('Missing begin response')
+      return beginReply
+    }
     if (path.endsWith('/shape')) {
       if (!shapeReply) throw new Error('Missing shape response')
       if (typeof init?.body !== 'string') throw new Error('Missing shape payload')
@@ -150,6 +155,9 @@ function harness() {
     setCurrentUnavailable: (value: boolean) => {
       currentUnavailable = value
     },
+    setBeginReply: (value: Promise<Response>) => {
+      beginReply = value
+    },
     setCommandReply: (value: Promise<Response>) => {
       commandReply = value
     },
@@ -177,6 +185,71 @@ function confirmed() {
 }
 
 describe('live game adapter', () => {
+  it.each([
+    ['before', 'open'],
+    ['before', 'canceled'],
+    ['after', 'open'],
+    ['after', 'canceled'],
+  ] as const)(
+    'refreshes after begin when an older no-turn handoff arrives %s the response and the turn is %s',
+    async (order, outcome) => {
+      const h = harness()
+      const handoff = (socket: TestSocket, ownTurn: Turn | null) => {
+        socket.emit({
+          schemaVersion: 1,
+          type: 'subscribed.v2',
+          snapshot: current.snapshot,
+          watermark: current.snapshot.boardVersion,
+          previews: [],
+          allowance: current.allowance,
+          ownTurn,
+          actions: [],
+          nextSequence: 0,
+          draftRevision: ownTurn ? 0 : null,
+        })
+      }
+      const socket = await h.start()
+      handoff(socket, null)
+      const response = deferred<Response>()
+      h.setBeginReply(response.promise)
+      const opening = h.client.begin()
+      socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+      await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      const older = socketAt(h.sockets, 1)
+      older.open()
+      const delayedHandler = older.onmessage
+      const stale = {
+        schemaVersion: 1,
+        type: 'subscribed.v2',
+        snapshot: current.snapshot,
+        watermark: current.snapshot.boardVersion,
+        previews: [],
+        allowance: current.allowance,
+        ownTurn: null,
+        actions: [],
+        nextSequence: 0,
+        draftRevision: null,
+      }
+      if (order === 'before') older.emit(stale)
+      h.setGame({ ...current, ownTurn: outcome === 'open' ? turn : null })
+      response.resolve(new Response(JSON.stringify(turn)))
+      await opening
+      expect(h.client.getState().connection).not.toBe('ready')
+      if (order === 'after')
+        delayedHandler?.call(
+          older as unknown as WebSocket,
+          new MessageEvent('message', { data: JSON.stringify(stale) }),
+        )
+      expect(h.client.getState().connection).not.toBe('ready')
+      await vi.waitFor(() => expect(h.sockets).toHaveLength(3))
+      const fresh = socketAt(h.sockets, 2)
+      fresh.open()
+      handoff(fresh, outcome === 'open' ? turn : null)
+      expect(h.client.getState().connection).toBe('ready')
+      expect(h.client.getState().game?.ownTurn).toEqual(outcome === 'open' ? turn : null)
+    },
+  )
+
   it('preserves an uncertain shape request for an identical retry', async () => {
     const h = harness()
     const socket = await h.start()
