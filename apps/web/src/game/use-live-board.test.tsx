@@ -860,6 +860,81 @@ describe('three-piece group interaction', () => {
     },
   )
 
+  it.each([
+    ['opening', 'held', 'moved'],
+    ['opening', 'move', 'joined'],
+    ['opening', 'release', 'moved'],
+    ['existing', 'held', 'joined'],
+    ['existing', 'move', 'moved'],
+    ['existing', 'release', 'joined'],
+  ] as const)(
+    'discards a %s-turn drag %s when the group was %s',
+    async (kind, timing, change) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const { board, group } = setup({ ownTurn: kind === 'existing' ? turn : null })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      board.down(pointer(10, 20), group)
+      emit({ ...old, connection: 'resyncing' })
+      if (timing === 'move') board.move(pointer(100, 110))
+      if (timing === 'release') board.up(pointer(100, 110))
+      const game = requireGame(old)
+      const groups = [...game.snapshot.groups] as CurrentGame['snapshot']['groups']
+      groups[0] =
+        change === 'moved'
+          ? { ...group, revision: group.revision + 1 }
+          : { ...group, pieceIds: [...group.pieceIds, groups[1].pieceIds[0]] }
+      emit({ ...old, game: { ...game, snapshot: { ...game.snapshot, groups } } })
+      await Promise.resolve()
+      if (timing === 'held') board.move(pointer(100, 110))
+      await Promise.resolve()
+      expect(board.pending.current).toBeNull()
+      expect(mock.begin).not.toHaveBeenCalled()
+      expect(mock.preview).not.toHaveBeenCalled()
+      cleanup?.()
+    },
+  )
+
+  it('discards an opening drag if its group changed while begin was in flight', async () => {
+    vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+    const { board, group } = setup()
+    vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+    const cleanup = mock.effects[3]?.()
+    let resolveBegin!: (value: CurrentGame['ownTurn']) => void
+    mock.begin.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBegin = resolve
+      }),
+    )
+    const old = mock.state as LiveGameState
+    const emit = (next: LiveGameState) => {
+      mock.state = next
+      mock.listener?.(next)
+    }
+    board.down(pointer(10, 20), group)
+    board.move(pointer(30, 50))
+    emit({ ...old, connection: 'resyncing' })
+    resolveBegin(turn)
+    await Promise.resolve()
+    const game = requireGame(old)
+    const groups = [...game.snapshot.groups] as CurrentGame['snapshot']['groups']
+    groups[0] = { ...group, revision: group.revision + 1 }
+    emit({ ...old, game: { ...game, ownTurn: turn, snapshot: { ...game.snapshot, groups } } })
+    await Promise.resolve()
+    expect(board.pending.current).toBeNull()
+    expect(mock.preview).not.toHaveBeenCalled()
+    cleanup?.()
+  })
+
   it.each(['restore', 'undo'] as const)(
     'reconciles a canceled drag after the lost preview is recovered: %s',
     async (outcome) => {
