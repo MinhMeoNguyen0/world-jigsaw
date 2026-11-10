@@ -172,6 +172,7 @@ describe('three-piece group interaction', () => {
     puzzleId: fixture.snapshot.puzzleId,
     turnId: fixture.preview.turnId,
     generation: 1,
+    boardVersion: fixture.snapshot.boardVersion,
   } as NonNullable<CurrentGame['ownTurn']>
   const action: Action = {
     ...fixture.preview.action,
@@ -381,7 +382,7 @@ describe('three-piece group interaction', () => {
     cleanup?.()
   })
 
-  it.each(['moved', 'revised'] as const)(
+  it.each(['moved', 'revised', 'regrouped', 'unchanged'] as const)(
     'rebuilds an unaccepted final join when its target was %s during recovery',
     async (change) => {
       vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
@@ -426,24 +427,91 @@ describe('three-piece group interaction', () => {
       const updated =
         change === 'moved'
           ? { ...target, transform: { ...target.transform, translation: { x: 9000, y: 9000 } } }
-          : { ...target, revision: target.revision + 1 }
+          : change === 'revised'
+            ? { ...target, revision: target.revision + 1 }
+            : change === 'regrouped'
+              ? { ...target, groupId: '00000000-0000-4000-8000-000000000999' }
+              : target
       emit({
         ...old,
         previewPending: false,
-        game: { ...requireGame(old), snapshot: { ...snapshot, groups: [moving, updated] } },
+        game: {
+          ...requireGame(old),
+          snapshot: {
+            ...snapshot,
+            boardVersion: snapshot.boardVersion + 1,
+            groups: [moving, updated],
+          },
+        },
       })
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
       expect(firstPreview().affectedPieceIds).toEqual(
-        change === 'moved' ? moving.pieceIds : [...moving.pieceIds, ...target.pieceIds],
+        change === 'unchanged' ? [...moving.pieceIds, ...target.pieceIds] : moving.pieceIds,
       )
       expect(firstPreview().baseRevisions).toEqual(
-        change === 'moved'
-          ? [{ groupId: moving.groupId, revision: moving.revision }]
-          : [
+        change === 'unchanged'
+          ? [
               { groupId: moving.groupId, revision: moving.revision },
-              { groupId: target.groupId, revision: target.revision + 1 },
-            ],
+              { groupId: target.groupId, revision: target.revision },
+            ]
+          : [{ groupId: moving.groupId, revision: moving.revision }],
+      )
+      cleanup?.()
+    },
+  )
+
+  it.each(['snapshot', 'own draft'] as const)(
+    'uses only proven %s targets when the turn base is unavailable',
+    async (source) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const moving = fixture.snapshot.groups[0] as Group
+      const target = {
+        ...fixture.snapshot.groups[1],
+        transform: {
+          ...moving.transform,
+          translation: {
+            x: moving.transform.translation.x + 20,
+            y: moving.transform.translation.y + 30,
+          },
+        },
+      } as Group
+      const targetAction = {
+        ...fixture.preview.action,
+        actionId: 'target',
+        targetId: target.pieceIds[0],
+        affectedPieceIds: target.pieceIds,
+        baseRevisions: [{ groupId: target.groupId, revision: target.revision }],
+        intendedTransform: target.transform,
+      } as Action
+      mock.actions = source === 'own draft' ? [targetAction] : []
+      const snapshot = {
+        ...fixture.snapshot,
+        boardVersion: fixture.snapshot.boardVersion + 1,
+        groups: [moving, target],
+      } as CurrentGame['snapshot']
+      const { board } = setup({ ownTurn: turn, snapshot })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      mock.preview.mockImplementation(() => {
+        mock.state = { ...(mock.state as LiveGameState), previewPending: true }
+      })
+      board.down(pointer(10, 20), moving)
+      board.move(pointer(30, 50))
+      await Promise.resolve()
+      const active = firstPreview()
+      board.up(pointer(30, 50))
+      mock.actions = source === 'own draft' ? [targetAction, active] : [active]
+      mock.state = { ...old, previewPending: false }
+      mock.listener?.(mock.state as LiveGameState)
+      await Promise.resolve()
+      expect(lastPreview().affectedPieceIds).toEqual(
+        source === 'own draft' ? [...moving.pieceIds, ...target.pieceIds] : moving.pieceIds,
       )
       cleanup?.()
     },

@@ -11,6 +11,7 @@ import type {
   DraftSummary,
   Group,
   Piece,
+  Snapshot,
   Transform,
   Turn,
 } from '@world-jigsaw/contracts'
@@ -36,6 +37,7 @@ interface Pending {
   waitingForTurn: boolean
   initialTurn: Turn | null
   puzzleId: string
+  snapshot: Snapshot
   finalPrepared: boolean
   interrupted: boolean
   restoring: boolean
@@ -471,12 +473,31 @@ export function useLiveBoard() {
       return
     }
     if (!p.active && !p.finalPrepared) {
+      const base =
+        now.game.snapshot.boardVersion === now.game.ownTurn.boardVersion
+          ? now.game.snapshot
+          : p.snapshot.boardVersion === now.game.ownTurn.boardVersion
+            ? p.snapshot
+            : null
+      const candidates = now.game.snapshot.groups.filter((group) => {
+        const original = base?.groups.find((item) => sameId(item.groupId, group.groupId))
+        return (
+          original &&
+          original.revision === group.revision &&
+          original.finalPosition === group.finalPosition &&
+          sameMembers(original.pieceIds, group.pieceIds) &&
+          original.transform.rotation === group.transform.rotation &&
+          original.transform.translation.x === group.transform.translation.x &&
+          original.transform.translation.y === group.transform.translation.y
+        )
+      })
       p.action = suggestJoin(
         now.game,
         now.previews,
         p.action,
         p.desired,
         client.provenDraft() ?? [],
+        candidates,
       )
       p.finalPrepared = true
     }
@@ -560,6 +581,7 @@ export function useLiveBoard() {
       waitingForTurn: false,
       initialTurn: currentGame.ownTurn,
       puzzleId: currentGame.snapshot.puzzleId,
+      snapshot: currentGame.snapshot,
       finalPrepared: false,
       interrupted: false,
       restoring: false,

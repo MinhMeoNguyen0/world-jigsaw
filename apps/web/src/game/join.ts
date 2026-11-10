@@ -2,6 +2,7 @@ import type {
   Action,
   BaseRevision,
   CurrentGame,
+  Group,
   PreviewState,
   Transform,
 } from '@world-jigsaw/contracts'
@@ -20,6 +21,7 @@ export function suggestJoin(
   action: Action,
   transform: Transform,
   ownActions: readonly Action[],
+  snapshotGroups: readonly Group[] = game.snapshot.groups,
 ): Action {
   const pieces = new Map(game.definition.pieces.map((piece) => [piece.pieceId, piece]))
   const moving = new Set(action.affectedPieceIds)
@@ -44,7 +46,7 @@ export function suggestJoin(
         revisions: item.baseRevisions,
         transform: item.intendedTransform,
       })),
-    ...game.snapshot.groups
+    ...snapshotGroups
       .filter((group) => group.pieceIds.every((id) => !drafted.has(id) && !occupied.has(id)))
       .map((group) => ({
         ids: group.pieceIds,
