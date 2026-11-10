@@ -2,13 +2,17 @@ import { createElement, type PointerEvent } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../../../../packages/contracts/v1/fixtures/board-and-batch.json'
-import type { CurrentGame } from '@world-jigsaw/contracts'
+import type { Action, CurrentGame, Group } from '@world-jigsaw/contracts'
 import { useLiveBoard } from './use-live-board'
+import type { LiveGameState } from './live-game'
+import * as moveAvailability from './move-availability'
 
 const mock = vi.hoisted(() => ({
   state: {},
+  actions: [] as Action[],
   sendCursor: vi.fn(),
   recover: vi.fn(),
+  preview: vi.fn(),
 }))
 vi.mock('./live-game.ts', () => ({
   LiveGame: class {
@@ -16,7 +20,7 @@ vi.mock('./live-game.ts', () => ({
       return mock.state
     }
     provenDraft() {
-      return []
+      return mock.actions
     }
     provenDraftRevision() {
       return 0
@@ -29,13 +33,14 @@ vi.mock('./live-game.ts', () => ({
     }
     sendCursor = mock.sendCursor
     recoverInterruptedPreview = mock.recover
+    preview = mock.preview
     begin() {
       return Promise.resolve(null)
     }
   },
 }))
 
-function setup() {
+function setup(override?: Partial<CurrentGame>, stateOverride?: Partial<LiveGameState>) {
   const game: CurrentGame = {
     schemaVersion: 1,
     day: '2026-11-08',
@@ -45,8 +50,9 @@ function setup() {
     snapshot: fixture.snapshot as CurrentGame['snapshot'],
     allowance: { limit: 5, used: 0, remaining: 5 },
     ownTurn: null,
+    ...override,
   }
-  mock.state = { connection: 'ready', game, previews: {}, cursors: {} }
+  mock.state = { connection: 'ready', game, previews: {}, cursors: {}, ...stateOverride }
   vi.stubGlobal('window', {
     location: { origin: 'http://127.0.0.1:5173' },
     setTimeout,
@@ -92,7 +98,80 @@ const pointer = (x: number, y: number) =>
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.clearAllMocks()
+  vi.restoreAllMocks()
+  mock.actions = []
+  mock.preview.mockClear()
+  mock.sendCursor.mockClear()
+  mock.recover.mockClear()
+})
+
+describe('three-piece group interaction', () => {
+  const joined = fixture.mergedSnapshot.groups[0] as Group
+  const source = fixture.snapshot.groups
+  const turn = {
+    puzzleId: fixture.snapshot.puzzleId,
+    turnId: fixture.preview.turnId,
+    generation: 1,
+  } as CurrentGame['ownTurn']
+  const action: Action = {
+    ...fixture.preview.action,
+    targetId: joined.groupId,
+    affectedPieceIds: joined.pieceIds,
+    baseRevisions: source.map(({ groupId, revision }) => ({ groupId, revision })),
+    intendedTransform: joined.transform,
+  } as Action
+
+  it('renders the tentative joined appearance while refusing pointer edits', () => {
+    const { board } = setup(
+      { ownTurn: turn },
+      {
+        connection: 'disconnected',
+        recoveryView: {
+          snapshot: fixture.snapshot as CurrentGame['snapshot'],
+          turn: turn!,
+          actions: [action],
+        },
+      },
+    )
+    expect(board.previews).toEqual([action])
+    expect(joined.pieceIds.every((id) => board.previewed.has(id.toLowerCase()))).toBe(true)
+    expect(
+      joined.pieceIds.every((id) => board.previewOwners.get(id.toLowerCase()) === action.actionId),
+    ).toBe(true)
+    board.down(pointer(10, 20), joined)
+    expect(board.pending.current).toBeNull()
+    expect(mock.preview).not.toHaveBeenCalled()
+  })
+
+  it.each(['confirmed', 'draft'] as const)(
+    'keeps the complete %s component for a click and subsequent drag',
+    (mode) => {
+      // Availability is covered independently; this test isolates pointer membership and payloads.
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = mode === 'draft' ? [action] : []
+      const snapshot = mode === 'confirmed' ? fixture.mergedSnapshot : fixture.snapshot
+      const { board } = setup({ snapshot: snapshot as CurrentGame['snapshot'], ownTurn: turn })
+      // HomePage passes the entire component to down regardless of which piece was hit.
+      const group = { ...joined, finalPosition: false }
+      board.down(pointer(10, 20), group)
+      expect(board.pending.current?.action.affectedPieceIds).toEqual(joined.pieceIds)
+      board.up()
+      expect(board.pending.current).toBeNull()
+      expect(mock.preview).not.toHaveBeenCalled()
+
+      board.down(pointer(10, 20), group)
+      board.move(pointer(30, 50))
+      expect(board.pending.current?.action.affectedPieceIds).toEqual(joined.pieceIds)
+      expect(mock.preview).toHaveBeenCalled()
+      expect(mock.preview.mock.calls[0][0].affectedPieceIds).toEqual(joined.pieceIds)
+      expect(mock.preview.mock.calls[0][0].intendedTransform.translation).toEqual({ x: 20, y: 30 })
+      expect(mock.preview.mock.calls[0][0].baseRevisions).toEqual(
+        mode === 'draft'
+          ? action.baseRevisions
+          : [{ groupId: joined.groupId, revision: joined.revision }],
+      )
+    },
+  )
 })
 
 describe('board pointer movement', () => {

@@ -217,13 +217,16 @@ export function useLiveBoard() {
       !turnId ? [] : (currentSummary?.movementCosts ?? null),
     )
   const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
-  const previews = Object.values(state.previews).flatMap((turn) =>
-    turn.closed ? [] : Object.values(turn.actions),
-  )
+  const previews =
+    state.recoveryView?.actions ??
+    Object.values(state.previews).flatMap((turn) =>
+      turn.closed ? [] : Object.values(turn.actions),
+    )
   const previewOwners = new Map<string, string>()
   for (const action of previews)
     for (const id of action.affectedPieceIds) previewOwners.set(id.toLowerCase(), action.actionId)
-  const ghostIds = new Set(ghost?.ids.map((id) => id.toLowerCase()) ?? [])
+  const visibleGhost = state.recoveryView ? null : ghost
+  const ghostIds = new Set(visibleGhost?.ids.map((id) => id.toLowerCase()) ?? [])
   const previewed = new Set([...previewOwners.keys(), ...ghostIds])
   const pieceMap = new Map(
     (game?.definition.pieces ?? []).map((piece) => [piece.pieceId.toLowerCase(), piece]),
@@ -772,7 +775,7 @@ export function useLiveBoard() {
     setOverlay,
     reference,
     setReference,
-    ghost,
+    ghost: visibleGhost,
     dragging,
     board,
     pending,
