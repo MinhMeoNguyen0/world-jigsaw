@@ -213,6 +213,24 @@ test('a three-piece group stays together when its middle is clicked and dragged'
       (entry) => entry.direction === 'sent' && entry.message.includes('preview.submit'),
     ).length
     await expect(page.locator('[data-local-ghost=true]')).toHaveCount(1)
+    const frameStart = await page.evaluate(() => performance.now())
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    )
+    const pendingFrames = await page.evaluate(
+      (start) => window.groupSamples.filter((s) => s.reason === 'frame' && s.at >= start),
+      frameStart,
+    )
+    expect(pendingFrames.length).toBeGreaterThan(0)
+    for (const frame of pendingFrames) {
+      expect(frame.pending).toBe('true')
+      expect(frame.elements.filter((e) => e.ids === 'ghost')).toHaveLength(1)
+      expect(
+        frame.elements.filter(
+          (e) => e.ids !== 'ghost' && e.ids.split(',').some((id) => pieces.includes(id)),
+        ),
+      ).toHaveLength(0)
+    }
     await page.mouse.click(pendingPoint.tx, pendingPoint.ty)
     await expect(page.locator('[data-local-ghost=true]')).toHaveCount(1)
     expect(
@@ -233,6 +251,21 @@ test('a three-piece group stays together when its middle is clicked and dragged'
     await socket.close({ code: 1001, reason: 'hosted reconnect test' })
     await page.locator('[data-connection=disconnected]').waitFor({ timeout: 20000 })
     expect(await page.locator('[data-preview-piece-ids]').count()).toBe(0)
+    const exposed = await page
+      .locator('[data-piece-ids]')
+      .evaluateAll(
+        (elements, ids) =>
+          elements
+            .filter((e) => e.dataset.pieceIds.split(',').some((id) => ids.includes(id)))
+            .map((e) => ({
+              ids: e.dataset.pieceIds.split(','),
+              transform: e.getAttribute('transform'),
+            })),
+        pieces,
+      )
+    expect(exposed).toHaveLength(3)
+    expect(exposed.flatMap((e) => e.ids).sort()).toEqual(pieces.slice().sort())
+    expect(exposed.every((e) => e.transform)).toBe(true)
     const disconnected = await page.evaluate(async () =>
       (await fetch('/api/v1/game/current')).json(),
     )
