@@ -286,8 +286,8 @@ export function HomePage() {
             <svg
               ref={board}
               style={{
-                aspectRatio: `${width} / ${height}`,
-                width: `min(100%, calc((100dvh - var(--board-chrome)) * ${width / height}))`,
+                aspectRatio: `${String(width)} / ${String(height)}`,
+                width: `min(100%, calc((100dvh - var(--board-chrome)) * ${String(width / height)}))`,
               }}
               className={camera.zoom > 1 ? 'board is-zoomed' : 'board'}
               viewBox={bounds}
@@ -639,7 +639,8 @@ export function HomePage() {
               onPointerDown={(event) => {
                 event.stopPropagation()
                 event.currentTarget.setPointerCapture(event.pointerId)
-                const rect = event.currentTarget.parentElement!.getBoundingClientRect()
+                const rect = event.currentTarget.parentElement?.getBoundingClientRect()
+                if (!rect) return
                 pillDrag.current = {
                   x: event.clientX,
                   y: event.clientY,

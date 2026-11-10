@@ -55,7 +55,8 @@ Use the same literal loopback host for the page throughout a session. The Hoi An
 Players on the same puzzle can see each other's pointers while they are over the board. Pointers
 are temporary and may disappear when updates stop. If no moves remain, dragging and rotation are
 disabled; confirm or undo pending moves when prompted, or retry move availability if it cannot be
-loaded. An invalid placement leaves the last accepted preview in place.
+loaded. An invalid placement leaves the last accepted preview in place. The board opens fitted at
+1×; use the zoom controls to inspect it more closely or fit the whole canvas again.
 
 To run the Playwright smoke test you also need its browser, once per machine:
 
@@ -150,9 +151,8 @@ saved board. Lost Confirm replies can be retried with the same command ID and pa
 `GET /api/v1/game/commands/{commandId}`; an unknown old-puzzle command can supply `?puzzleId=`.
 Receipts and identifier tombstones are retained indefinitely in this local prototype.
 
-Puzzle shapes are fixed by the imported shared definition and cannot be changed by players. New
-default-generated puzzles use a larger play surface; already imported boards retain their existing
-boundary and move history.
+Puzzle shapes are fixed by the imported shared definition and cannot be changed by players. See the
+[generator documentation](packages/generator/README.md) for layout and existing-board behavior.
 The presence endpoint reports live game subscriptions, and the turn summary reports server-calculated pending move charges.
 
 The [turn wire note](services/backend/TURN-WIRE.md) explains the local v1 join request and outgoing
