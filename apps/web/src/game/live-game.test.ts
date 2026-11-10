@@ -616,7 +616,6 @@ describe('versioned subscription and preview receipts', () => {
   })
 
   const mergedGroup = (fixture.mergedSnapshot as CurrentGame['snapshot']).groups[0]
-  if (!mergedGroup) throw new Error('Missing merged fixture group')
   const revisions = fixture.snapshot.groups.map(({ groupId, revision }) => ({ groupId, revision }))
   const firstRevision = revisions.shift()
   if (!firstRevision) throw new Error('Missing fixture revisions')
@@ -653,7 +652,9 @@ describe('versioned subscription and preview receipts', () => {
     })
     expect(h.client.getState().previews).toEqual({})
     expect(h.client.provenDraft()).toBeNull()
-    expect(() => h.client.preview(joined)).toThrow('not synchronized')
+    expect(() => {
+      h.client.preview(joined)
+    }).toThrow('not synchronized')
     await h.client.connect()
     expect(h.client.getState().recoveryView?.actions).toEqual([joined])
     const next = socketAt(h.sockets, 1)
@@ -819,7 +820,9 @@ describe('versioned subscription and preview receipts', () => {
     socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
     expect(h.client.getState().recoveryView?.actions).toEqual([joined])
     expect(h.client.provenDraft()).toBeNull()
-    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
     expect(states.slice(1).every((state) => state.recoveryView?.actions.length === 1)).toBe(true)
     const next = socketAt(h.sockets, 1)
     next.open()
@@ -911,7 +914,9 @@ describe('versioned subscription and preview receipts', () => {
     h.client.recoverInterruptedPreview()
     h.setCurrentUnavailable(true)
     socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
-    await vi.waitFor(() => expect(h.client.getState().connection).toBe('disconnected'))
+    await vi.waitFor(() => {
+      expect(h.client.getState().connection).toBe('disconnected')
+    })
     h.client.abandonInterruptedPreview()
     h.setCurrentUnavailable(false)
     await h.client.connect()

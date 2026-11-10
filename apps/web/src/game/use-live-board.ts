@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/restrict-template-expressions */
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { LiveGame, type LiveGameState } from '../game/live-game.ts'
 import { t } from '../i18n/translate.ts'
 import { suggestJoin } from '../game/join.ts'
@@ -291,10 +291,10 @@ export function useLiveBoard() {
     const p = new DOMPoint(x, y).matrixTransform(m.inverse())
     return { x: p.x, y: p.y }
   }
-  const discardPending = () => {
+  const discardPending = useCallback(() => {
     if (pending.current) client.abandonInterruptedPreview()
     pending.current = null
-  }
+  }, [client])
   const flush = () => {
     const p = pending.current,
       now = client.getState()
@@ -334,8 +334,7 @@ export function useLiveBoard() {
           .sort()
           .join(',')
       if (
-        !accepted ||
-        accepted.intendedTransform.rotation !== p.action.intendedTransform.rotation ||
+        accepted?.intendedTransform.rotation !== p.action.intendedTransform.rotation ||
         accepted.intendedTransform.translation.x !== p.action.intendedTransform.translation.x ||
         accepted.intendedTransform.translation.y !== p.action.intendedTransform.translation.y ||
         members(accepted) !== members(p.action)
@@ -473,38 +472,45 @@ export function useLiveBoard() {
         setDragging(false)
       })
   }
-  const makePending = (group: Group, start: Point): Pending => ({
-    group,
-    start,
-    origin: structuredClone(group.transform),
-    desired: structuredClone(group.transform),
-    sent: '',
-    sentFor: 'active',
-    active: true,
-    moved: false,
-    acquiring: false,
-    openingTurn: !client.getState().game?.ownTurn,
-    openedTurn: null,
-    waitingForTurn: false,
-    initialTurn: client.getState().game?.ownTurn ?? null,
-    puzzleId: client.getState().game!.snapshot.puzzleId,
-    finalPrepared: false,
-    interrupted: false,
-    restoring: false,
-    undoStarted: false,
-    original:
-      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
-      null,
-    action:
-      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
-      client.newAction({
-        kind: group.pieceIds.length > 1 ? 'group' : 'piece',
-        targetId: group.pieceIds.length > 1 ? group.groupId : group.pieceIds[0],
-        affectedPieceIds: group.pieceIds,
-        baseRevisions: [{ groupId: group.groupId, revision: group.revision }],
-        intendedTransform: group.transform,
-      }),
-  })
+  const makePending = (group: Group, start: Point): Pending => {
+    const currentGame = client.getState().game
+    if (!currentGame) throw new Error('Game is not synchronized')
+    return {
+      group,
+      start,
+      origin: structuredClone(group.transform),
+      desired: structuredClone(group.transform),
+      sent: '',
+      sentFor: 'active',
+      active: true,
+      moved: false,
+      acquiring: false,
+      openingTurn: !currentGame.ownTurn,
+      openedTurn: null,
+      waitingForTurn: false,
+      initialTurn: currentGame.ownTurn,
+      puzzleId: currentGame.snapshot.puzzleId,
+      finalPrepared: false,
+      interrupted: false,
+      restoring: false,
+      undoStarted: false,
+      original:
+        actions.find((action) =>
+          action.affectedPieceIds.some((id) => group.pieceIds.includes(id)),
+        ) ?? null,
+      action:
+        actions.find((action) =>
+          action.affectedPieceIds.some((id) => group.pieceIds.includes(id)),
+        ) ??
+        client.newAction({
+          kind: group.pieceIds.length > 1 ? 'group' : 'piece',
+          targetId: group.pieceIds.length > 1 ? group.groupId : group.pieceIds[0],
+          affectedPieceIds: group.pieceIds,
+          baseRevisions: [{ groupId: group.groupId, revision: group.revision }],
+          intendedTransform: group.transform,
+        }),
+    }
+  }
   const down = (event: PointerEvent<SVGElement>, group: Group) => {
     if (
       event.button !== 0 ||
@@ -729,8 +735,7 @@ export function useLiveBoard() {
           client.recoverInterruptedPreview()
         }
         if (
-          !next.game ||
-          next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
           (current.interrupted &&
             next.connection === 'disconnected' &&
             stateRef.current.connection !== 'ready' &&
@@ -742,8 +747,7 @@ export function useLiveBoard() {
         }
       } else if (
         current &&
-        (!next.game ||
-          next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+        (next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
           (!nextTurn &&
             (!current.openingTurn ||
               (current.initialTurn &&
@@ -820,7 +824,7 @@ export function useLiveBoard() {
       unsubscribe()
       client.disconnect()
     }
-  }, [client])
+  }, [client, discardPending])
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (cursorPosition.current) client.sendCursor(cursorPosition.current)

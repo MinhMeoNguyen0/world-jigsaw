@@ -12,16 +12,16 @@ const mock = vi.hoisted(() => ({
   actions: [] as Action[] | null,
   sendCursor: vi.fn(),
   recover: vi.fn(),
-  preview: vi.fn(),
+  preview: vi.fn<(action: Action, resyncOnCollision?: boolean) => void>(),
   undo: vi.fn(),
-  begin: vi.fn(),
+  begin: vi.fn<() => Promise<CurrentGame['ownTurn']>>(),
   abandon: vi.fn(),
-  effects: [] as (() => void | (() => void))[],
+  effects: [] as (() => undefined | (() => void))[],
   listener: null as ((state: LiveGameState) => void) | null,
 }))
 vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
-  useEffect: (effect: () => void | (() => void)) => {
+  useEffect: (effect: () => undefined | (() => void)) => {
     mock.effects.push(effect)
   },
 }))
@@ -57,12 +57,29 @@ vi.mock('./live-game.ts', () => ({
     connect() {
       return Promise.resolve()
     }
-    disconnect() {}
+    disconnect = vi.fn()
     begin() {
       return mock.begin()
     }
   },
 }))
+
+function firstPreview(): Action {
+  const call = mock.preview.mock.calls[0]
+  if (!call) throw new Error('Expected a preview submission')
+  return call[0]
+}
+
+function lastPreview(): Action {
+  const call = mock.preview.mock.calls.at(-1)
+  if (!call) throw new Error('Expected a preview submission')
+  return call[0]
+}
+
+function requireGame(state: LiveGameState): CurrentGame {
+  if (!state.game) throw new Error('Expected a current game')
+  return state.game
+}
 
 function setup(override?: Partial<CurrentGame>, stateOverride?: Partial<LiveGameState>) {
   const game: CurrentGame = {
@@ -142,7 +159,7 @@ describe('three-piece group interaction', () => {
     puzzleId: fixture.snapshot.puzzleId,
     turnId: fixture.preview.turnId,
     generation: 1,
-  } as CurrentGame['ownTurn']
+  } as NonNullable<CurrentGame['ownTurn']>
   const action: Action = {
     ...fixture.preview.action,
     targetId: joined.groupId,
@@ -157,7 +174,7 @@ describe('three-piece group interaction', () => {
       {
         connection: 'disconnected',
         recoveryView: {
-          turn: turn!,
+          turn: turn,
           actions: [action],
         },
       },
@@ -201,7 +218,7 @@ describe('three-piece group interaction', () => {
       emit({ ...old, connection: 'ready', previewPending: false })
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
-      expect(mock.preview.mock.calls[0]![0]).toMatchObject({
+      expect(firstPreview()).toMatchObject({
         affectedPieceIds: joined.pieceIds,
         intendedTransform: {
           ...joined.transform,
@@ -244,7 +261,7 @@ describe('three-piece group interaction', () => {
       mock.preview.mockImplementation(() => {
         mock.state = { ...(mock.state as LiveGameState), previewPending: true }
       })
-      const ready = { ...old, game: { ...old.game!, ownTurn: turn } }
+      const ready = { ...old, game: { ...requireGame(old), ownTurn: turn } }
       if (kind === 'opening')
         mock.begin.mockImplementation(() => {
           emit(ready)
@@ -256,7 +273,7 @@ describe('three-piece group interaction', () => {
       await Promise.resolve()
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
-      const initial = mock.preview.mock.calls[0]![0] as Action
+      const initial = firstPreview()
       if (lifecycle === 'released') {
         board.move(pointer(40, 60))
         board.up()
@@ -265,7 +282,7 @@ describe('three-piece group interaction', () => {
         await Promise.resolve()
         expect(mock.preview).toHaveBeenCalledTimes(2)
       }
-      const sent = mock.preview.mock.calls.at(-1)?.[0] as Action
+      const sent = lastPreview()
       mock.preview.mockClear()
       emit({ ...ready, connection: 'resyncing' })
       mock.actions =
@@ -280,7 +297,7 @@ describe('three-piece group interaction', () => {
       await Promise.resolve()
       if (outcome === 'unchanged') {
         expect(mock.preview).toHaveBeenCalledOnce()
-        expect(mock.preview.mock.calls[0]![0]).toEqual(sent)
+        expect(firstPreview()).toEqual(sent)
       } else expect(mock.preview).not.toHaveBeenCalled()
       if (lifecycle === 'released' && outcome === 'accepted')
         expect(board.pending.current).toBeNull()
@@ -329,9 +346,9 @@ describe('three-piece group interaction', () => {
                 ...old,
                 connection: 'resyncing',
                 game: {
-                  ...old.game!,
+                  ...requireGame(old),
                   snapshot: {
-                    ...old.game!.snapshot,
+                    ...requireGame(old).snapshot,
                     puzzleId: '00000000-0000-4000-8000-000000000099',
                   },
                 },
@@ -340,12 +357,12 @@ describe('three-piece group interaction', () => {
                 ...old,
                 connection: 'ready',
                 game: {
-                  ...old.game!,
+                  ...requireGame(old),
                   ownTurn:
                     outcome === 'canceled turn'
                       ? null
                       : outcome === 'different turn'
-                        ? { ...turn!, generation: turn!.generation + 1 }
+                        ? { ...turn, generation: turn.generation + 1 }
                         : turn,
                 },
               },
@@ -375,7 +392,7 @@ describe('three-piece group interaction', () => {
       board.move(pointer(30, 50))
       expect(board.pending.current).not.toBeNull()
       const old = mock.state as LiveGameState
-      const view = { turn: turn!, actions: [action] }
+      const view = { turn: turn, actions: [action] }
       const emit = (next: LiveGameState) => {
         mock.state = next
         mock.listener?.(next)
@@ -394,7 +411,7 @@ describe('three-piece group interaction', () => {
           ...old,
           connection: 'ready',
           recoveryView: null,
-          game: { ...old.game!, ownTurn: null },
+          game: { ...requireGame(old), ownTurn: null },
         })
       emit(old)
       board.down(pointer(10, 20), joined)
@@ -423,9 +440,9 @@ describe('three-piece group interaction', () => {
       board.move(pointer(30, 50))
       expect(board.pending.current?.action.affectedPieceIds).toEqual(joined.pieceIds)
       expect(mock.preview).toHaveBeenCalled()
-      expect(mock.preview.mock.calls[0]![0].affectedPieceIds).toEqual(joined.pieceIds)
-      expect(mock.preview.mock.calls[0]![0].intendedTransform.translation).toEqual({ x: 20, y: 30 })
-      expect(mock.preview.mock.calls[0]![0].baseRevisions).toEqual(
+      expect(firstPreview().affectedPieceIds).toEqual(joined.pieceIds)
+      expect(firstPreview().intendedTransform.translation).toEqual({ x: 20, y: 30 })
+      expect(firstPreview().baseRevisions).toEqual(
         mode === 'draft'
           ? action.baseRevisions
           : [{ groupId: joined.groupId, revision: joined.revision }],
@@ -470,12 +487,12 @@ describe('three-piece group interaction', () => {
         board.up(pointer(120, 130))
       }
       expect(mock.preview).not.toHaveBeenCalled()
-      emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+      emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
       resolveBegin(turn)
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
       if (kind === 'drag')
-        expect(mock.preview.mock.calls[0]![0].intendedTransform.translation).toEqual({
+        expect(firstPreview().intendedTransform.translation).toEqual({
           x: group.transform.translation.x + 110,
           y: group.transform.translation.y + 110,
         })
@@ -506,10 +523,10 @@ describe('three-piece group interaction', () => {
     resolveBegin(turn)
     await Promise.resolve()
     expect(mock.preview).not.toHaveBeenCalled()
-    emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+    emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
     await Promise.resolve()
     expect(board.pending.current?.active).toBe(true)
-    expect(mock.preview.mock.calls[0]![0].intendedTransform.translation).toEqual({
+    expect(firstPreview().intendedTransform.translation).toEqual({
       x: group.transform.translation.x + 90,
       y: group.transform.translation.y + 80,
     })
@@ -562,11 +579,11 @@ describe('three-piece group interaction', () => {
       }
       expect(mock.preview).not.toHaveBeenCalled()
       emit({ ...old, connection: 'resyncing' })
-      emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+      emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
       await Promise.resolve()
       expect(mock.preview).toHaveBeenCalledOnce()
       if (kind === 'drag')
-        expect(mock.preview.mock.calls[0]![0].intendedTransform.translation).toEqual({
+        expect(firstPreview().intendedTransform.translation).toEqual({
           x: group.transform.translation.x + 90,
           y: group.transform.translation.y + 90,
         })
@@ -625,7 +642,7 @@ describe('three-piece group interaction', () => {
         mock.listener?.(next)
       }
       emit({ ...old, connection: 'resyncing' })
-      emit({ ...old, connection: 'ready', game: { ...old.game!, ownTurn: turn } })
+      emit({ ...old, connection: 'ready', game: { ...requireGame(old), ownTurn: turn } })
       if (order === 'before') {
         resolveBegin(turn)
         await Promise.resolve()
@@ -660,7 +677,7 @@ describe('three-piece group interaction', () => {
         mock.listener?.(next)
       }
       mock.begin.mockImplementation(() => {
-        emit({ ...old, game: { ...old.game!, ownTurn: turn } })
+        emit({ ...old, game: { ...requireGame(old), ownTurn: turn } })
         return Promise.resolve(turn)
       })
       board.down(pointer(10, 20), group)
@@ -674,7 +691,7 @@ describe('three-piece group interaction', () => {
       await Promise.resolve()
       expect(mock.begin).toHaveBeenCalledOnce()
       expect(mock.preview).toHaveBeenCalledOnce()
-      expect(mock.preview.mock.calls[0]![0].intendedTransform.translation).toEqual({
+      expect(firstPreview().intendedTransform.translation).toEqual({
         x: group.transform.translation.x + 90,
         y: group.transform.translation.y + 90,
       })
@@ -697,7 +714,7 @@ describe('three-piece group interaction', () => {
       mock.undo.mockResolvedValue({})
       board.down(pointer(10, 20), joined)
       board.move(pointer(30, 50))
-      const submitted = mock.preview.mock.calls[0]?.[0] as Action
+      const submitted = firstPreview()
       expect(submitted).toBeDefined()
       mock.state = { ...(mock.state as LiveGameState), previewPending: true }
       board.abort()
