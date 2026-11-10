@@ -12,6 +12,7 @@ import type {
   Group,
   Piece,
   Transform,
+  Turn,
 } from '@world-jigsaw/contracts'
 
 interface Point {
@@ -30,12 +31,23 @@ interface Pending {
   active: boolean
   moved: boolean
   acquiring: boolean
+  openingTurn: boolean
+  openedTurn: Turn | null
+  waitingForTurn: boolean
+  initialTurn: Turn | null
+  puzzleId: string
   finalPrepared: boolean
   interrupted: boolean
   restoring: boolean
   undoStarted: boolean
   original: Action | null
 }
+const sameTurn = (a: Turn, b: Turn) =>
+  a.turnId.toLowerCase() === b.turnId.toLowerCase() &&
+  a.puzzleId.toLowerCase() === b.puzzleId.toLowerCase() &&
+  a.generation === b.generation &&
+  a.turnRevision === b.turnRevision
+
 export function outline(piece: Piece): string {
   const base = piece.solvedPosition,
     first = piece.edges[0]
@@ -225,7 +237,7 @@ export function useLiveBoard() {
   const previewOwners = new Map<string, string>()
   for (const action of previews)
     for (const id of action.affectedPieceIds) previewOwners.set(id.toLowerCase(), action.actionId)
-  const visibleGhost = state.recoveryView ? null : ghost
+  const visibleGhost = state.connection === 'ready' && !state.recoveryView ? ghost : null
   const ghostIds = new Set(visibleGhost?.ids.map((id) => id.toLowerCase()) ?? [])
   const previewed = new Set([...previewOwners.keys(), ...ghostIds])
   const pieceMap = new Map(
@@ -279,26 +291,74 @@ export function useLiveBoard() {
     const p = new DOMPoint(x, y).matrixTransform(m.inverse())
     return { x: p.x, y: p.y }
   }
+  const discardPending = () => {
+    if (pending.current) client.abandonInterruptedPreview()
+    pending.current = null
+  }
   const flush = () => {
     const p = pending.current,
       now = client.getState()
-    if (!p || !p.moved || now.connection !== 'ready' || !now.game?.ownTurn || now.previewPending)
+    if (!p || !p.moved || now.connection !== 'ready' || now.previewPending) return
+    if (!p.acquiring) {
+      begin(p)
       return
+    }
+    if (!now.game?.ownTurn) return
+    const recovering = p.waitingForTurn
+    if (p.waitingForTurn && !p.openingTurn) {
+      if (!p.initialTurn || !sameTurn(now.game.ownTurn, p.initialTurn) || !client.provenDraft())
+        return
+      p.waitingForTurn = false
+      if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
+    if (p.openingTurn) {
+      if (!p.openedTurn) return
+      const turn = now.game.ownTurn
+      if (!sameTurn(turn, p.openedTurn) || client.provenDraft() === null) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+        return
+      }
+      p.waitingForTurn = false
+      if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
+    if (recovering && !p.interrupted && p.sent) {
+      const accepted = client
+        .provenDraft()
+        ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
+      const members = (action: Action) =>
+        action.affectedPieceIds
+          .map((id) => id.toLowerCase())
+          .sort()
+          .join(',')
+      if (
+        !accepted ||
+        accepted.intendedTransform.rotation !== p.action.intendedTransform.rotation ||
+        accepted.intendedTransform.translation.x !== p.action.intendedTransform.translation.x ||
+        accepted.intendedTransform.translation.y !== p.action.intendedTransform.translation.y ||
+        members(accepted) !== members(p.action)
+      )
+        p.sent = ''
+    }
     if (p.interrupted) {
       if (p.undoStarted && !p.restoring) {
         p.restoring = true
         void client
           .undo(p.action.actionId)
           .then(() => {
-            pending.current = null
+            if (pending.current !== p) return
+            discardPending()
             setGhost(null)
             setDragging(false)
             setSelected(null)
           })
           .catch((e: unknown) => {
+            if (pending.current !== p) return
             p.restoring = false
-            if (client.pendingUndoActionId() === null && pending.current === p) {
-              pending.current = null
+            if (client.pendingUndoActionId() === null) {
+              discardPending()
               setGhost(null)
               setDragging(false)
               setSelected(null)
@@ -309,9 +369,11 @@ export function useLiveBoard() {
       }
       const draft = client.provenDraft()
       if (!draft || p.restoring) return
-      const current = draft.find((action) => action.actionId === p.action.actionId)
+      const current = draft.find(
+        (action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase(),
+      )
       if (!current) {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
       } else if (!p.original) {
@@ -330,7 +392,7 @@ export function useLiveBoard() {
           setError(String(e))
         }
       } else {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
@@ -362,7 +424,7 @@ export function useLiveBoard() {
     }
     const acceptedByServer = client
       .provenDraft()
-      ?.find((action) => action.actionId === p.action.actionId)
+      ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
     if (!now.issue && acceptedByServer) {
       if (!p.active) {
         setAccepted(true)
@@ -375,21 +437,38 @@ export function useLiveBoard() {
         })
         setGhost(null)
         setDragging(false)
-        pending.current = null
+        discardPending()
       }
     }
   }
   const begin = (p: Pending) => {
-    if (p.acquiring) return
+    if (p.acquiring || client.getState().connection !== 'ready') return
     p.acquiring = true
     void client
       .begin()
-      .then(() => {
-        flush()
+      .then((turn) => {
+        if (pending.current === p) {
+          if (p.openingTurn) p.openedTurn = turn
+          if (
+            p.openingTurn &&
+            p.initialTurn &&
+            sameTurn(p.initialTurn, turn) &&
+            client.getState().connection === 'ready' &&
+            !client.getState().game?.ownTurn
+          ) {
+            discardPending()
+            setGhost(null)
+            setDragging(false)
+            setSelected(null)
+            return
+          }
+          flush()
+        }
       })
       .catch((e: unknown) => {
+        if (pending.current !== p) return
         setError(String(e))
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
       })
@@ -404,6 +483,11 @@ export function useLiveBoard() {
     active: true,
     moved: false,
     acquiring: false,
+    openingTurn: !client.getState().game?.ownTurn,
+    openedTurn: null,
+    waitingForTurn: false,
+    initialTurn: client.getState().game?.ownTurn ?? null,
+    puzzleId: client.getState().game!.snapshot.puzzleId,
     finalPrepared: false,
     interrupted: false,
     restoring: false,
@@ -449,6 +533,23 @@ export function useLiveBoard() {
     setError(null)
     setDragging(true)
   }
+  const updateDragPosition = (d: Pending, p: Point, x: number, y: number) => {
+    const dx = p.x - d.start.x,
+      dy = p.y - d.start.y
+    if (!d.moved && d.startScreen && Math.hypot(x - d.startScreen.x, y - d.startScreen.y) < 5)
+      return false
+    d.moved = true
+    d.desired = {
+      ...d.origin,
+      translation: {
+        x: Math.round(d.origin.translation.x + dx),
+        y: Math.round(d.origin.translation.y + dy),
+      },
+    }
+    if (client.getState().connection === 'ready' && !d.waitingForTurn)
+      setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
+    return true
+  }
   const move = (event: PointerEvent<SVGSVGElement>) => {
     const cursorPoint = point(event.clientX, event.clientY)
     if (cursorPoint) {
@@ -490,39 +591,28 @@ export function useLiveBoard() {
       return
     }
     const d = pending.current
-    if (!d?.active) return
+    const connection = client.getState().connection
+    if (!d?.active || connection === 'disconnected') return
     const p = cursorPoint ?? point(event.clientX, event.clientY)
     if (!p) return
-    const dx = p.x - d.start.x,
-      dy = p.y - d.start.y
-    if (
-      !d.moved &&
-      d.startScreen &&
-      Math.hypot(event.clientX - d.startScreen.x, event.clientY - d.startScreen.y) < 5
-    )
-      return
-    d.moved = true
+    if (!updateDragPosition(d, p, event.clientX, event.clientY)) return
     setAccepted(false)
-    d.desired = {
-      ...d.origin,
-      translation: {
-        x: Math.round(d.origin.translation.x + dx),
-        y: Math.round(d.origin.translation.y + dy),
-      },
-    }
-    setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
     begin(d)
     flush()
   }
-  const up = () => {
+  const up = (event?: PointerEvent<SVGSVGElement>) => {
     if (pan.current) {
       pan.current = null
       return
     }
     const d = pending.current
     if (!d) return
+    if (event && d.active && d.waitingForTurn) {
+      const p = point(event.clientX, event.clientY)
+      if (p) updateDragPosition(d, p, event.clientX, event.clientY)
+    }
     if (!d.moved) {
-      pending.current = null
+      discardPending()
       setDragging(false)
       return
     }
@@ -540,8 +630,8 @@ export function useLiveBoard() {
     setAccepted(false)
     setSelected(null)
     setError(t('probe.interrupted'))
-    if (!d.moved) {
-      pending.current = null
+    if (!d.moved || !d.acquiring) {
+      discardPending()
       setGhost(null)
       setDragging(false)
       return
@@ -554,6 +644,7 @@ export function useLiveBoard() {
   const rotate = (group: Group) => {
     if (
       state.connection !== 'ready' ||
+      client.getState().connection !== 'ready' ||
       state.pendingConfirm ||
       state.pendingShape ||
       state.unresolvedCommand ||
@@ -627,6 +718,62 @@ export function useLiveBoard() {
       })
     }
     const unsubscribe = client.subscribe((next) => {
+      const current = pending.current
+      const previousTurn = current?.initialTurn
+      const nextTurn = next.game?.ownTurn
+      if (current && next.connection !== 'ready') {
+        setGhost(null)
+        setSelected(null)
+        current.waitingForTurn = true
+        if (next.connection !== 'disconnected') {
+          client.recoverInterruptedPreview()
+        }
+        if (
+          !next.game ||
+          next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          (current.interrupted &&
+            next.connection === 'disconnected' &&
+            stateRef.current.connection !== 'ready' &&
+            stateRef.current.connection !== 'disconnected') ||
+          (!current.interrupted && next.connection === 'disconnected')
+        ) {
+          discardPending()
+          setDragging(false)
+        }
+      } else if (
+        current &&
+        (!next.game ||
+          next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          (!nextTurn &&
+            (!current.openingTurn ||
+              (current.initialTurn &&
+                current.openedTurn &&
+                sameTurn(current.initialTurn, current.openedTurn)))))
+      ) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (current && previousTurn && nextTurn && !sameTurn(previousTurn, nextTurn)) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (
+        current &&
+        current.waitingForTurn &&
+        !current.openingTurn &&
+        nextTurn &&
+        client.provenDraft() === null &&
+        (!current.interrupted || client.pendingUndoActionId() === null)
+      ) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      }
+      if (pending.current && next.connection === 'ready' && pending.current.openingTurn && nextTurn)
+        pending.current.initialTurn = nextTurn
       if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
         client.sendCursor(cursorPosition.current)
       if (next.pendingConfirm)
@@ -641,7 +788,7 @@ export function useLiveBoard() {
         if (current?.sentFor === 'active' && !current.interrupted) {
           if (!current.active) current.sent = ''
         } else {
-          pending.current = null
+          discardPending()
           setGhost(null)
           setDragging(false)
           setSelected(null)
@@ -651,7 +798,7 @@ export function useLiveBoard() {
       if (next.previewRejection && !stateRef.current.previewRejection) {
         const current = pending.current
         if (current && current.sentFor !== 'active') {
-          pending.current = null
+          discardPending()
           setGhost(null)
           setDragging(false)
           setSelected(null)
@@ -703,7 +850,7 @@ export function useLiveBoard() {
       .cancel()
       .then(() => {
         setError(null)
-        pending.current = null
+        discardPending()
         setAccepted(false)
         setGhost(null)
         setDragging(false)
@@ -741,7 +888,7 @@ export function useLiveBoard() {
       .confirm()
       .then((result) => {
         if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
-          pending.current = null
+          discardPending()
           setAccepted(false)
           setGhost(null)
           setDragging(false)

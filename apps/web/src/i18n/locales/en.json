@@ -179,7 +179,7 @@
   "game.saved": "Saved",
   "game.join": "Joining adjacent pieces",
   "game.reconnect": "Reconnect to the shared board",
-  "game.recoveryView": "Connection interrupted. Showing your last accepted draft temporarily; it is not confirmed and may change.",
+  "game.recoveryView": "Synchronizing. Showing your last visible draft temporarily; it may not have been accepted or confirmed and may change.",
   "game.zoomIn": "Zoom in",
   "game.zoomOut": "Zoom out",
   "game.fit": "Fit canvas",
