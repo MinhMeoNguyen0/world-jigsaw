@@ -42,6 +42,12 @@ interface Pending {
   undoStarted: boolean
   original: Action | null
 }
+const sameTurn = (a: Turn, b: Turn) =>
+  a.turnId.toLowerCase() === b.turnId.toLowerCase() &&
+  a.puzzleId.toLowerCase() === b.puzzleId.toLowerCase() &&
+  a.generation === b.generation &&
+  a.turnRevision === b.turnRevision
+
 export function outline(piece: Piece): string {
   const base = piece.solvedPosition,
     first = piece.edges[0]
@@ -288,18 +294,16 @@ export function useLiveBoard() {
   const flush = () => {
     const p = pending.current,
       now = client.getState()
-    if (!p || !p.moved || now.connection !== 'ready' || !now.game?.ownTurn || now.previewPending)
+    if (!p || !p.moved || now.connection !== 'ready' || now.previewPending) return
+    if (!p.acquiring) {
+      begin(p)
       return
+    }
+    if (!now.game?.ownTurn) return
     if (p.openingTurn) {
       if (!p.openedTurn) return
       const turn = now.game.ownTurn
-      if (
-        turn.turnId.toLowerCase() !== p.openedTurn.turnId.toLowerCase() ||
-        turn.puzzleId.toLowerCase() !== p.openedTurn.puzzleId.toLowerCase() ||
-        turn.generation !== p.openedTurn.generation ||
-        turn.turnRevision !== p.openedTurn.turnRevision ||
-        client.provenDraft() === null
-      ) {
+      if (!sameTurn(turn, p.openedTurn) || client.provenDraft() === null) {
         pending.current = null
         setGhost(null)
         setDragging(false)
@@ -407,13 +411,26 @@ export function useLiveBoard() {
     }
   }
   const begin = (p: Pending) => {
-    if (p.acquiring) return
+    if (p.acquiring || client.getState().connection !== 'ready') return
     p.acquiring = true
     void client
       .begin()
       .then((turn) => {
         if (pending.current === p) {
           if (p.openingTurn) p.openedTurn = turn
+          if (
+            p.openingTurn &&
+            p.initialTurn &&
+            sameTurn(p.initialTurn, turn) &&
+            client.getState().connection === 'ready' &&
+            !client.getState().game?.ownTurn
+          ) {
+            pending.current = null
+            setGhost(null)
+            setDragging(false)
+            setSelected(null)
+            return
+          }
           flush()
         }
       })
@@ -583,7 +600,7 @@ export function useLiveBoard() {
     setAccepted(false)
     setSelected(null)
     setError(t('probe.interrupted'))
-    if (!d.moved) {
+    if (!d.moved || !d.acquiring) {
       pending.current = null
       setGhost(null)
       setDragging(false)
@@ -698,28 +715,26 @@ export function useLiveBoard() {
         current &&
         (!next.game ||
           next.game.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
-          (!nextTurn && !current.openingTurn))
+          (!nextTurn &&
+            (!current.openingTurn ||
+              (current.initialTurn &&
+                current.openedTurn &&
+                sameTurn(current.initialTurn, current.openedTurn)))))
       ) {
         if (current.interrupted) client.abandonInterruptedPreview()
         pending.current = null
         setGhost(null)
         setDragging(false)
         setSelected(null)
-      } else if (
-        current &&
-        previousTurn &&
-        nextTurn &&
-        (previousTurn.turnId.toLowerCase() !== nextTurn.turnId.toLowerCase() ||
-          previousTurn.puzzleId.toLowerCase() !== nextTurn.puzzleId.toLowerCase() ||
-          previousTurn.generation !== nextTurn.generation ||
-          previousTurn.turnRevision !== nextTurn.turnRevision)
-      ) {
+      } else if (current && previousTurn && nextTurn && !sameTurn(previousTurn, nextTurn)) {
         if (current.interrupted) client.abandonInterruptedPreview()
         pending.current = null
         setGhost(null)
         setDragging(false)
         setSelected(null)
       }
+      if (pending.current && next.connection === 'ready' && pending.current.openingTurn && nextTurn)
+        pending.current.initialTurn = nextTurn
       if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
         client.sendCursor(cursorPosition.current)
       if (next.pendingConfirm)
