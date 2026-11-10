@@ -54,8 +54,9 @@ function Artwork({
       <path
         d={path}
         fill={image && bounds ? 'transparent' : '#999'}
-        stroke={ids.length > 1 ? 'none' : '#d0c8b9'}
-        strokeWidth="1200"
+        stroke="#514b42"
+        strokeWidth="1.25"
+        vectorEffect="non-scaling-stroke"
         strokeLinejoin="round"
       />
     </>
@@ -121,6 +122,14 @@ export function HomePage() {
   const pillDrag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const pillMoved = useRef(false)
   const zoomFocus = useRef<string | null>(null)
+  const boardScroll = useRef<HTMLDivElement>(null)
+  const puzzleId = game?.snapshot.puzzleId
+  useEffect(() => {
+    const container = boardScroll.current
+    if (!container || !puzzleId) return
+    container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2
+    container.scrollTop = (container.scrollHeight - container.clientHeight) / 2
+  }, [puzzleId])
   const serverTime = game?.serverTime,
     endsAt = game?.endsAt
   useEffect(() => {
@@ -286,221 +295,228 @@ export function HomePage() {
       </header>
       <section className="workspace">
         <div className="board-wrap">
-          <svg
-            ref={board}
-            className={camera.zoom > 1 ? 'board is-zoomed' : 'board'}
-            viewBox={bounds}
-            role="img"
-            aria-label={t('live.board')}
-            aria-describedby="canvas-help"
-            onPointerDown={(event) => {
-              if (event.button !== 0 || event.target !== event.currentTarget) return
-              if (event.pointerType === 'touch') {
-                let nearest: { group: NonNullable<typeof selected>; distance: number } | null = null
-                for (const element of event.currentTarget.querySelectorAll<SVGGElement>(
-                  '[data-group-id], [data-preview-action]',
-                )) {
-                  const rect = element.querySelector(':scope > path')?.getBoundingClientRect()
-                  if (!rect) continue
-                  if (!rect.width || !rect.height) continue
-                  const distance = Math.hypot(
-                    Math.max(rect.left - event.clientX, 0, event.clientX - rect.right),
-                    Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom),
-                  )
-                  if (distance > 22 || (nearest && distance >= nearest.distance)) continue
-                  const action = actions.find(
-                    (item) => item.actionId === element.dataset.previewAction,
-                  )
-                  const group = action
-                    ? {
-                        groupId: action.targetId,
-                        revision: 0,
-                        pieceIds: action.affectedPieceIds,
-                        transform: action.intendedTransform,
-                        finalPosition: false,
-                      }
-                    : game?.snapshot.groups.find(
-                        (item) =>
-                          item.groupId === element.dataset.groupId && !!element.dataset.pieceIds,
-                      )
-                  if (group) nearest = { group, distance }
-                }
-                if (nearest) {
-                  down(event, nearest.group)
-                  return
-                }
-              }
-              if (camera.zoom <= 1) return
-              const m = board.current?.getScreenCTM()
-              if (!m?.a || !m.d) return
-              event.currentTarget.setPointerCapture(event.pointerId)
-              panRef.current = {
-                x: event.clientX,
-                y: event.clientY,
-                originX: camera.x,
-                originY: camera.y,
-                scaleX: 1 / m.a,
-                scaleY: 1 / m.d,
-              }
-            }}
-            onPointerMove={move}
-            onPointerLeave={leave}
-            onPointerUp={up}
-            onPointerCancel={abort}
-            onContextMenu={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              if (pending.current?.active) rotate(pending.current.group)
-            }}
-          >
-            {play && (
-              <rect
-                x={play.min.x}
-                y={play.min.y}
-                width={play.max.x - play.min.x}
-                height={play.max.y - play.min.y}
-                rx="16000"
-                fill="#d0c8b9"
-                stroke="#b8ae9d"
-                strokeWidth="3000"
-                pointerEvents="none"
-              />
-            )}
-            {image && supportedImage && (
-              <image
-                data-picture-overlay="true"
-                href={supportedImage}
-                x={image.min.x}
-                y={image.min.y}
-                width={image.max.x - image.min.x}
-                height={image.max.y - image.min.y}
-                preserveAspectRatio="xMidYMid slice"
-                opacity={overlay ? '.12' : '0'}
-                pointerEvents="none"
-              />
-            )}
-            {game?.snapshot.groups.map((group) => {
-              const ids = group.pieceIds.filter((id) => !previewed.has(id.toLowerCase()))
-              return (
-                <g
-                  key={group.groupId}
-                  className="board-piece"
-                  data-group-id={group.groupId}
-                  data-piece-ids={ids.join(',')}
-                  transform={matrix(group.transform)}
-                  onPointerDown={(event) => {
-                    down(event, group)
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    rotate(group)
-                  }}
-                >
-                  <Artwork
-                    id={`board-${group.groupId}`}
-                    ids={ids}
-                    path={paths(ids)}
-                    image={supportedImage}
-                    bounds={image}
-                  />
-                </g>
-              )
-            })}
-            {previews.map((action) => {
-              const ids = action.affectedPieceIds.filter(
-                (id) =>
-                  !ghostIds.has(id.toLowerCase()) &&
-                  previewOwners.get(id.toLowerCase()) === action.actionId,
-              )
-              const own = actions.find((item) => item.actionId === action.actionId)
-              const group = own
-                ? {
-                    groupId: own.targetId,
-                    revision: 0,
-                    pieceIds: own.affectedPieceIds,
-                    transform: action.intendedTransform,
-                    finalPosition: false,
+          <div className="board-scroll" ref={boardScroll}>
+            <svg
+              ref={board}
+              style={{
+                aspectRatio: `${width} / ${height}`,
+                width: `max(var(--board-min-width), min(100%, calc((100dvh - var(--board-chrome)) * ${width / height})))`,
+              }}
+              className={camera.zoom > 1 ? 'board is-zoomed' : 'board'}
+              viewBox={bounds}
+              role="img"
+              aria-label={t('live.board')}
+              aria-describedby="canvas-help"
+              onPointerDown={(event) => {
+                if (event.button !== 0 || event.target !== event.currentTarget) return
+                if (event.pointerType === 'touch') {
+                  let nearest: { group: NonNullable<typeof selected>; distance: number } | null =
+                    null
+                  for (const element of event.currentTarget.querySelectorAll<SVGGElement>(
+                    '[data-group-id], [data-preview-action]',
+                  )) {
+                    const rect = element.querySelector(':scope > path')?.getBoundingClientRect()
+                    if (!rect) continue
+                    if (!rect.width || !rect.height) continue
+                    const distance = Math.hypot(
+                      Math.max(rect.left - event.clientX, 0, event.clientX - rect.right),
+                      Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom),
+                    )
+                    if (distance > 22 || (nearest && distance >= nearest.distance)) continue
+                    const action = actions.find(
+                      (item) => item.actionId === element.dataset.previewAction,
+                    )
+                    const group = action
+                      ? {
+                          groupId: action.targetId,
+                          revision: 0,
+                          pieceIds: action.affectedPieceIds,
+                          transform: action.intendedTransform,
+                          finalPosition: false,
+                        }
+                      : game?.snapshot.groups.find(
+                          (item) =>
+                            item.groupId === element.dataset.groupId && !!element.dataset.pieceIds,
+                        )
+                    if (group) nearest = { group, distance }
                   }
-                : null
-              return ids.length ? (
+                  if (nearest) {
+                    down(event, nearest.group)
+                    return
+                  }
+                }
+                if (camera.zoom <= 1) return
+                const m = board.current?.getScreenCTM()
+                if (!m?.a || !m.d) return
+                event.currentTarget.setPointerCapture(event.pointerId)
+                panRef.current = {
+                  x: event.clientX,
+                  y: event.clientY,
+                  originX: camera.x,
+                  originY: camera.y,
+                  scaleX: 1 / m.a,
+                  scaleY: 1 / m.d,
+                }
+              }}
+              onPointerMove={move}
+              onPointerLeave={leave}
+              onPointerUp={up}
+              onPointerCancel={abort}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                if (pending.current?.active) rotate(pending.current.group)
+              }}
+            >
+              {play && (
+                <rect
+                  x={play.min.x}
+                  y={play.min.y}
+                  width={play.max.x - play.min.x}
+                  height={play.max.y - play.min.y}
+                  rx="16000"
+                  fill="#d0c8b9"
+                  stroke="#b8ae9d"
+                  strokeWidth="3000"
+                  pointerEvents="none"
+                />
+              )}
+              {image && supportedImage && (
+                <image
+                  data-picture-overlay="true"
+                  href={supportedImage}
+                  x={image.min.x}
+                  y={image.min.y}
+                  width={image.max.x - image.min.x}
+                  height={image.max.y - image.min.y}
+                  preserveAspectRatio="xMidYMid slice"
+                  opacity={overlay ? '.22' : '0'}
+                  pointerEvents="none"
+                />
+              )}
+              {game?.snapshot.groups.map((group) => {
+                const ids = group.pieceIds.filter((id) => !previewed.has(id.toLowerCase()))
+                return (
+                  <g
+                    key={group.groupId}
+                    className="board-piece"
+                    data-group-id={group.groupId}
+                    data-piece-ids={ids.join(',')}
+                    transform={matrix(group.transform)}
+                    onPointerDown={(event) => {
+                      down(event, group)
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      rotate(group)
+                    }}
+                  >
+                    <Artwork
+                      id={`board-${group.groupId}`}
+                      ids={ids}
+                      path={paths(ids)}
+                      image={supportedImage}
+                      bounds={image}
+                    />
+                  </g>
+                )
+              })}
+              {previews.map((action) => {
+                const ids = action.affectedPieceIds.filter(
+                  (id) =>
+                    !ghostIds.has(id.toLowerCase()) &&
+                    previewOwners.get(id.toLowerCase()) === action.actionId,
+                )
+                const own = actions.find((item) => item.actionId === action.actionId)
+                const group = own
+                  ? {
+                      groupId: own.targetId,
+                      revision: 0,
+                      pieceIds: own.affectedPieceIds,
+                      transform: action.intendedTransform,
+                      finalPosition: false,
+                    }
+                  : null
+                return ids.length ? (
+                  <g
+                    key={action.actionId}
+                    className="board-piece"
+                    data-preview-action={action.actionId}
+                    data-preview-piece-ids={ids.join(',')}
+                    transform={matrix(action.intendedTransform)}
+                    onPointerDown={(event) => {
+                      if (group) down(event, group)
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      if (group) rotate(group)
+                      else if (pending.current?.active) rotate(pending.current.group)
+                    }}
+                  >
+                    <Artwork
+                      id={`preview-${action.actionId}`}
+                      ids={ids}
+                      path={paths(ids)}
+                      image={supportedImage}
+                      bounds={image}
+                    />
+                  </g>
+                ) : null
+              })}
+              {ghost && (
                 <g
-                  key={action.actionId}
-                  className="board-piece"
-                  data-preview-action={action.actionId}
-                  data-preview-piece-ids={ids.join(',')}
-                  transform={matrix(action.intendedTransform)}
-                  onPointerDown={(event) => {
-                    if (group) down(event, group)
-                  }}
+                  className="selection-ghost"
+                  data-local-ghost="true"
+                  transform={matrix(ghost.transform)}
                   onContextMenu={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
-                    if (group) rotate(group)
-                    else if (pending.current?.active) rotate(pending.current.group)
+                    if (pending.current?.active) rotate(pending.current.group)
                   }}
                 >
                   <Artwork
-                    id={`preview-${action.actionId}`}
-                    ids={ids}
-                    path={paths(ids)}
+                    id="ghost"
+                    ids={ghost.ids}
+                    path={paths(ghost.ids)}
                     image={supportedImage}
                     bounds={image}
                   />
                 </g>
-              ) : null
-            })}
-            {ghost && (
-              <g
-                className="selection-ghost"
-                data-local-ghost="true"
-                transform={matrix(ghost.transform)}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  if (pending.current?.active) rotate(pending.current.group)
-                }}
-              >
-                <Artwork
-                  id="ghost"
-                  ids={ghost.ids}
-                  path={paths(ghost.ids)}
-                  image={supportedImage}
-                  bounds={image}
-                />
-              </g>
-            )}
-            {Object.values(state.cursors).map(
-              (cursor) =>
-                cursor.position && (
-                  <g
-                    key={cursor.cursorId}
-                    data-remote-cursor={cursor.cursorId}
-                    transform={`translate(${String(cursor.position.x)} ${String(cursor.position.y)}) scale(${String(width / camera.zoom / 1000)})`}
-                    pointerEvents="none"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="M 0 0 L 0 23 L 6 17 L 11 27 L 15 25 L 10 15 L 19 15 Z"
-                      fill="#ae563d"
-                      stroke="white"
-                      strokeWidth="2"
-                    />
-                    <text
-                      x="20"
-                      y="24"
-                      fontSize="16"
-                      fill="#49372f"
-                      stroke="white"
-                      strokeWidth="3"
-                      paintOrder="stroke"
+              )}
+              {Object.values(state.cursors).map(
+                (cursor) =>
+                  cursor.position && (
+                    <g
+                      key={cursor.cursorId}
+                      data-remote-cursor={cursor.cursorId}
+                      transform={`translate(${String(cursor.position.x)} ${String(cursor.position.y)}) scale(${String(width / camera.zoom / 1000)})`}
+                      pointerEvents="none"
+                      aria-hidden="true"
                     >
-                      {cursor.displayName}
-                    </text>
-                  </g>
-                ),
-            )}
-          </svg>
+                      <path
+                        d="M 0 0 L 0 23 L 6 17 L 11 27 L 15 25 L 10 15 L 19 15 Z"
+                        fill="#ae563d"
+                        stroke="white"
+                        strokeWidth="2"
+                      />
+                      <text
+                        x="20"
+                        y="24"
+                        fontSize="16"
+                        fill="#49372f"
+                        stroke="white"
+                        strokeWidth="3"
+                        paintOrder="stroke"
+                      >
+                        {cursor.displayName}
+                      </text>
+                    </g>
+                  ),
+              )}
+            </svg>
+          </div>
           {reference && supportedImage && (
             <div className="reference-card">
               <img

@@ -807,22 +807,40 @@ input:focus-visible,
   background: #fbfbf6;
 }
 
-/* Keep the shared canvas between the reviewed header and footer at every viewport. */
-.board {
+/* Keep the workspace accessible at a useful scale, including on narrow screens. */
+.board-scroll {
+  --board-chrome: 107px;
+  --board-min-width: 0px;
   position: absolute;
-  top: 60px;
-  height: calc(100% - 107px);
+  inset: 60px 0 47px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.board {
+  position: relative;
+  top: auto;
+  height: auto;
+  margin: auto;
+  touch-action: pan-x pan-y;
+}
+.board-piece {
+  touch-action: none;
+}
+.board.is-zoomed {
+  touch-action: none;
 }
 @media (max-width: 700px) {
-  .board {
+  .board-scroll {
+    --board-chrome: 99px;
+    --board-min-width: 1200px;
     top: 52px;
-    height: calc(100% - 99px);
   }
 }
 @media (max-height: 500px) {
-  .board {
+  .board-scroll {
+    --board-chrome: 92px;
     top: 48px;
-    height: calc(100% - 92px);
+    bottom: 44px;
   }
 }
 .reconnect {
