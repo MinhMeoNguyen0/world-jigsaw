@@ -1016,7 +1016,13 @@ describe('versioned subscription and preview receipts', () => {
     expect(h.client.getState().recoveryView).toBeNull()
   })
 
-  it.each(['accepted', 'unchanged', 'concurrent'] as const)(
+  it.each([
+    'accepted',
+    'unchanged',
+    'concurrent',
+    'other submission',
+    'missing submission',
+  ] as const)(
     'recovers an interrupted preview after a lost receipt when the draft is %s',
     async (outcome) => {
       const h = harness()
@@ -1038,19 +1044,30 @@ describe('versioned subscription and preview receipts', () => {
         },
       }
       h.client.preview(moved)
+      const submission = socket.sent.at(-1) as { submissionId: string }
       h.client.recoverInterruptedPreview()
       socket.drop()
       await h.client.connect()
       const next = socketAt(h.sockets, 1)
       next.open()
-      next.emit(
-        handoff(
+      next.emit({
+        ...handoff(
           outcome === 'unchanged' ? [action, second] : [moved, second],
-          outcome === 'unchanged' ? 2 : outcome === 'accepted' ? 3 : 4,
+          outcome === 'unchanged' ? 2 : outcome === 'concurrent' ? 4 : 3,
         ),
-      )
-      if (outcome === 'concurrent') expect(h.client.provenDraft()).toBeNull()
-      else expect(h.client.provenDraft()).toEqual([outcome === 'accepted' ? moved : action, second])
+        ...(outcome === 'accepted'
+          ? { lastSubmissionId: submission.submissionId }
+          : outcome === 'other submission'
+            ? { lastSubmissionId: '00000000-0000-4000-8000-000000000099' }
+            : {}),
+      })
+      if (outcome === 'accepted' || outcome === 'unchanged') {
+        expect(h.client.provenDraft()).toEqual([outcome === 'accepted' ? moved : action, second])
+      } else {
+        expect(h.client.provenDraft()).toBeNull()
+        expect(h.client.recoveredPreviewActionId()).toBeNull()
+        await expect(h.client.confirm()).rejects.toThrow('not ready')
+      }
     },
   )
 

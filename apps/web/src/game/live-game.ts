@@ -55,7 +55,6 @@ interface Flight {
   submissionId: string
   actionId: string
   draftRevision: number
-  action: Action
   proof: DraftProof | null
   recover: boolean
   resyncOnCollision: boolean
@@ -513,35 +512,13 @@ export class LiveGame {
       reply.nextSequence !== flight.sequence + 1
     )
       return false
-    if (
+    return Boolean(
       reply.lastSubmissionId &&
       sameId(reply.lastSubmissionId, flight.submissionId) &&
       reply.actions.some((action) => sameId(action.actionId, flight.actionId)) &&
       new Set(reply.actions.map((action) => action.actionId.toLowerCase())).size ===
-        reply.actions.length
+        reply.actions.length,
     )
-      return true
-    const normalize = (action: Action) => ({
-      ...action,
-      actionId: action.actionId.toLowerCase(),
-      targetId: action.targetId.toLowerCase(),
-      kind: undefined,
-      affectedPieceIds: action.affectedPieceIds.map((id) => id.toLowerCase()).sort(),
-      baseRevisions: action.baseRevisions
-        .map((revision) => ({ ...revision, groupId: revision.groupId.toLowerCase() }))
-        .sort((a, b) => a.groupId.localeCompare(b.groupId)),
-    })
-    const affected = new Set(flight.action.affectedPieceIds.map((id) => id.toLowerCase()))
-    const expected = proof.actions.map((action) =>
-      action.affectedPieceIds.some((id) => affected.has(id.toLowerCase()))
-        ? { ...action, intendedTransform: flight.action.intendedTransform }
-        : action,
-    )
-    if (!expected.some((action) => sameId(action.actionId, flight.actionId)))
-      expected.push(flight.action)
-    const ordered = (actions: Action[]) =>
-      actions.map(normalize).sort((a, b) => a.actionId.localeCompare(b.actionId))
-    return canonical(ordered(expected)) === canonical(ordered(reply.actions))
   }
 
   private receive(raw: unknown) {
@@ -623,12 +600,7 @@ export class LiveGame {
           )
         const recoveredPreview = this.matchesInterruptedPreview(reply)
         this.recoveredPreviewId =
-          recoveredPreview &&
-          reply.lastSubmissionId &&
-          this.lostPreview &&
-          sameId(reply.lastSubmissionId, this.lostPreview.submissionId)
-            ? this.lostPreview.actionId
-            : null
+          recoveredPreview && this.lostPreview ? this.lostPreview.actionId : null
         this.uncertainDraft =
           !matches(proof) &&
           !matches(undoneProof) &&
@@ -966,7 +938,6 @@ export class LiveGame {
       submissionId,
       actionId: action.actionId,
       draftRevision: this.draftRevision,
-      action: structuredClone(action),
       proof: this.draftProof,
       recover: false,
       resyncOnCollision,
