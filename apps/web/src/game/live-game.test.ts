@@ -643,7 +643,6 @@ describe('versioned subscription and preview receipts', () => {
     const { h, socket } = await acceptedJoined()
     socket.drop()
     expect(h.client.getState().recoveryView).toEqual({
-      snapshot: current.snapshot,
       turn,
       actions: [joined],
     })

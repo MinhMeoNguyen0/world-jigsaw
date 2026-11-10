@@ -33,7 +33,7 @@ export interface LiveGameState {
   game: CurrentGame | null
   previews: Record<string, PreviewState>
   /** Tentative appearance only; never used for commands or draft proof. */
-  recoveryView: { snapshot: CurrentGame['snapshot']; turn: Turn; actions: Action[] } | null
+  recoveryView: { turn: Turn; actions: Action[] } | null
   previewPending: boolean
   previewRejection: PreviewRejected | null
   cursors: Record<string, CursorPresence>
@@ -230,7 +230,7 @@ export class LiveGame {
       this.recoveryTimer = null
       this.publish({ recoveryView: null })
     }, remaining)
-    return { snapshot: game.snapshot, turn, actions: displayed }
+    return { turn, actions: displayed }
   }
 
   private async request<T>(path: string, name: string, body?: unknown): Promise<T> {

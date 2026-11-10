@@ -157,7 +157,6 @@ describe('three-piece group interaction', () => {
       {
         connection: 'disconnected',
         recoveryView: {
-          snapshot: fixture.snapshot as CurrentGame['snapshot'],
           turn: turn!,
           actions: [action],
         },
@@ -191,7 +190,7 @@ describe('three-piece group interaction', () => {
       board.move(pointer(30, 50))
       expect(board.pending.current).not.toBeNull()
       const old = mock.state as LiveGameState
-      const view = { snapshot: old.game!.snapshot, turn: turn!, actions: [action] }
+      const view = { turn: turn!, actions: [action] }
       const emit = (next: LiveGameState) => {
         mock.state = next
         mock.listener?.(next)
