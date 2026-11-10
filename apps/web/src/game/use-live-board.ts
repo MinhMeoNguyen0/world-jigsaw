@@ -300,6 +300,7 @@ export function useLiveBoard() {
       return
     }
     if (!now.game?.ownTurn) return
+    const recovering = p.waitingForTurn
     if (p.waitingForTurn && !p.openingTurn) {
       if (!p.initialTurn || !sameTurn(now.game.ownTurn, p.initialTurn) || !client.provenDraft())
         return
@@ -318,6 +319,24 @@ export function useLiveBoard() {
       }
       p.waitingForTurn = false
       if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
+    if (recovering && !p.interrupted && p.sent) {
+      const accepted = client
+        .provenDraft()
+        ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
+      const members = (action: Action) =>
+        action.affectedPieceIds
+          .map((id) => id.toLowerCase())
+          .sort()
+          .join(',')
+      if (
+        !accepted ||
+        accepted.intendedTransform.rotation !== p.action.intendedTransform.rotation ||
+        accepted.intendedTransform.translation.x !== p.action.intendedTransform.translation.x ||
+        accepted.intendedTransform.translation.y !== p.action.intendedTransform.translation.y ||
+        members(accepted) !== members(p.action)
+      )
+        p.sent = ''
     }
     if (p.interrupted) {
       if (p.undoStarted && !p.restoring) {
@@ -346,7 +365,9 @@ export function useLiveBoard() {
       }
       const draft = client.provenDraft()
       if (!draft || p.restoring) return
-      const current = draft.find((action) => action.actionId === p.action.actionId)
+      const current = draft.find(
+        (action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase(),
+      )
       if (!current) {
         pending.current = null
         setGhost(null)
@@ -399,7 +420,7 @@ export function useLiveBoard() {
     }
     const acceptedByServer = client
       .provenDraft()
-      ?.find((action) => action.actionId === p.action.actionId)
+      ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
     if (!now.issue && acceptedByServer) {
       if (!p.active) {
         setAccepted(true)

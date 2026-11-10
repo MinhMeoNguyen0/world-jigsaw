@@ -125,7 +125,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   mock.actions = []
-  mock.preview.mockClear()
+  mock.preview.mockReset()
   mock.sendCursor.mockClear()
   mock.recover.mockClear()
   mock.undo.mockReset()
@@ -211,6 +211,80 @@ describe('three-piece group interaction', () => {
           },
         },
       })
+      cleanup?.()
+    },
+  )
+
+  it.each([
+    ['existing', 'held', 'unchanged'],
+    ['existing', 'held', 'accepted'],
+    ['opening', 'held', 'unchanged'],
+    ['opening', 'held', 'accepted'],
+    ['existing', 'released', 'unchanged'],
+    ['existing', 'released', 'accepted'],
+    ['opening', 'released', 'unchanged'],
+    ['opening', 'released', 'accepted'],
+  ] as const)(
+    'reconciles a %s-turn %s preview when recovery is %s',
+    async (kind, lifecycle, outcome) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      mock.actions = kind === 'existing' ? [action] : []
+      const { board, group } = setup({ ownTurn: kind === 'existing' ? turn : null })
+      vi.stubGlobal('sessionStorage', {
+        getItem: () => null,
+        removeItem: vi.fn(),
+        setItem: vi.fn(),
+      })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      const emit = (next: LiveGameState) => {
+        mock.state = next
+        mock.listener?.(next)
+      }
+      mock.preview.mockImplementation(() => {
+        mock.state = { ...(mock.state as LiveGameState), previewPending: true }
+      })
+      const ready = { ...old, game: { ...old.game!, ownTurn: turn } }
+      if (kind === 'opening')
+        mock.begin.mockImplementation(() => {
+          emit(ready)
+          return Promise.resolve(turn)
+        })
+      const target = kind === 'existing' ? joined : group
+      board.down(pointer(10, 20), target)
+      board.move(pointer(30, 50))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(mock.preview).toHaveBeenCalledOnce()
+      const initial = mock.preview.mock.calls[0][0] as Action
+      if (lifecycle === 'released') {
+        board.move(pointer(40, 60))
+        board.up()
+        mock.actions = [initial]
+        emit({ ...ready, previewPending: false })
+        await Promise.resolve()
+        expect(mock.preview).toHaveBeenCalledTimes(2)
+      }
+      const sent = mock.preview.mock.calls.at(-1)?.[0] as Action
+      mock.preview.mockClear()
+      emit({ ...ready, connection: 'resyncing' })
+      mock.actions =
+        outcome === 'accepted'
+          ? [sent]
+          : lifecycle === 'released'
+            ? [initial]
+            : kind === 'existing'
+              ? [action]
+              : []
+      emit({ ...ready, previewPending: false })
+      await Promise.resolve()
+      if (outcome === 'unchanged') {
+        expect(mock.preview).toHaveBeenCalledOnce()
+        expect(mock.preview.mock.calls[0][0]).toEqual(sent)
+      } else expect(mock.preview).not.toHaveBeenCalled()
+      if (lifecycle === 'released' && outcome === 'accepted')
+        expect(board.pending.current).toBeNull()
+      else expect(board.pending.current?.active).toBe(lifecycle === 'held')
       cleanup?.()
     },
   )
