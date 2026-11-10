@@ -876,6 +876,39 @@ describe('versioned subscription and preview receipts', () => {
     expect(h.client.provenDraft()).toBeNull()
   })
 
+  it.each(['before disconnect', 'after disconnect'] as const)(
+    'keeps a server-authored join uncertain when recovery starts %s',
+    async (timing) => {
+      const h = harness()
+      h.setGame({ ...current, ownTurn: turn })
+      const socket = await h.start()
+      socket.emit(handoff())
+      const submitted = {
+        ...joined,
+        intendedTransform: {
+          ...joined.intendedTransform,
+          translation: {
+            ...joined.intendedTransform.translation,
+            x: joined.intendedTransform.translation.x + 1,
+          },
+        },
+      }
+      const serverJoin = { ...joined, targetId: mergedGroup.groupId }
+      h.client.preview(submitted)
+      if (timing === 'before disconnect') h.client.recoverInterruptedPreview()
+      socket.drop()
+      if (timing === 'after disconnect') h.client.recoverInterruptedPreview()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit(handoff([serverJoin], 1))
+      expect(h.client.getState().connection).toBe('ready')
+      expect(h.client.provenDraft()).toBeNull()
+      expect(() => h.client.preview(submitted)).toThrow('not ready')
+      await expect(h.client.confirm()).rejects.toThrow('not ready')
+    },
+  )
+
   it('keeps the joined view throughout a board change until the atomic handoff', async () => {
     const { h, socket } = await acceptedJoined()
     const changedGroup = fixture.boardChanged.groups[0] as
