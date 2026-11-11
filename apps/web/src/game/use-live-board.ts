@@ -740,7 +740,6 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
-    if (!canMove(group)) return
     const piece = pieceMap.get(group.pieceIds[0].toLowerCase())
     if (!piece) return
     const current = pending.current
@@ -770,6 +769,7 @@ export function useLiveBoard() {
       flush()
       return
     }
+    if (!canMove(group)) return
     const center = transformed(
       {
         x: piece.solvedPosition.x + piece.referencePoint.x,
