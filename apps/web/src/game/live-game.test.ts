@@ -222,7 +222,9 @@ describe('live game adapter', () => {
       h.setBeginReply(response.promise)
       const opening = h.client.begin()
       socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
-      await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(2)
+      })
       const older = socketAt(h.sockets, 1)
       older.open()
       const delayedHandler = older.onmessage
@@ -249,7 +251,9 @@ describe('live game adapter', () => {
           new MessageEvent('message', { data: JSON.stringify(stale) }),
         )
       expect(h.client.getState().connection).not.toBe('ready')
-      await vi.waitFor(() => expect(h.sockets).toHaveLength(3))
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(3)
+      })
       const fresh = socketAt(h.sockets, 2)
       fresh.open()
       handoff(fresh, outcome === 'open' ? turn : null)
@@ -720,7 +724,9 @@ describe('versioned subscription and preview receipts', () => {
         await h.client.cancel()
       } else socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
       expect(h.client.getState().turnBase).toBeNull()
-      await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(2)
+      })
       const next = socketAt(h.sockets, 1)
       next.open()
       next.emit({
@@ -806,7 +812,9 @@ describe('versioned subscription and preview receipts', () => {
         }
         h.setGame({ ...current, snapshot, ownTurn: turn })
         socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
-        await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
       }
       const state = h.client.getState()
       expect(state.recoveryView?.actions).toEqual([joined])
@@ -1077,7 +1085,9 @@ describe('versioned subscription and preview receipts', () => {
       next.emit(handoff([serverJoin], 1))
       expect(h.client.getState().connection).toBe('ready')
       expect(h.client.provenDraft()).toBeNull()
-      expect(() => h.client.preview(submitted)).toThrow('not ready')
+      expect(() => {
+        h.client.preview(submitted)
+      }).toThrow('not ready')
       await expect(h.client.confirm()).rejects.toThrow('not ready')
     },
   )

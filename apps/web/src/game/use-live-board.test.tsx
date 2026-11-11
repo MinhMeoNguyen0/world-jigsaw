@@ -103,10 +103,7 @@ function setup(override?: Partial<CurrentGame>, stateOverride?: Partial<LiveGame
   mock.state = {
     connection: 'ready',
     game,
-    turnBase:
-      game.ownTurn && game.ownTurn.boardVersion === game.snapshot.boardVersion
-        ? game.snapshot
-        : null,
+    turnBase: game.ownTurn?.boardVersion === game.snapshot.boardVersion ? game.snapshot : null,
     previews: {},
     peerRecoveryViews: {},
     cursors: {},
