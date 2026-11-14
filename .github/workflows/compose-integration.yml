@@ -1,0 +1,88 @@
+name: Compose integration
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: wj-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      WORLD_JIGSAW_TEST_ORIGIN: http://127.0.0.1:8088
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record tested revision
+        run: git rev-parse HEAD
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @world-jigsaw/web exec playwright install --with-deps chromium
+      - name: Build and start isolated stack
+        run: |
+          docker compose -f deploy/local/compose.yml build
+          docker compose -f deploy/local/compose.yml up -d --no-build --wait --wait-timeout 180
+      - name: Import disposable regression fixture
+        run: |
+          docker compose -f deploy/local/compose.yml stop game
+          docker compose -f deploy/local/compose.yml run -d --no-deps --name "$COMPOSE_PROJECT_NAME-import" \
+            -v "$GITHUB_WORKSPACE/packages/generator/fixtures/hoi-an-expanded-60.json:/tmp/fixture.json:ro" \
+            game "--game-import-day=$(date -u +%F)" --game-import-file=/tmp/fixture.json
+          for i in $(seq 1 90); do
+            if curl -fsS "$WORLD_JIGSAW_TEST_ORIGIN/api/v1/game/current" > "$RUNNER_TEMP/import.json"; then
+              node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync(process.argv[1]));const b=JSON.parse(fs.readFileSync(process.argv[2]));if(a.snapshot.puzzleId!==b.snapshot.puzzleId || a.snapshot.boardVersion!==0) process.exit(1)' \
+                "$RUNNER_TEMP/import.json" packages/generator/fixtures/hoi-an-expanded-60.json
+              docker stop "$COMPOSE_PROJECT_NAME-import"
+              docker compose -f deploy/local/compose.yml up -d --no-build --wait --wait-timeout 180 game chat
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' "$COMPOSE_PROJECT_NAME-import")" != true ]; then
+              docker logs "$COMPOSE_PROJECT_NAME-import"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo 'Fixture import did not become available' >&2
+          exit 1
+      - name: Exercise two clients, confirmation and chat
+        run: pnpm --filter @world-jigsaw/web test:integration
+      - name: Check persistence and chat outage isolation
+        run: |
+          curl -fsS "$WORLD_JIGSAW_TEST_ORIGIN/api/v1/game/current" > "$RUNNER_TEMP/before.json"
+          docker compose -f deploy/local/compose.yml stop chat
+          curl -fsS "$WORLD_JIGSAW_TEST_ORIGIN/api/v1/game/current" > "$RUNNER_TEMP/chat-down.json"
+          docker compose -f deploy/local/compose.yml restart game
+          docker compose -f deploy/local/compose.yml up -d --no-build --wait --wait-timeout 180 game chat
+          curl -fsS "$WORLD_JIGSAW_TEST_ORIGIN/api/v1/game/current" > "$RUNNER_TEMP/after.json"
+          node -e 'const fs=require("fs");const [a,b,c]=process.argv.slice(1).map(p=>JSON.parse(fs.readFileSync(p)));for(const x of [b,c]) if(JSON.stringify(a.snapshot)!==JSON.stringify(x.snapshot)) throw Error("Game state changed across outage or restart")' \
+            "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/chat-down.json" "$RUNNER_TEMP/after.json"
+      - name: Capture diagnostics
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/compose-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/compose-evidence/revision.txt"
+          docker compose -f deploy/local/compose.yml ps -a > "$RUNNER_TEMP/compose-evidence/ps.txt" || true
+          docker compose -f deploy/local/compose.yml logs --no-color > "$RUNNER_TEMP/compose-evidence/compose.log" 2>&1 || true
+          docker logs "$COMPOSE_PROJECT_NAME-import" > "$RUNNER_TEMP/compose-evidence/import.log" 2>&1 || true
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compose-integration-evidence
+          path: ${{ runner.temp }}/compose-evidence/
+          retention-days: 7
+      - name: Remove disposable runner resources
+        if: always()
+        run: |
+          docker rm -f "$COMPOSE_PROJECT_NAME-import" 2>/dev/null || true
+          docker compose -f deploy/local/compose.yml down -v --remove-orphans
