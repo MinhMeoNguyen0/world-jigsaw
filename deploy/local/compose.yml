@@ -6,9 +6,9 @@ services:
       context: ../..
       dockerfile: deploy/local/web.Dockerfile
     ports:
-      - "127.0.0.1:8088:80"
+      - '127.0.0.1:8088:80'
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/']
       interval: 10s
       timeout: 3s
       retries: 5
@@ -19,7 +19,7 @@ services:
       dockerfile: deploy/local/game.Dockerfile
     # The app services share loopback with the gateway, preserving the existing
     # loopback-only identity and origin boundary. Only the gateway publishes a port.
-    network_mode: "service:web"
+    network_mode: 'service:web'
     depends_on:
       web:
         condition: service_started
@@ -32,7 +32,7 @@ services:
     volumes:
       - writer-lock:/work
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/actuator/health"]
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8080/actuator/health']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -42,7 +42,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/local/chat.Dockerfile
-    network_mode: "service:web"
+    network_mode: 'service:web'
     depends_on:
       web:
         condition: service_started
@@ -55,7 +55,7 @@ services:
       CHAT_DATABASE_USER: worldjigsaw_chat
       CHAT_DATABASE_PASSWORD: worldjigsaw_chat
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/actuator/health"]
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8081/actuator/health']
       interval: 10s
       timeout: 5s
       retries: 12
@@ -70,7 +70,7 @@ services:
     volumes:
       - game-db-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U worldjigsaw -d worldjigsaw"]
+      test: ['CMD-SHELL', 'pg_isready -U worldjigsaw -d worldjigsaw']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -84,7 +84,7 @@ services:
     volumes:
       - chat-db-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U worldjigsaw_chat -d worldjigsaw_chat"]
+      test: ['CMD-SHELL', 'pg_isready -U worldjigsaw_chat -d worldjigsaw_chat']
       interval: 5s
       timeout: 5s
       retries: 10
