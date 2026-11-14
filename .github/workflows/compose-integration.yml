@@ -64,7 +64,7 @@ jobs:
           docker compose -f deploy/local/compose.yml restart game
           docker compose -f deploy/local/compose.yml up -d --no-build --wait --wait-timeout 180 game chat
           curl -fsS "$WORLD_JIGSAW_TEST_ORIGIN/api/v1/game/current" > "$RUNNER_TEMP/after.json"
-          node -e 'const fs=require("fs");const [a,b,c]=process.argv.slice(1).map(p=>JSON.parse(fs.readFileSync(p)));for(const x of [b,c]) if(JSON.stringify(a.snapshot)!==JSON.stringify(x.snapshot)) throw Error("Game state changed across outage or restart")' \
+          node -e 'const fs=require("fs");const assert=require("node:assert/strict");const [a,b,c]=process.argv.slice(1).map(p=>JSON.parse(fs.readFileSync(p)));for(const x of [b,c]) assert.deepStrictEqual(a.snapshot,x.snapshot,"Game state changed across outage or restart")' \
             "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/chat-down.json" "$RUNNER_TEMP/after.json"
       - name: Capture diagnostics
         if: always()
