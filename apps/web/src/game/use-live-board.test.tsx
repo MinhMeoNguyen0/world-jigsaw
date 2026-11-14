@@ -904,7 +904,7 @@ describe('three-piece group interaction', () => {
   it('rotates an authorized held drag while move availability is loading', () => {
     const availability = vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
     const { board, group } = setup()
-    mock.begin.mockReturnValue(new Promise(() => {}))
+    mock.begin.mockReturnValue(new Promise(vi.fn()))
 
     board.down(pointer(10, 20), group)
     board.move(pointer(30, 50))
@@ -912,7 +912,9 @@ describe('three-piece group interaction', () => {
     availability.mockReturnValue(false)
     board.rotate(group)
 
-    expect(board.pending.current?.desired.rotation).toBe((group.transform.rotation + 90000) % 360000)
+    expect(board.pending.current?.desired.rotation).toBe(
+      (group.transform.rotation + 90000) % 360000,
+    )
   })
 
   it('keeps a held first drag at its latest position through the handoff', async () => {
