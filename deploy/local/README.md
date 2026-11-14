@@ -19,16 +19,7 @@ published ports. Docker Desktop's dashboard should show the project and its five
 started. On Docker Desktop, the engine and volumes are managed in its Linux VM; on native Linux
 they are managed by the local Docker engine. Docker Desktop must be running before these commands.
 
-```text
-Browser on this computer
-        | 127.0.0.1:8088
-        v
-Web / gateway ---- loopback ---- game ---- game-db ---- game-db-data volume
-        |                         |  ^
-        |                writer-lock | session identity
-        +------ loopback ---- chat --+---- chat-db ---- chat-db-data volume
-```
-
+See the [infrastructure overview](../../README.md#local-infrastructure) for the stack diagram.
 The web, game and chat containers share a network namespace, while the databases are reached by
 service name on the Compose network. The writer-lock volume belongs to the game, not chat. This
 topology is for one computer: it does not support distributing the services across three computers
