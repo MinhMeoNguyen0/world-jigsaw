@@ -23,6 +23,22 @@ test('held drag uses only a neighbor unchanged since the turn base', async ({
   const peer = await peerContext.newPage()
   const events = []
   const receipts = []
+  await page.addInitScript(() => {
+    window.pointerEvidence = []
+    for (const type of ['pointerdown', 'pointerup', 'pointercancel']) {
+      document.addEventListener(
+        type,
+        (event) =>
+          window.pointerEvidence.push({
+            type,
+            at: performance.now(),
+            trusted: event.isTrusted,
+            buttons: event.buttons,
+          }),
+        true,
+      )
+    }
+  })
   await page.routeWebSocket(/.*/, (route) => {
     const server = route.connectToServer()
     server.onMessage((message) => {
@@ -123,6 +139,16 @@ test('held drag uses only a neighbor unchanged since the turn base', async ({
       afterNeighbor,
       boardVersion: after.snapshot.boardVersion,
     })
+    const held = await page.evaluate(() => window.pointerEvidence)
+    events.push({ at: Date.now(), marker: 'pointer evidence before release', held })
+    const lastDown = held.findLastIndex((event) => event.type === 'pointerdown')
+    expect(lastDown).toBeGreaterThanOrEqual(0)
+    expect(held[lastDown].trusted).toBe(true)
+    expect(
+      held
+        .slice(lastDown + 1)
+        .filter((event) => ['pointerup', 'pointercancel'].includes(event.type)),
+    ).toEqual([])
     const count = receipts.length
     await page.mouse.up()
     await expect.poll(() => receipts.length, { timeout: 20000 }).toBeGreaterThan(count)
@@ -133,6 +159,18 @@ test('held drag uses only a neighbor unchanged since the turn base', async ({
     expect(action).toBeTruthy()
     if (scenario === 'changed-neighbor') expect(action.affectedPieceIds).not.toContain(neighbor)
     else expect(action.affectedPieceIds).toContain(neighbor)
+    const previewContains = (p) =>
+      p
+        .locator('[data-preview-piece-ids]')
+        .evaluateAll(
+          (elements, ids) =>
+            elements.some((e) =>
+              ids.every((id) => e.dataset.previewPieceIds.split(',').includes(id)),
+            ),
+          action.affectedPieceIds,
+        )
+    await expect.poll(() => previewContains(page), { timeout: 20000 }).toBe(true)
+    await expect.poll(() => previewContains(peer), { timeout: 20000 }).toBe(true)
     const ownerGeometry = await page
       .locator('[data-piece-ids], [data-preview-piece-ids], [data-local-ghost]')
       .evaluateAll((elements) =>
