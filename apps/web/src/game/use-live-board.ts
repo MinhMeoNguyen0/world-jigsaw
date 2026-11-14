@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/restrict-template-expressions */
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { LiveGame, type LiveGameState } from '../game/live-game.ts'
 import { t } from '../i18n/translate.ts'
 import { suggestJoin } from '../game/join.ts'
@@ -12,6 +12,7 @@ import type {
   Group,
   Piece,
   Transform,
+  Turn,
 } from '@world-jigsaw/contracts'
 
 interface Point {
@@ -30,12 +31,58 @@ interface Pending {
   active: boolean
   moved: boolean
   acquiring: boolean
+  openingTurn: boolean
+  openedTurn: Turn | null
+  waitingForTurn: boolean
+  initialTurn: Turn | null
+  puzzleId: string
   finalPrepared: boolean
   interrupted: boolean
   restoring: boolean
   undoStarted: boolean
   original: Action | null
 }
+const sameTurn = (a: Turn, b: Turn) =>
+  a.turnId.toLowerCase() === b.turnId.toLowerCase() &&
+  a.puzzleId.toLowerCase() === b.puzzleId.toLowerCase() &&
+  a.generation === b.generation &&
+  a.turnRevision === b.turnRevision
+const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+const sameMembers = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((id) => b.some((other) => sameId(id, other)))
+
+function pendingStillValid(p: Pending, game: NonNullable<LiveGameState['game']>, draft: Action[]) {
+  const accepted = draft.find((action) => sameId(action.actionId, p.action.actionId))
+  if (accepted) {
+    const members = p.original?.affectedPieceIds ?? p.group.pieceIds
+    const revisions = p.original?.baseRevisions ?? [
+      { groupId: p.group.groupId, revision: p.group.revision },
+    ]
+    return (
+      members.every((id) => accepted.affectedPieceIds.some((member) => sameId(id, member))) &&
+      revisions.every((base) =>
+        accepted.baseRevisions.some(
+          (revision) =>
+            sameId(base.groupId, revision.groupId) && base.revision === revision.revision,
+        ),
+      )
+    )
+  }
+  if (p.original) return false
+  const group = game.snapshot.groups.find((item) => sameId(item.groupId, p.group.groupId))
+  return (
+    group?.revision === p.group.revision &&
+    group.finalPosition === p.group.finalPosition &&
+    sameMembers(group.pieceIds, p.group.pieceIds) &&
+    group.transform.rotation === p.group.transform.rotation &&
+    group.transform.translation.x === p.group.transform.translation.x &&
+    group.transform.translation.y === p.group.transform.translation.y &&
+    !draft.some((action) =>
+      action.affectedPieceIds.some((id) => p.group.pieceIds.some((member) => sameId(id, member))),
+    )
+  )
+}
+
 export function outline(piece: Piece): string {
   const base = piece.solvedPosition,
     first = piece.edges[0]
@@ -217,13 +264,20 @@ export function useLiveBoard() {
       !turnId ? [] : (currentSummary?.movementCosts ?? null),
     )
   const summaryUnavailable = state.connection === 'ready' && summaryFailure === summaryKey
-  const previews = Object.values(state.previews).flatMap((turn) =>
-    turn.closed ? [] : Object.values(turn.actions),
-  )
+  const previews = [
+    ...Object.values(state.previews).flatMap((turn) =>
+      turn.closed || turn.turnId.toLowerCase() === state.recoveryView?.turn.turnId.toLowerCase()
+        ? []
+        : Object.values(turn.actions),
+    ),
+    ...(state.recoveryView?.actions ?? []),
+    ...Object.values(state.peerRecoveryViews).flatMap((view) => view.actions),
+  ]
   const previewOwners = new Map<string, string>()
   for (const action of previews)
     for (const id of action.affectedPieceIds) previewOwners.set(id.toLowerCase(), action.actionId)
-  const ghostIds = new Set(ghost?.ids.map((id) => id.toLowerCase()) ?? [])
+  const visibleGhost = state.connection === 'ready' && !state.recoveryView ? ghost : null
+  const ghostIds = new Set(visibleGhost?.ids.map((id) => id.toLowerCase()) ?? [])
   const previewed = new Set([...previewOwners.keys(), ...ghostIds])
   const pieceMap = new Map(
     (game?.definition.pieces ?? []).map((piece) => [piece.pieceId.toLowerCase(), piece]),
@@ -276,26 +330,105 @@ export function useLiveBoard() {
     const p = new DOMPoint(x, y).matrixTransform(m.inverse())
     return { x: p.x, y: p.y }
   }
+  const discardPending = useCallback(() => {
+    if (pending.current) client.abandonInterruptedPreview()
+    pending.current = null
+  }, [client])
   const flush = () => {
     const p = pending.current,
       now = client.getState()
-    if (!p || !p.moved || now.connection !== 'ready' || !now.game?.ownTurn || now.previewPending)
+    if (!p || !p.moved || now.connection !== 'ready' || now.previewPending) return
+    if (!p.acquiring) {
+      begin(p)
       return
+    }
+    if (!now.game?.ownTurn) return
+    const recovering = p.waitingForTurn
+    if (p.waitingForTurn && !p.openingTurn) {
+      if (!p.initialTurn || !sameTurn(now.game.ownTurn, p.initialTurn) || !client.provenDraft())
+        return
+      p.waitingForTurn = false
+      if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
+    if (p.openingTurn) {
+      if (!p.openedTurn) return
+      const turn = now.game.ownTurn
+      if (!sameTurn(turn, p.openedTurn) || client.provenDraft() === null) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+        return
+      }
+      p.waitingForTurn = false
+      if (!p.interrupted) setGhost({ ids: p.action.affectedPieceIds, transform: p.desired })
+    }
+    if (recovering && !p.interrupted && p.finalPrepared) {
+      const accepted = client
+        .provenDraft()
+        ?.find((action) => sameId(action.actionId, p.action.actionId))
+      const finalAccepted =
+        accepted &&
+        sameMembers(accepted.affectedPieceIds, p.action.affectedPieceIds) &&
+        accepted.baseRevisions.length === p.action.baseRevisions.length &&
+        p.action.baseRevisions.every((base) =>
+          accepted.baseRevisions.some(
+            (revision) =>
+              sameId(base.groupId, revision.groupId) && base.revision === revision.revision,
+          ),
+        ) &&
+        accepted.intendedTransform.rotation === p.action.intendedTransform.rotation &&
+        accepted.intendedTransform.translation.x === p.action.intendedTransform.translation.x &&
+        accepted.intendedTransform.translation.y === p.action.intendedTransform.translation.y
+      if (!finalAccepted && !sameId(client.recoveredPreviewActionId() ?? '', p.action.actionId)) {
+        p.action = accepted ?? {
+          ...p.action,
+          affectedPieceIds: p.group.pieceIds,
+          baseRevisions: [{ groupId: p.group.groupId, revision: p.group.revision }],
+        }
+        p.finalPrepared = false
+        p.sent = ''
+      }
+    }
+    if (
+      recovering &&
+      !p.interrupted &&
+      p.sent &&
+      !(p.sentFor === 'final' && client.recoveredPreviewActionId() === p.action.actionId)
+    ) {
+      const accepted = client
+        .provenDraft()
+        ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
+      const members = (action: Action) =>
+        action.affectedPieceIds
+          .map((id) => id.toLowerCase())
+          .sort()
+          .join(',')
+      if (
+        accepted?.intendedTransform.rotation !== p.action.intendedTransform.rotation ||
+        accepted.intendedTransform.translation.x !== p.action.intendedTransform.translation.x ||
+        accepted.intendedTransform.translation.y !== p.action.intendedTransform.translation.y ||
+        members(accepted) !== members(p.action)
+      )
+        p.sent = ''
+    }
     if (p.interrupted) {
       if (p.undoStarted && !p.restoring) {
         p.restoring = true
         void client
           .undo(p.action.actionId)
           .then(() => {
-            pending.current = null
+            if (pending.current !== p) return
+            discardPending()
             setGhost(null)
             setDragging(false)
             setSelected(null)
           })
           .catch((e: unknown) => {
+            if (pending.current !== p) return
             p.restoring = false
-            if (client.pendingUndoActionId() === null && pending.current === p) {
-              pending.current = null
+            if (client.pendingUndoActionId() === null) {
+              discardPending()
               setGhost(null)
               setDragging(false)
               setSelected(null)
@@ -306,9 +439,11 @@ export function useLiveBoard() {
       }
       const draft = client.provenDraft()
       if (!draft || p.restoring) return
-      const current = draft.find((action) => action.actionId === p.action.actionId)
+      const current = draft.find(
+        (action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase(),
+      )
       if (!current) {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
       } else if (!p.original) {
@@ -327,7 +462,7 @@ export function useLiveBoard() {
           setError(String(e))
         }
       } else {
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
         setSelected(null)
@@ -335,12 +470,25 @@ export function useLiveBoard() {
       return
     }
     if (!p.active && !p.finalPrepared) {
+      const base = now.turnBase
+      const candidates = now.game.snapshot.groups.filter((group) => {
+        const original = base?.groups.find((item) => sameId(item.groupId, group.groupId))
+        return (
+          original?.revision === group.revision &&
+          original.finalPosition === group.finalPosition &&
+          sameMembers(original.pieceIds, group.pieceIds) &&
+          original.transform.rotation === group.transform.rotation &&
+          original.transform.translation.x === group.transform.translation.x &&
+          original.transform.translation.y === group.transform.translation.y
+        )
+      })
       p.action = suggestJoin(
         now.game,
         now.previews,
         p.action,
         p.desired,
         client.provenDraft() ?? [],
+        candidates,
       )
       p.finalPrepared = true
     }
@@ -359,7 +507,7 @@ export function useLiveBoard() {
     }
     const acceptedByServer = client
       .provenDraft()
-      ?.find((action) => action.actionId === p.action.actionId)
+      ?.find((action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase())
     if (!now.issue && acceptedByServer) {
       if (!p.active) {
         setAccepted(true)
@@ -372,52 +520,79 @@ export function useLiveBoard() {
         })
         setGhost(null)
         setDragging(false)
-        pending.current = null
+        discardPending()
       }
     }
   }
   const begin = (p: Pending) => {
-    if (p.acquiring) return
+    if (p.acquiring || client.getState().connection !== 'ready') return
     p.acquiring = true
     void client
       .begin()
-      .then(() => {
-        flush()
+      .then((turn) => {
+        if (pending.current === p) {
+          if (p.openingTurn) p.openedTurn = turn
+          if (
+            p.openingTurn &&
+            client.getState().connection === 'ready' &&
+            !client.getState().game?.ownTurn
+          ) {
+            discardPending()
+            setGhost(null)
+            setDragging(false)
+            setSelected(null)
+            return
+          }
+          flush()
+        }
       })
       .catch((e: unknown) => {
+        if (pending.current !== p) return
         setError(String(e))
-        pending.current = null
+        discardPending()
         setGhost(null)
         setDragging(false)
       })
   }
-  const makePending = (group: Group, start: Point): Pending => ({
-    group,
-    start,
-    origin: structuredClone(group.transform),
-    desired: structuredClone(group.transform),
-    sent: '',
-    sentFor: 'active',
-    active: true,
-    moved: false,
-    acquiring: false,
-    finalPrepared: false,
-    interrupted: false,
-    restoring: false,
-    undoStarted: false,
-    original:
-      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
-      null,
-    action:
-      actions.find((action) => action.affectedPieceIds.some((id) => group.pieceIds.includes(id))) ??
-      client.newAction({
-        kind: group.pieceIds.length > 1 ? 'group' : 'piece',
-        targetId: group.pieceIds.length > 1 ? group.groupId : group.pieceIds[0],
-        affectedPieceIds: group.pieceIds,
-        baseRevisions: [{ groupId: group.groupId, revision: group.revision }],
-        intendedTransform: group.transform,
-      }),
-  })
+  const makePending = (group: Group, start: Point): Pending => {
+    const currentGame = client.getState().game
+    if (!currentGame) throw new Error('Game is not synchronized')
+    return {
+      group,
+      start,
+      origin: structuredClone(group.transform),
+      desired: structuredClone(group.transform),
+      sent: '',
+      sentFor: 'active',
+      active: true,
+      moved: false,
+      acquiring: false,
+      openingTurn: !currentGame.ownTurn,
+      openedTurn: null,
+      waitingForTurn: false,
+      initialTurn: currentGame.ownTurn,
+      puzzleId: currentGame.snapshot.puzzleId,
+      finalPrepared: false,
+      interrupted: false,
+      restoring: false,
+      undoStarted: false,
+      original:
+        actions.find((action) =>
+          action.affectedPieceIds.some((id) => group.pieceIds.includes(id)),
+        ) ?? null,
+      action:
+        actions.find((action) =>
+          action.affectedPieceIds.some((id) => group.pieceIds.includes(id)),
+        ) ??
+        client.newAction({
+          kind: group.pieceIds.length > 1 ? 'group' : 'piece',
+          targetId: group.pieceIds.length > 1 ? group.groupId : group.pieceIds[0],
+          affectedPieceIds: group.pieceIds,
+          baseRevisions: [{ groupId: group.groupId, revision: group.revision }],
+          intendedTransform: group.transform,
+        }),
+    }
+  }
   const down = (event: PointerEvent<SVGElement>, group: Group) => {
     if (
       event.button !== 0 ||
@@ -445,6 +620,23 @@ export function useLiveBoard() {
     setSelected(group)
     setError(null)
     setDragging(true)
+  }
+  const updateDragPosition = (d: Pending, p: Point, x: number, y: number) => {
+    const dx = p.x - d.start.x,
+      dy = p.y - d.start.y
+    if (!d.moved && d.startScreen && Math.hypot(x - d.startScreen.x, y - d.startScreen.y) < 5)
+      return false
+    d.moved = true
+    d.desired = {
+      ...d.origin,
+      translation: {
+        x: Math.round(d.origin.translation.x + dx),
+        y: Math.round(d.origin.translation.y + dy),
+      },
+    }
+    if (client.getState().connection === 'ready' && !d.waitingForTurn)
+      setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
+    return true
   }
   const move = (event: PointerEvent<SVGSVGElement>) => {
     const cursorPoint = point(event.clientX, event.clientY)
@@ -487,39 +679,28 @@ export function useLiveBoard() {
       return
     }
     const d = pending.current
-    if (!d?.active) return
-    const p = point(event.clientX, event.clientY)
+    const connection = client.getState().connection
+    if (!d?.active || connection === 'disconnected') return
+    const p = cursorPoint ?? point(event.clientX, event.clientY)
     if (!p) return
-    const dx = p.x - d.start.x,
-      dy = p.y - d.start.y
-    if (
-      !d.moved &&
-      d.startScreen &&
-      Math.hypot(event.clientX - d.startScreen.x, event.clientY - d.startScreen.y) < 5
-    )
-      return
-    d.moved = true
+    if (!updateDragPosition(d, p, event.clientX, event.clientY)) return
     setAccepted(false)
-    d.desired = {
-      ...d.origin,
-      translation: {
-        x: Math.round(d.origin.translation.x + dx),
-        y: Math.round(d.origin.translation.y + dy),
-      },
-    }
-    setGhost({ ids: d.action.affectedPieceIds, transform: d.desired })
     begin(d)
     flush()
   }
-  const up = () => {
+  const up = (event?: PointerEvent<SVGSVGElement>) => {
     if (pan.current) {
       pan.current = null
       return
     }
     const d = pending.current
     if (!d) return
+    if (event && d.active) {
+      const p = point(event.clientX, event.clientY)
+      if (p) updateDragPosition(d, p, event.clientX, event.clientY)
+    }
     if (!d.moved) {
-      pending.current = null
+      discardPending()
       setDragging(false)
       return
     }
@@ -533,12 +714,12 @@ export function useLiveBoard() {
       return
     }
     const d = pending.current
-    if (!d) return
+    if (!d?.active) return
     setAccepted(false)
     setSelected(null)
     setError(t('probe.interrupted'))
-    if (!d.moved) {
-      pending.current = null
+    if (!d.moved || !d.acquiring) {
+      discardPending()
       setGhost(null)
       setDragging(false)
       return
@@ -551,6 +732,7 @@ export function useLiveBoard() {
   const rotate = (group: Group) => {
     if (
       state.connection !== 'ready' ||
+      client.getState().connection !== 'ready' ||
       state.pendingConfirm ||
       state.pendingShape ||
       state.unresolvedCommand ||
@@ -558,7 +740,6 @@ export function useLiveBoard() {
       (state.game?.ownTurn && proven === null)
     )
       return
-    if (!canMove(group)) return
     const piece = pieceMap.get(group.pieceIds[0].toLowerCase())
     if (!piece) return
     const current = pending.current
@@ -588,6 +769,7 @@ export function useLiveBoard() {
       flush()
       return
     }
+    if (!canMove(group)) return
     const center = transformed(
       {
         x: piece.solvedPosition.x + piece.referencePoint.x,
@@ -624,6 +806,73 @@ export function useLiveBoard() {
       })
     }
     const unsubscribe = client.subscribe((next) => {
+      const current = pending.current
+      const previousTurn = current?.initialTurn
+      const nextTurn = next.game?.ownTurn
+      if (current && next.connection !== 'ready') {
+        setGhost(null)
+        setSelected(null)
+        current.waitingForTurn = true
+        if (next.connection !== 'disconnected') {
+          client.recoverInterruptedPreview()
+        }
+        if (
+          next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          (current.interrupted &&
+            next.connection === 'disconnected' &&
+            stateRef.current.connection !== 'ready' &&
+            stateRef.current.connection !== 'disconnected') ||
+          (!current.interrupted && next.connection === 'disconnected')
+        ) {
+          discardPending()
+          setDragging(false)
+        }
+      } else if (
+        current &&
+        (next.game?.snapshot.puzzleId.toLowerCase() !== current.puzzleId.toLowerCase() ||
+          (!nextTurn && (!current.openingTurn || current.openedTurn)))
+      ) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (current && previousTurn && nextTurn && !sameTurn(previousTurn, nextTurn)) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (
+        current &&
+        current.waitingForTurn &&
+        !current.interrupted &&
+        next.game &&
+        (!nextTurn || client.provenDraft() !== null) &&
+        !pendingStillValid(current, next.game, nextTurn ? (client.provenDraft() ?? []) : [])
+      ) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      } else if (
+        current &&
+        current.waitingForTurn &&
+        !current.openingTurn &&
+        nextTurn &&
+        client.provenDraft() === null &&
+        (!current.interrupted || client.pendingUndoActionId() === null)
+      ) {
+        discardPending()
+        setGhost(null)
+        setDragging(false)
+        setSelected(null)
+      }
+      if (
+        pending.current?.openingTurn &&
+        pending.current.openedTurn &&
+        next.connection === 'ready' &&
+        nextTurn
+      )
+        pending.current.initialTurn = nextTurn
       if (next.connection === 'ready' && stateRef.current.connection !== 'ready')
         client.sendCursor(cursorPosition.current)
       if (next.pendingConfirm)
@@ -638,7 +887,7 @@ export function useLiveBoard() {
         if (current?.sentFor === 'active' && !current.interrupted) {
           if (!current.active) current.sent = ''
         } else {
-          pending.current = null
+          discardPending()
           setGhost(null)
           setDragging(false)
           setSelected(null)
@@ -648,7 +897,7 @@ export function useLiveBoard() {
       if (next.previewRejection && !stateRef.current.previewRejection) {
         const current = pending.current
         if (current && current.sentFor !== 'active') {
-          pending.current = null
+          discardPending()
           setGhost(null)
           setDragging(false)
           setSelected(null)
@@ -670,7 +919,7 @@ export function useLiveBoard() {
       unsubscribe()
       client.disconnect()
     }
-  }, [client])
+  }, [client, discardPending])
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (cursorPosition.current) client.sendCursor(cursorPosition.current)
@@ -700,7 +949,7 @@ export function useLiveBoard() {
       .cancel()
       .then(() => {
         setError(null)
-        pending.current = null
+        discardPending()
         setAccepted(false)
         setGhost(null)
         setDragging(false)
@@ -738,7 +987,7 @@ export function useLiveBoard() {
       .confirm()
       .then((result) => {
         if (result.outcome === 'confirmed' || result.outcome === 'rejected') {
-          pending.current = null
+          discardPending()
           setAccepted(false)
           setGhost(null)
           setDragging(false)
@@ -772,7 +1021,7 @@ export function useLiveBoard() {
     setOverlay,
     reference,
     setReference,
-    ghost,
+    ghost: visibleGhost,
     dragging,
     board,
     pending,

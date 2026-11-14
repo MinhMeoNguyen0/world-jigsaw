@@ -529,6 +529,12 @@ export function HomePage() {
           )}
         </div>
         <div className="feedback" aria-live="polite" role="status">
+          {(Boolean(state.recoveryView) || Object.keys(state.peerRecoveryViews).length > 0) && (
+            <>
+              {t('game.recoveryView')}
+              <br />
+            </>
+          )}
           {imageError && (
             <>
               {imageError}

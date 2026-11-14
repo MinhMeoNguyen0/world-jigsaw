@@ -59,8 +59,10 @@ function socketAt(sockets: TestSocket[], index: number) {
 function harness() {
   const sockets: TestSocket[] = []
   let game = structuredClone(current)
+  let beginReply: Promise<Response> | null = null
   let commandReply: Promise<Response> | null = null
   let undoReply: Promise<Response> | null = null
+  let cancelReply: Promise<Response> | null = null
   let shapeReply: Promise<Response> | null = null
   let currentUnavailable = false
   const calls: string[] = []
@@ -69,6 +71,10 @@ function harness() {
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     calls.push(path)
+    if (path === '/api/v1/game/turns') {
+      if (!beginReply) throw new Error('Missing begin response')
+      return beginReply
+    }
     if (path.endsWith('/shape')) {
       if (!shapeReply) throw new Error('Missing shape response')
       if (typeof init?.body !== 'string') throw new Error('Missing shape payload')
@@ -80,6 +86,10 @@ function harness() {
       if (typeof init?.body !== 'string') throw new Error('Missing undo payload')
       undoBodies.push(JSON.parse(init.body) as unknown)
       return undoReply
+    }
+    if (path.endsWith('/cancel')) {
+      if (!cancelReply) throw new Error('Missing cancel response')
+      return cancelReply
     }
     if (path.includes('/commands/') || path.endsWith('/confirm')) {
       if (!commandReply) throw new Error('Missing command response')
@@ -150,11 +160,17 @@ function harness() {
     setCurrentUnavailable: (value: boolean) => {
       currentUnavailable = value
     },
+    setBeginReply: (value: Promise<Response>) => {
+      beginReply = value
+    },
     setCommandReply: (value: Promise<Response>) => {
       commandReply = value
     },
     setUndoReply: (value: Promise<Response>) => {
       undoReply = value
+    },
+    setCancelReply: (value: Promise<Response>) => {
+      cancelReply = value
     },
     setShapeReply: (value: Promise<Response>) => {
       shapeReply = value
@@ -177,6 +193,75 @@ function confirmed() {
 }
 
 describe('live game adapter', () => {
+  it.each([
+    ['before', 'open'],
+    ['before', 'canceled'],
+    ['after', 'open'],
+    ['after', 'canceled'],
+  ] as const)(
+    'refreshes after begin when an older no-turn handoff arrives %s the response and the turn is %s',
+    async (order, outcome) => {
+      const h = harness()
+      const handoff = (socket: TestSocket, ownTurn: Turn | null) => {
+        socket.emit({
+          schemaVersion: 1,
+          type: 'subscribed.v2',
+          snapshot: current.snapshot,
+          watermark: current.snapshot.boardVersion,
+          previews: [],
+          allowance: current.allowance,
+          ownTurn,
+          actions: [],
+          nextSequence: 0,
+          draftRevision: ownTurn ? 0 : null,
+        })
+      }
+      const socket = await h.start()
+      handoff(socket, null)
+      const response = deferred<Response>()
+      h.setBeginReply(response.promise)
+      const opening = h.client.begin()
+      socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(2)
+      })
+      const older = socketAt(h.sockets, 1)
+      older.open()
+      const delayedHandler = older.onmessage
+      const stale = {
+        schemaVersion: 1,
+        type: 'subscribed.v2',
+        snapshot: current.snapshot,
+        watermark: current.snapshot.boardVersion,
+        previews: [],
+        allowance: current.allowance,
+        ownTurn: null,
+        actions: [],
+        nextSequence: 0,
+        draftRevision: null,
+      }
+      if (order === 'before') older.emit(stale)
+      h.setGame({ ...current, ownTurn: outcome === 'open' ? turn : null })
+      response.resolve(new Response(JSON.stringify(turn)))
+      await opening
+      expect(h.client.getState().connection).not.toBe('ready')
+      if (order === 'after')
+        delayedHandler?.call(
+          older as unknown as WebSocket,
+          new MessageEvent('message', { data: JSON.stringify(stale) }),
+        )
+      expect(h.client.getState().connection).not.toBe('ready')
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(3)
+      })
+      const fresh = socketAt(h.sockets, 2)
+      fresh.open()
+      handoff(fresh, outcome === 'open' ? turn : null)
+      expect(h.client.getState().connection).toBe('ready')
+      expect(h.client.getState().game?.ownTurn).toEqual(outcome === 'open' ? turn : null)
+    },
+  )
+
   it('preserves an uncertain shape request for an identical retry', async () => {
     const h = harness()
     const socket = await h.start()
@@ -603,6 +688,58 @@ describe('versioned subscription and preview receipts', () => {
     nextSequence: draftRevision,
     draftRevision,
   })
+  it.each(['cancellation', 'expiry'] as const)(
+    'retains the authoritative turn base across board changes and clears it after %s',
+    async (outcome) => {
+      const h = harness()
+      const snapshot = fixture.confirmedSnapshot as CurrentGame['snapshot']
+      h.setGame({ ...current, snapshot, ownTurn: turn })
+      const socket = await h.start()
+      expect(socket.sent[0]).toMatchObject({ type: 'subscribe.v2', includeTurnBase: true })
+      socket.emit({
+        ...handoff(),
+        snapshot,
+        watermark: snapshot.boardVersion,
+        turnBase: current.snapshot,
+      })
+      expect(h.client.getState().turnBase).toEqual(current.snapshot)
+      h.setGame({ ...current, snapshot, ownTurn: null })
+      if (outcome === 'cancellation') {
+        h.setCancelReply(
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: 1,
+                puzzleId,
+                turnId: turn.turnId,
+                requestId: '00000000-0000-4000-8000-000000000001',
+                outcome: 'canceled',
+                boardVersion: snapshot.boardVersion,
+                allowance: current.allowance,
+                commandId: null,
+              }),
+            ),
+          ),
+        )
+        await h.client.cancel()
+      } else socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+      expect(h.client.getState().turnBase).toBeNull()
+      await vi.waitFor(() => {
+        expect(h.sockets).toHaveLength(2)
+      })
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit({
+        ...handoff(),
+        snapshot,
+        watermark: snapshot.boardVersion,
+        ownTurn: null,
+        draftRevision: null,
+      })
+      expect(h.client.getState().turnBase).toBeNull()
+      h.client.disconnect()
+    },
+  )
   const accepted = (sequence: number, draftRevision: number) => ({
     schemaVersion: 1,
     type: 'preview.accepted',
@@ -615,7 +752,460 @@ describe('versioned subscription and preview receipts', () => {
     actions: [action],
   })
 
-  it.each(['accepted', 'unchanged', 'concurrent'] as const)(
+  const mergedGroup = (fixture.mergedSnapshot as CurrentGame['snapshot']).groups[0]
+  const revisions = fixture.snapshot.groups.map(({ groupId, revision }) => ({ groupId, revision }))
+  const firstRevision = revisions.shift()
+  if (!firstRevision) throw new Error('Missing fixture revisions')
+  const joined: Confirm['actions'][number] = {
+    ...action,
+    affectedPieceIds: mergedGroup.pieceIds,
+    baseRevisions: [firstRevision, ...revisions],
+    intendedTransform: mergedGroup.transform,
+  }
+
+  async function acceptedJoined(serverTime = current.serverTime) {
+    const h = harness()
+    h.setGame({ ...current, serverTime, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(joined)
+    socket.emit({
+      ...fixture.preview,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 0,
+      action: joined,
+    })
+    socket.emit({ ...accepted(0, 1), actionId: joined.actionId, actions: [joined] })
+    return { h, socket }
+  }
+
+  const peerTurnId = '00000000-0000-4000-8000-000000000071'
+  const otherPeerTurnId = '00000000-0000-4000-8000-000000000072'
+  const peerAction = { ...joined, actionId: '00000000-0000-4000-8000-000000000073' }
+  const peerPreview = (turnId = peerTurnId, expiresAt = turn.expiresAt) => ({
+    ...fixture.preview,
+    turnId,
+    generation: 1,
+    sequence: 0,
+    action: peerAction,
+    expiresAt,
+  })
+
+  it.each(['disconnect', 'board change'] as const)(
+    'retains peer and own joined previews during %s until the atomic handoff',
+    async (cause) => {
+      const { h, socket } = await acceptedJoined()
+      socket.emit(peerPreview())
+      if (cause === 'disconnect') {
+        socket.drop()
+        await h.client.connect()
+      } else {
+        const changedGroup = fixture.boardChanged
+          .groups[0] as CurrentGame['snapshot']['groups'][number]
+        const unchangedGroup = current.snapshot.groups[1]
+        if (!unchangedGroup) throw new Error('Missing fixture group')
+        const snapshot: CurrentGame['snapshot'] = {
+          ...current.snapshot,
+          boardVersion: fixture.boardChanged.boardVersion,
+          groups: [changedGroup, unchangedGroup],
+        }
+        h.setGame({ ...current, snapshot, ownTurn: turn })
+        socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+        await vi.waitFor(() => {
+          expect(h.sockets).toHaveLength(2)
+        })
+      }
+      const state = h.client.getState()
+      expect(state.recoveryView?.actions).toEqual([joined])
+      expect(state.peerRecoveryViews[peerTurnId]?.actions).toEqual([peerAction])
+      expect(h.client.provenDraft()).toBeNull()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      const snapshot = state.game?.snapshot
+      if (!snapshot) throw new Error('Missing board')
+      next.emit({
+        ...handoff(),
+        snapshot,
+        watermark: snapshot.boardVersion,
+        previews: [peerPreview()],
+      })
+      expect(h.client.getState().recoveryView).toBeNull()
+      expect(h.client.getState().peerRecoveryViews).toEqual({})
+      expect(Object.values(h.client.getState().previews)[0]?.actions[peerAction.actionId]).toEqual(
+        peerAction,
+      )
+      h.client.disconnect()
+    },
+  )
+
+  it('keeps a peer preview without an own turn and clears it on cancellation', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({
+      ...handoff(),
+      ownTurn: null,
+      draftRevision: null,
+      previews: [peerPreview(), peerPreview(otherPeerTurnId)],
+    })
+    socket.drop()
+    expect(h.client.getState().peerRecoveryViews[peerTurnId]?.actions).toEqual([peerAction])
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...fixture.previewCleared, turnId: peerTurnId, generation: 1, reason: 'canceled' })
+    expect(h.client.getState().peerRecoveryViews[peerTurnId]).toBeUndefined()
+    expect(h.client.getState().peerRecoveryViews[otherPeerTurnId]?.actions).toEqual([peerAction])
+    expect(h.client.getState().previews[peerTurnId]?.closed).toBe(true)
+    h.client.disconnect()
+  })
+
+  it('expires peer recoveries independently at their preview deadlines', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      const h = harness()
+      const socket = await h.start()
+      socket.emit({
+        ...handoff(),
+        ownTurn: null,
+        draftRevision: null,
+        previews: [
+          peerPreview(peerTurnId, '2026-11-08T12:00:01Z'),
+          peerPreview(otherPeerTurnId, '2026-11-08T12:00:02Z'),
+        ],
+      })
+      socket.drop()
+      expect(Object.keys(h.client.getState().peerRecoveryViews)).toHaveLength(2)
+      vi.advanceTimersByTime(1000)
+      expect(Object.keys(h.client.getState().peerRecoveryViews)).toEqual([otherPeerTurnId])
+      vi.advanceTimersByTime(1000)
+      expect(h.client.getState().peerRecoveryViews).toEqual({})
+      h.client.disconnect()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discards peer recovery after a failed reconnect', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit({ ...handoff(), ownTurn: null, draftRevision: null, previews: [peerPreview()] })
+    socket.drop()
+    h.setCurrentUnavailable(true)
+    await expect(h.client.connect()).rejects.toThrow('PUZZLE_UNAVAILABLE')
+    expect(h.client.getState().peerRecoveryViews).toEqual({})
+    h.client.disconnect()
+  })
+
+  it('shows the joined draft during reconnect and replaces it with the handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    expect(h.client.getState().recoveryView).toEqual({
+      turn,
+      actions: [joined],
+    })
+    expect(h.client.getState().previews).toEqual({})
+    expect(h.client.provenDraft()).toBeNull()
+    expect(() => {
+      h.client.preview(joined)
+    }).toThrow('not synchronized')
+    await h.client.connect()
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    // The turn was canceled or expired while disconnected: the handoff wins.
+    next.emit({ ...handoff(), ownTurn: null, draftRevision: null })
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.getState().previews).toEqual({})
+    expect(h.client.getState().game?.ownTurn).toBeNull()
+  })
+
+  it('retains the tentative view beyond two seconds while its lease is valid', async () => {
+    const { h, socket } = await acceptedJoined()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      socket.drop()
+      expect(h.client.getState().recoveryView).not.toBeNull()
+      vi.advanceTimersByTime(2000)
+      expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+      h.client.disconnect()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retain a view past the conservative lease deadline', async () => {
+    const { h, socket } = await acceptedJoined('2026-11-08T23:59:59.000Z')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      socket.drop()
+      vi.advanceTimersByTime(1000)
+      expect(h.client.getState().recoveryView).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the tentative view if reconnect fails', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    h.setCurrentUnavailable(true)
+    await expect(h.client.connect()).rejects.toThrow('PUZZLE_UNAVAILABLE')
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.getState().game).toBeNull()
+  })
+
+  it.each(['clear', 'rejection'] as const)(
+    'drops the tentative view on an explicit %s during recovery',
+    async (event) => {
+      const { h, socket } = await acceptedJoined()
+      socket.drop()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit(
+        event === 'clear'
+          ? { ...fixture.previewCleared, turnId: turn.turnId, generation: turn.generation }
+          : {
+              schemaVersion: 1,
+              type: 'preview.rejected',
+              puzzleId,
+              turnId: turn.turnId,
+              generation: turn.generation,
+              sequence: 0,
+              actionId: joined.actionId,
+              error: {
+                code: 'INVALID_ACTION',
+                message: 'Invalid move',
+                requestId: joined.actionId,
+                retryable: false,
+              },
+            },
+      )
+      expect(h.client.getState().recoveryView).toBeNull()
+      expect(h.client.getState().connection).not.toBe('ready')
+      h.client.disconnect()
+    },
+  )
+
+  it('uses the fresh current game to clear a turn canceled before the handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    h.setGame(current)
+    await h.client.connect()
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.getState().connection).toBe('resyncing')
+  })
+
+  it('restores the accepted draft only from the fresh atomic handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    socket.drop()
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({
+      ...handoff([joined], 1),
+      previews: [
+        {
+          ...fixture.preview,
+          turnId: turn.turnId,
+          generation: turn.generation,
+          sequence: 0,
+          action: joined,
+        },
+      ],
+    })
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.provenDraft()).toEqual([joined])
+    expect(Object.values(h.client.getState().previews)[0]?.actions[joined.actionId]).toEqual(joined)
+  })
+
+  it('retains the displayed draft when a preview submission is in flight', async () => {
+    const { h, socket } = await acceptedJoined()
+    h.client.preview(joined)
+    socket.drop()
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    expect(h.client.provenDraft()).toBeNull()
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({ ...handoff(), ownTurn: null, draftRevision: null })
+    expect(h.client.getState().recoveryView).toBeNull()
+  })
+
+  it('retains an unacknowledged displayed join without treating it as proof', async () => {
+    const h = harness()
+    h.setGame({ ...current, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(joined)
+    socket.emit({
+      ...fixture.preview,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      sequence: 0,
+      action: joined,
+    })
+    socket.drop()
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    expect(h.client.provenDraft()).toBeNull()
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([joined], 1))
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.provenDraft()).toBeNull()
+  })
+
+  it.each(['before disconnect', 'after disconnect'] as const)(
+    'keeps a server-authored join uncertain when recovery starts %s',
+    async (timing) => {
+      const h = harness()
+      h.setGame({ ...current, ownTurn: turn })
+      const socket = await h.start()
+      socket.emit(handoff())
+      const submitted = {
+        ...joined,
+        intendedTransform: {
+          ...joined.intendedTransform,
+          translation: {
+            ...joined.intendedTransform.translation,
+            x: joined.intendedTransform.translation.x + 1,
+          },
+        },
+      }
+      const serverJoin = { ...joined, targetId: mergedGroup.groupId }
+      h.client.preview(submitted)
+      if (timing === 'before disconnect') h.client.recoverInterruptedPreview()
+      socket.drop()
+      if (timing === 'after disconnect') h.client.recoverInterruptedPreview()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit(handoff([serverJoin], 1))
+      expect(h.client.getState().connection).toBe('ready')
+      expect(h.client.provenDraft()).toBeNull()
+      expect(() => {
+        h.client.preview(submitted)
+      }).toThrow('not ready')
+      await expect(h.client.confirm()).rejects.toThrow('not ready')
+    },
+  )
+
+  it.each([
+    'matching',
+    'other submission',
+    'revision',
+    'sequence',
+    'generation',
+    'turn revision',
+  ] as const)(
+    'uses correlated join recovery only for the matching submission: %s',
+    async (outcome) => {
+      const h = harness()
+      h.setGame({ ...current, ownTurn: turn })
+      const socket = await h.start()
+      socket.emit(handoff())
+      const second = fixture.confirm.actions[1] as Confirm['actions'][number]
+      h.client.preview(action)
+      socket.emit(accepted(0, 1))
+      h.client.preview(second)
+      socket.emit({ ...accepted(1, 2), actionId: second.actionId, actions: [action, second] })
+      const submitted = {
+        ...joined,
+        intendedTransform: { ...joined.intendedTransform, translation: { x: 1, y: 0 } },
+      }
+      const serverJoin = { ...joined, targetId: mergedGroup.groupId }
+      const serverSecond = { ...serverJoin, actionId: second.actionId, kind: second.kind }
+      h.client.preview(submitted)
+      const frame = socket.sent.at(-1) as { submissionId: string }
+      h.client.recoverInterruptedPreview()
+      socket.drop()
+      await h.client.connect()
+      const next = socketAt(h.sockets, 1)
+      next.open()
+      next.emit({
+        ...handoff([serverJoin, serverSecond], outcome === 'revision' ? 4 : 3),
+        nextSequence: outcome === 'sequence' ? 4 : 3,
+        ownTurn: {
+          ...turn,
+          generation: turn.generation + (outcome === 'generation' ? 1 : 0),
+          turnRevision: turn.turnRevision + (outcome === 'turn revision' ? 1 : 0),
+        },
+        lastSubmissionId:
+          outcome === 'other submission'
+            ? '00000000-0000-4000-8000-000000000099'
+            : frame.submissionId,
+      })
+      if (outcome === 'matching') {
+        expect(h.client.provenDraft()).toEqual([serverJoin, serverSecond])
+        expect(h.client.recoveredPreviewActionId()).toBe(action.actionId)
+      } else {
+        expect(h.client.provenDraft()).toBeNull()
+        await expect(h.client.confirm()).rejects.toThrow('not ready')
+      }
+    },
+  )
+
+  it('keeps the joined view throughout a board change until the atomic handoff', async () => {
+    const { h, socket } = await acceptedJoined()
+    const changedGroup = fixture.boardChanged.groups[0] as
+      CurrentGame['snapshot']['groups'][number] | undefined
+    const unchangedGroup = current.snapshot.groups[1]
+    if (!changedGroup || !unchangedGroup) throw new Error('Missing fixture group')
+    const snapshot: CurrentGame['snapshot'] = {
+      ...current.snapshot,
+      boardVersion: fixture.boardChanged.boardVersion,
+      groups: [changedGroup, unchangedGroup],
+    }
+    h.setGame({ ...current, snapshot, ownTurn: turn })
+    const states: ReturnType<typeof h.client.getState>[] = []
+    const unsubscribe = h.client.subscribe((state) => states.push(state))
+    socket.emit({ ...fixture.boardChanged, groups: [changedGroup] })
+    expect(h.client.getState().recoveryView?.actions).toEqual([joined])
+    expect(h.client.provenDraft()).toBeNull()
+    await vi.waitFor(() => {
+      expect(h.sockets).toHaveLength(2)
+    })
+    expect(states.slice(1).every((state) => state.recoveryView?.actions.length === 1)).toBe(true)
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit({
+      ...handoff([joined], 1),
+      snapshot,
+      watermark: snapshot.boardVersion,
+      previews: [
+        {
+          ...fixture.preview,
+          turnId: turn.turnId,
+          generation: turn.generation,
+          sequence: 0,
+          action: joined,
+        },
+      ],
+    })
+    expect(h.client.getState().recoveryView).toBeNull()
+    expect(h.client.provenDraft()).toEqual([joined])
+    unsubscribe()
+  })
+
+  it('does not retain an acknowledged draft when the displayed preview has not caught up', async () => {
+    const h = harness()
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(joined)
+    socket.emit({ ...accepted(0, 1), actionId: joined.actionId, actions: [joined] })
+    socket.drop()
+    expect(h.client.getState().recoveryView).toBeNull()
+  })
+
+  it.each([
+    'accepted',
+    'unchanged',
+    'concurrent',
+    'other submission',
+    'missing submission',
+  ] as const)(
     'recovers an interrupted preview after a lost receipt when the draft is %s',
     async (outcome) => {
       const h = harness()
@@ -637,21 +1227,66 @@ describe('versioned subscription and preview receipts', () => {
         },
       }
       h.client.preview(moved)
+      const submission = socket.sent.at(-1) as { submissionId: string }
       h.client.recoverInterruptedPreview()
       socket.drop()
       await h.client.connect()
       const next = socketAt(h.sockets, 1)
       next.open()
-      next.emit(
-        handoff(
+      next.emit({
+        ...handoff(
           outcome === 'unchanged' ? [action, second] : [moved, second],
-          outcome === 'unchanged' ? 2 : outcome === 'accepted' ? 3 : 4,
+          outcome === 'unchanged' ? 2 : outcome === 'concurrent' ? 4 : 3,
         ),
-      )
-      if (outcome === 'concurrent') expect(h.client.provenDraft()).toBeNull()
-      else expect(h.client.provenDraft()).toEqual([outcome === 'accepted' ? moved : action, second])
+        ...(outcome === 'accepted'
+          ? { lastSubmissionId: submission.submissionId }
+          : outcome === 'other submission'
+            ? { lastSubmissionId: '00000000-0000-4000-8000-000000000099' }
+            : {}),
+      })
+      if (outcome === 'accepted' || outcome === 'unchanged') {
+        expect(h.client.provenDraft()).toEqual([outcome === 'accepted' ? moved : action, second])
+      } else {
+        expect(h.client.provenDraft()).toBeNull()
+        expect(h.client.recoveredPreviewActionId()).toBeNull()
+        await expect(h.client.confirm()).rejects.toThrow('not ready')
+      }
     },
   )
+
+  it('does not prove an abandoned preview after a failed recovery and later handoff', async () => {
+    const h = harness()
+    h.setGame({ ...current, ownTurn: turn })
+    const socket = await h.start()
+    socket.emit(handoff())
+    h.client.preview(action)
+    socket.emit(accepted(0, 1))
+    const moved = {
+      ...action,
+      intendedTransform: {
+        ...action.intendedTransform,
+        translation: {
+          ...action.intendedTransform.translation,
+          x: action.intendedTransform.translation.x + 1000,
+        },
+      },
+    }
+    h.client.preview(moved)
+    h.client.recoverInterruptedPreview()
+    h.setCurrentUnavailable(true)
+    socket.emit({ schemaVersion: 1, type: 'resyncRequired', puzzleId, reason: 'gap' })
+    await vi.waitFor(() => {
+      expect(h.client.getState().connection).toBe('disconnected')
+    })
+    h.client.abandonInterruptedPreview()
+    h.setCurrentUnavailable(false)
+    await h.client.connect()
+    const next = socketAt(h.sockets, 1)
+    next.open()
+    next.emit(handoff([moved], 2))
+    expect(h.client.provenDraft()).toBeNull()
+    await expect(h.client.confirm()).rejects.toThrow('not ready')
+  })
 
   it('confirms only the latest correlated receipt and retains its exact action and revision', async () => {
     const h = harness()

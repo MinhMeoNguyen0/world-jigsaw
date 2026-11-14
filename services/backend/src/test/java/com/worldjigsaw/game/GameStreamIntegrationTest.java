@@ -467,21 +467,25 @@ class GameStreamIntegrationTest {
             .put("type", "subscribe.v2")
             .put("puzzleId", puzzle)
             .putNull("afterBoardVersion");
-    send(a, subscribe);
+    ObjectNode subscribeWithBase = subscribe.deepCopy().put("includeTurnBase", true);
+    send(a, subscribeWithBase);
     send(b, subscribe);
     JsonNode initial = first.next();
     assertSchema("SubscribedV2", initial);
     assertThat(initial.path("ownTurn").isNull()).isTrue();
+    assertThat(initial.has("turnBase")).isFalse();
     assertThat(initial.path("allowance").path("used").intValue()).isZero();
     second.next();
     JsonNode turn = post(client, origin + "/api/v1/game/turns", origin, cookie, begin(puzzle));
     assertThat(first.next().path("type").asText()).isEqualTo("resyncRequired");
     assertThat(second.next().path("type").asText()).isEqualTo("resyncRequired");
-    send(a, subscribe);
+    send(a, subscribeWithBase);
     send(b, subscribe);
     JsonNode handoff = first.next();
-    second.next();
+    JsonNode legacyHandoff = second.next();
     assertThat(handoff.path("ownTurn").path("turnId")).isEqualTo(turn.path("turnId"));
+    assertThat(handoff.path("turnBase")).isEqualTo(snapshot);
+    assertThat(legacyHandoff.has("turnBase")).isFalse();
     assertThat(handoff.path("draftRevision").intValue()).isZero();
     JsonNode group = null;
     for (JsonNode candidate : snapshot.path("groups"))
@@ -496,7 +500,9 @@ class GameStreamIntegrationTest {
       }
     assertThat(group).isNotNull();
     String actionId = UUID.randomUUID().toString(), turnId = turn.path("turnId").asText();
-    JsonNode submission = preview(puzzle, turnId, 0, 0, action(actionId, group, 0, 0));
+    String firstSubmissionId = UUID.randomUUID().toString();
+    ObjectNode submission = preview(puzzle, turnId, 0, 0, action(actionId, group, 0, 0));
+    submission.put("submissionId", firstSubmissionId);
     send(a, submission);
     assertPreview(first.next(), turnId);
     JsonNode ack = first.next();
@@ -507,9 +513,11 @@ class GameStreamIntegrationTest {
     send(b, subscribe);
     JsonNode recovered = second.next();
     assertThat(recovered.path("draftRevision").intValue()).isEqualTo(1);
+    assertThat(recovered.path("lastSubmissionId").asText()).isEqualTo(firstSubmissionId);
     assertThat(recovered.path("actions")).isEqualTo(ack.path("actions"));
     ObjectNode repeated = submission.deepCopy();
-    repeated.put("sequence", 1);
+    String secondSubmissionId = UUID.randomUUID().toString();
+    repeated.put("sequence", 1).put("submissionId", secondSubmissionId);
     send(b, repeated);
     assertThat(first.next().path("type").asText()).isEqualTo("resyncRequired");
     assertPreview(second.next(), turnId);
@@ -542,7 +550,18 @@ class GameStreamIntegrationTest {
     send(a, subscribe);
     JsonNode afterRejectedUndo = first.next();
     assertThat(afterRejectedUndo.path("draftRevision").intValue()).isEqualTo(2);
+    assertThat(afterRejectedUndo.path("lastSubmissionId").asText()).isEqualTo(secondSubmissionId);
     assertThat(afterRejectedUndo.path("actions")).isEqualTo(ack2.path("actions"));
+    ObjectNode legacySubmission = repeated.deepCopy();
+    legacySubmission.put("sequence", 2);
+    legacySubmission.remove("submissionId");
+    send(a, legacySubmission);
+    assertThat(second.next().path("type").asText()).isEqualTo("resyncRequired");
+    assertPreview(first.next(), turnId);
+    JsonNode ack3 = first.next();
+    assertThat(ack3.path("draftRevision").intValue()).isEqualTo(3);
+    send(b, subscribe);
+    assertThat(second.next().has("lastSubmissionId")).isFalse();
     ObjectNode stale =
         mapper
             .createObjectNode()
@@ -569,7 +588,7 @@ class GameStreamIntegrationTest {
                 .intValue())
         .isZero();
     ObjectNode confirm = stale.deepCopy();
-    confirm.put("commandId", UUID.randomUUID().toString()).put("draftRevision", 2);
+    confirm.put("commandId", UUID.randomUUID().toString()).put("draftRevision", 3);
     JsonNode result =
         post(client, origin + "/api/v1/game/turns/" + turnId + "/confirm", origin, cookie, confirm);
     assertThat(result.path("outcome").asText()).isEqualTo("confirmed");

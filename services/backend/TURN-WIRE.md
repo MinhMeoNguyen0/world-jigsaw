@@ -47,6 +47,10 @@ coordinator handoff. Identity-changing operations invalidate affected v2 subscri
 `resyncRequired`; clients must resubscribe before editing. The original `subscribe` and
 `subscribed` shapes remain unchanged.
 
+Clients may request `includeTurnBase` on `subscribe.v2`; when a turn exists, the handoff then
+includes its starting snapshot as `turnBase`. It is omitted for older subscribers and when no
+turn exists. Its board version identifies the active turn's base, not the current board.
+
 After installing a valid `preview.submit`, the coordinator sends only its originating v2 socket
 `preview.accepted`, echoing the submitted sequence and action ID along with the turn identity,
 the authoritative action set and its draft revision. The broadcast preview sequence remains a
@@ -56,6 +60,11 @@ complete accepted action set; both checks occur under the coordinator lock befor
 An intervening same-session tab therefore fences a stale command even if the action set returns
 to the same values. Existing v1 confirmation retains its original semantics. Clients must not
 infer acceptance from a broadcast and must reconcile an unknown result before another save.
+
+A preview submission may include a fresh `submissionId`. The next v2 handoff includes the ID of
+only the latest accepted preview in the current generation, together with its authoritative action
+set, revision, and next sequence. Later previews without an ID and undo clear that evidence. Clients
+must still match turn identity, revision and sequence before using the ID to recover a lost receipt.
 
 Undo uses the closed `UndoV2` payload with the observed draft revision. The service rejects the
 original `Undo` shape because it cannot fence a concurrent preview; a retry uses the same request
