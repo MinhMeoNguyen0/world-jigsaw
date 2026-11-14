@@ -1,11 +1,60 @@
 # Multiplayer latency assessment
 
+## Infrastructure status
+
+The repository describes a private-local prototype, not a completed production deployment; public
+authentication, TLS, authorization and deployment security remain open ([handoff](HANDOFF.md)).
+The local Compose file defines only two PostgreSQL containers. The README starts the game service,
+chat service and web client separately on the host, so those processes would not appear as Compose
+containers in Docker Desktop. Testcontainers creates temporary database containers for integration
+tests. The recorded latency experiment instead used a separate local PostgreSQL cluster and host
+processes; its Docker-backed coordinator test could not initialize because Docker was unavailable.
+
+A read-only inspection on November 10, 2026 found the active Docker context `default` pointing to
+`unix:///var/run/docker.sock`. That daemon listed two stopped World Jigsaw test stacks, each with
+web, game, chat, and two PostgreSQL containers; it listed no running containers. A separate
+`desktop-linux` context was configured with a Windows named-pipe endpoint, but it was not inspected.
+The selected Unix daemon and stopped containers explain why this context has no running game
+containers; they do not establish which daemon Windows Docker Desktop displays or why it appears
+sparse there. No deployment or container state was changed.
+
+## Pointer coordinate reuse
+
+During an active drag, each pointer move previously converted the same screen position into board
+coordinates twice: once for the cursor and again for the drag. The handler now reuses the first
+result, while retrying the conversion for the drag if the first matrix lookup was unavailable.
+Panning, the movement threshold, release and interruption handling remain on their existing paths.
+This removes one matrix lookup and inversion per ordinary active pointer move; it does not establish
+a measurable or perceptible speedup. The earlier local frame measurements below did not identify
+coordinate conversion as a bottleneck, and no new input-to-paint or peer-delay measurements were
+made for this change.
+
+The focused hook-level tests check cursor and drag coordinates, a missing matrix and retry, pan,
+movement threshold, release and interrupted-drag recovery. They use mocked browser primitives and
+do not measure actual rendering or networking. Restoring the old duplicate conversion made the
+one-lookup assertion fail; that counterfactual verifies the removed work, not a frame-time benefit.
+An isolated two-browser profile is still needed to assess any impact on game feel.
+
+For the pointer coordinate reuse change, the focused Vitest file (then three tests), targeted
+ESLint, web app TypeScript `--noEmit` check, and Prettier check of the changed files passed:
+
+```sh
+pnpm --filter @world-jigsaw/web exec vitest run src/game/use-live-board.test.tsx --maxWorkers=1
+pnpm --filter @world-jigsaw/web exec eslint src/game/use-live-board.test.tsx src/game/use-live-board.ts --max-warnings 0
+pnpm --filter @world-jigsaw/web exec tsc --noEmit --incremental false -p tsconfig.app.json
+pnpm exec prettier --check apps/web/src/game/use-live-board.ts apps/web/src/game/use-live-board.test.tsx docs/multiplayer-latency-assessment.md
+```
+
+The production frontend build passed before the coordinate reuse change; it did not validate that
+change. The full suite and two-player interaction were not run for that change.
+
 This is a loopback laboratory measurement of the private-local prototype, not a worldwide latency
 claim. The earlier [preview assessment](multiplayer-preview-assessment.md) identified a reconnect
 on the first Begin and removed a reconnect on a known collision; it did not measure frame times.
-The local ghost masks server delay during a drag. Peers see only server-accepted previews, so they
-can lag even when the mover's ghost follows the pointer. Confirm still saves the exact acknowledged
-actions; a preview is not a commit.
+The local ghost masks server delay during a drag. Peers receive server-accepted previews, so they
+can lag even when the mover's ghost follows the pointer. During recovery, previously displayed joined
+previews can remain visible as unconfirmed; see the [adapter guide](../apps/web/src/game/README.md).
+Confirm still saves the exact acknowledged actions; a preview is not a commit.
 
 ## Finding and change
 
@@ -85,6 +134,28 @@ receive timing, and a bounded JFR profile for server call stacks. Repeat across 
 real pointer input, devices, and network conditions before drawing broader conclusions.
 
 ## Alternatives and boundaries
+
+Many games display an immediate local prediction while the server remains authoritative and reconcile
+when they disagree. This game's drag ghost already hides network and server wait for the mover; a
+peer normally sees accepted previews. Interpolating remote positions could make irregular updates look
+smoother, but introduces display delay, and extrapolation can be wrong around collisions
+([client prediction](https://gafferongames.com/post/what_every_programmer_needs_to_know_about_game_networking/),
+[snapshot interpolation](https://gafferongames.com/post/snapshot_interpolation/)). The first Begin
+also reconnects the initiating tab to keep same-identity tabs in sync; avoiding that interruption
+requires a safe replacement for the invalidation, not simply removing it.
+
+Chat uses a separate service, database, and HTTP POST/SSE connection; it verifies identity with the
+game service. It does not carry game previews, although both features can compete for browser,
+network, and host resources. WebRTC data channels can be configured for unordered or limited-retry
+messages, but require connection negotiation and may need a relay
+([data channels](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel),
+[connectivity](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity)).
+WebTransport offers reliable streams and unreliable datagrams over HTTP/3, with server and secure
+context requirements; datagrams may be lost or reordered
+([WebTransport](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport_API),
+[datagrams](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport/datagrams)). Neither
+alternative alone preserves this game's server-side validation and recovery guarantees. Evaluate
+transport changes only after measuring real network conditions and identifying a transport bottleneck.
 
 Caching stable SVG paths or reducing React rendering may help local frames, but these samples do
 not establish that as the dominant cost; React recommends measuring production builds and using

@@ -25,13 +25,21 @@ import type {
   ShapeResult,
   CursorPresence,
   Point,
+  Snapshot,
 } from '@world-jigsaw/contracts'
 
 /** Provisional adapter for the private same-origin v1 service. It does not render a game. */
 export interface LiveGameState {
   connection: 'disconnected' | 'connecting' | 'ready' | 'resyncing'
   game: CurrentGame | null
+  turnBase: Snapshot | null
   previews: Record<string, PreviewState>
+  /** Tentative appearance only; never used for commands or draft proof. */
+  recoveryView: { turn: Turn; actions: Action[] } | null
+  peerRecoveryViews: Record<
+    string,
+    { generation: number; sequence: number; actions: Action[]; deadline: number }
+  >
   previewPending: boolean
   previewRejection: PreviewRejected | null
   cursors: Record<string, CursorPresence>
@@ -50,9 +58,9 @@ interface DraftProof {
 }
 interface Flight {
   sequence: number
+  submissionId: string
   actionId: string
   draftRevision: number
-  action: Action
   proof: DraftProof | null
   recover: boolean
   resyncOnCollision: boolean
@@ -118,7 +126,10 @@ export class LiveGame {
   private state: LiveGameState = {
     connection: 'disconnected',
     game: null,
+    turnBase: null,
     previews: {},
+    recoveryView: null,
+    peerRecoveryViews: {},
     previewPending: false,
     previewRejection: null,
     cursors: {},
@@ -129,6 +140,10 @@ export class LiveGame {
   }
   private listeners = new Set<(state: LiveGameState) => void>()
   private cursorTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private peerRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private previewDeadlines = new Map<string, number>()
+  private currentReadStarted = 0
   private socket: Socket | null = null
   private epoch = 0
   private history: BoardEventHistory = { byVersion: new Map(), eventIds: new Set() }
@@ -136,6 +151,7 @@ export class LiveGame {
   private uncertainDraft = false
   private inFlight: Flight | null = null
   private lostPreview: Flight | null = null
+  private recoveredPreviewId: string | null = null
   private draftRevision: number | null = null
   private acceptedActions: Action[] = []
   private draftProof: DraftProof | null = null
@@ -178,6 +194,10 @@ export class LiveGame {
     return this.provenDraft() === null ? null : this.draftRevision
   }
 
+  recoveredPreviewActionId(): string | null {
+    return this.recoveredPreviewId
+  }
+
   pendingUndoActionId(): string | null {
     return this.undoRequest?.actionId ?? null
   }
@@ -191,6 +211,101 @@ export class LiveGame {
   private publish(patch: Partial<LiveGameState>) {
     this.state = { ...this.state, ...patch }
     for (const listener of this.listeners) listener(this.getState())
+  }
+
+  private clearRecoveryView() {
+    if (this.recoveryTimer !== null) clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = null
+  }
+
+  private retainRecoveryView(): LiveGameState['recoveryView'] {
+    const game = this.state.game
+    const turn = game?.ownTurn
+    const preview = turn && this.state.previews[turn.turnId.toLowerCase()]
+    if (
+      !game ||
+      !turn ||
+      this.state.connection !== 'ready' ||
+      !preview ||
+      preview.closed ||
+      preview.generation !== turn.generation ||
+      !Object.values(preview.actions).some((action) => action.affectedPieceIds.length > 1)
+    )
+      return null
+    const displayed = Object.values(preview.actions)
+    // The server sampled serverTime after the current-game request began. Subtracting
+    // the entire elapsed request time gives a conservative lease/rollover bound.
+    const remaining =
+      Math.min(Date.parse(turn.expiresAt), Date.parse(game.endsAt)) -
+      Date.parse(game.serverTime) -
+      (performance.now() - this.currentReadStarted)
+    if (!Number.isFinite(remaining) || remaining <= 0) return null
+    this.clearRecoveryView()
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null
+      this.publish({ recoveryView: null })
+    }, remaining)
+    return { turn, actions: displayed }
+  }
+
+  private clearPeerRecovery() {
+    if (this.peerRecoveryTimer !== null) clearTimeout(this.peerRecoveryTimer)
+    this.peerRecoveryTimer = null
+  }
+
+  private schedulePeerRecovery(views: LiveGameState['peerRecoveryViews']) {
+    this.clearPeerRecovery()
+    const deadline = Object.values(views).reduce(
+      (min, view) => Math.min(min, view.deadline),
+      Infinity,
+    )
+    if (!Number.isFinite(deadline)) return
+    this.peerRecoveryTimer = setTimeout(
+      () => {
+        this.peerRecoveryTimer = null
+        const now = performance.now()
+        const remaining = Object.fromEntries(
+          Object.entries(this.state.peerRecoveryViews).filter(([, view]) => view.deadline > now),
+        )
+        this.schedulePeerRecovery(remaining)
+        this.publish({ peerRecoveryViews: remaining })
+      },
+      Math.max(0, deadline - performance.now()),
+    )
+  }
+
+  private previewDeadline(preview: Preview, game: CurrentGame): number {
+    return (
+      this.currentReadStarted +
+      Math.min(Date.parse(preview.expiresAt), Date.parse(game.endsAt)) -
+      Date.parse(game.serverTime)
+    )
+  }
+
+  private retainPeerRecovery(): LiveGameState['peerRecoveryViews'] {
+    if (this.state.connection !== 'ready' || !this.state.game) return this.state.peerRecoveryViews
+    const ownId = this.state.game.ownTurn?.turnId.toLowerCase()
+    const views: LiveGameState['peerRecoveryViews'] = {}
+    for (const [key, preview] of Object.entries(this.state.previews)) {
+      const deadline = this.previewDeadlines.get(key)
+      const actions = Object.values(preview.actions)
+      if (
+        key !== ownId &&
+        !preview.closed &&
+        deadline !== undefined &&
+        Number.isFinite(deadline) &&
+        deadline > performance.now() &&
+        actions.some((action) => action.affectedPieceIds.length > 1)
+      )
+        views[key] = {
+          generation: preview.generation,
+          sequence: preview.sequence,
+          actions,
+          deadline,
+        }
+    }
+    this.schedulePeerRecovery(views)
+    return views
   }
 
   private async request<T>(path: string, name: string, body?: unknown): Promise<T> {
@@ -220,6 +335,9 @@ export class LiveGame {
 
   /** Reconnect always obtains a fresh current game and a fresh atomic subscription. */
   async connect(): Promise<void> {
+    const recoveryView = this.retainRecoveryView() ?? this.state.recoveryView
+    const peerRecoveryViews = this.retainPeerRecovery()
+    this.previewDeadlines.clear()
     const epoch = ++this.epoch
     this.stopSocket()
     if (this.inFlight) {
@@ -229,7 +347,10 @@ export class LiveGame {
     this.inFlight = null
     this.publish({
       connection: 'connecting',
+      turnBase: null,
       previews: {},
+      recoveryView,
+      peerRecoveryViews,
       cursors: {},
       previewPending: false,
       previewRejection: null,
@@ -238,9 +359,11 @@ export class LiveGame {
     try {
       await this.request('/api/v1/session', 'Session', {})
       if (epoch !== this.epoch) return
+      const currentReadStarted = performance.now()
       const game = await this.request<CurrentGame>('/api/v1/game/current', 'CurrentGame')
       await verifyGame(game)
       if (epoch !== this.epoch) return
+      this.currentReadStarted = currentReadStarted
       this.uncertainDraft = Boolean(game.ownTurn)
       if (
         this.beginRequest &&
@@ -254,7 +377,41 @@ export class LiveGame {
         this.undoBaseProof = null
       }
       this.history = { byVersion: new Map(), eventIds: new Set() }
-      this.publish({ game, connection: 'resyncing' })
+      const view = this.state.recoveryView
+      const keepView =
+        view &&
+        this.state.game &&
+        game.ownTurn &&
+        sameId(game.ownTurn.turnId, view.turn.turnId) &&
+        game.ownTurn.generation === view.turn.generation &&
+        game.ownTurn.turnRevision === view.turn.turnRevision &&
+        canonical(this.state.game.definition) === canonical(game.definition)
+      if (!keepView) this.clearRecoveryView()
+      const sameDefinition =
+        this.state.game &&
+        sameId(this.state.game.snapshot.puzzleId, game.snapshot.puzzleId) &&
+        this.state.game.day === game.day &&
+        canonical(this.state.game.definition) === canonical(game.definition)
+      const endDeadline = currentReadStarted + Date.parse(game.endsAt) - Date.parse(game.serverTime)
+      const peerViews = sameDefinition
+        ? Object.fromEntries(
+            Object.entries(this.state.peerRecoveryViews)
+              .map(
+                ([key, peer]) =>
+                  [key, { ...peer, deadline: Math.min(peer.deadline, endDeadline) }] as const,
+              )
+              .filter(
+                ([, peer]) => Number.isFinite(peer.deadline) && peer.deadline > performance.now(),
+              ),
+          )
+        : {}
+      this.schedulePeerRecovery(peerViews)
+      this.publish({
+        game,
+        connection: 'resyncing',
+        recoveryView: keepView ? view : null,
+        peerRecoveryViews: peerViews,
+      })
       if (epoch !== this.epoch) return
       const url = new URL('/api/v1/game/stream', this.deps.origin)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -268,6 +425,7 @@ export class LiveGame {
               type: 'subscribe.v2',
               puzzleId: game.snapshot.puzzleId,
               afterBoardVersion: null,
+              includeTurnBase: true,
             }),
           )
       }
@@ -276,6 +434,10 @@ export class LiveGame {
       }
       socket.onclose = () => {
         if (epoch !== this.epoch) return
+        const recoveryView = this.retainRecoveryView() ?? this.state.recoveryView
+        const peerRecoveryViews = this.retainPeerRecovery()
+        this.previewDeadlines.clear()
+        if (!recoveryView) this.clearRecoveryView()
         ++this.epoch
         if (this.inFlight) {
           this.uncertainDraft = true
@@ -285,8 +447,11 @@ export class LiveGame {
         this.stopSocket()
         this.publish({
           connection: 'disconnected',
+          turnBase: null,
           cursors: {},
           previews: {},
+          recoveryView,
+          peerRecoveryViews,
           previewPending: false,
           issue: 'Connection lost; reconnect to resynchronize.',
         })
@@ -296,9 +461,14 @@ export class LiveGame {
           this.publish({ issue: 'Game stream error; reconnect if it closes.' })
       }
     } catch (error) {
-      if (epoch === this.epoch)
+      if (epoch === this.epoch) {
+        this.clearRecoveryView()
+        this.clearPeerRecovery()
+        this.previewDeadlines.clear()
         this.publish({
           connection: 'disconnected',
+          recoveryView: null,
+          peerRecoveryViews: {},
           issue: String(error),
           ...(error instanceof GameRequestError &&
           error.path === '/api/v1/game/current' &&
@@ -306,11 +476,15 @@ export class LiveGame {
             ? { game: null, previews: {} }
             : {}),
         })
+      }
       throw error
     }
   }
 
   disconnect() {
+    this.clearRecoveryView()
+    this.clearPeerRecovery()
+    this.previewDeadlines.clear()
     ++this.epoch
     if (this.inFlight) {
       this.uncertainDraft = true
@@ -318,7 +492,15 @@ export class LiveGame {
     }
     this.inFlight = null
     this.stopSocket()
-    this.publish({ connection: 'disconnected', previews: {}, cursors: {}, previewPending: false })
+    this.publish({
+      connection: 'disconnected',
+      turnBase: null,
+      previews: {},
+      recoveryView: null,
+      peerRecoveryViews: {},
+      cursors: {},
+      previewPending: false,
+    })
   }
 
   private stopSocket() {
@@ -332,9 +514,22 @@ export class LiveGame {
     }
   }
 
-  private resync(reason: string) {
+  private resync(reason: string, game = this.state.game, discardView = false) {
     const epoch = this.epoch
-    this.publish({ issue: reason, connection: 'resyncing', previews: {}, cursors: {} })
+    const recoveryView = discardView ? null : (this.retainRecoveryView() ?? this.state.recoveryView)
+    const peerRecoveryViews = this.retainPeerRecovery()
+    this.previewDeadlines.clear()
+    if (!recoveryView) this.clearRecoveryView()
+    this.publish({
+      issue: reason,
+      connection: 'resyncing',
+      turnBase: null,
+      game,
+      previews: {},
+      recoveryView,
+      peerRecoveryViews,
+      cursors: {},
+    })
     if (epoch !== this.epoch) return
     void this.connect().catch(() => {
       // connect() has already published the error.
@@ -411,6 +606,11 @@ export class LiveGame {
     }
   }
 
+  abandonInterruptedPreview() {
+    if (this.inFlight) this.inFlight.recover = false
+    if (this.lostPreview) this.lostPreview.recover = false
+  }
+
   private matchesInterruptedPreview(reply: SubscribedV2): boolean {
     const flight = this.lostPreview
     const proof = flight?.proof
@@ -426,27 +626,13 @@ export class LiveGame {
       reply.nextSequence !== flight.sequence + 1
     )
       return false
-    const normalize = (action: Action) => ({
-      ...action,
-      actionId: action.actionId.toLowerCase(),
-      targetId: action.targetId.toLowerCase(),
-      kind: undefined,
-      affectedPieceIds: action.affectedPieceIds.map((id) => id.toLowerCase()).sort(),
-      baseRevisions: action.baseRevisions
-        .map((revision) => ({ ...revision, groupId: revision.groupId.toLowerCase() }))
-        .sort((a, b) => a.groupId.localeCompare(b.groupId)),
-    })
-    const affected = new Set(flight.action.affectedPieceIds.map((id) => id.toLowerCase()))
-    const expected = proof.actions.map((action) =>
-      action.affectedPieceIds.some((id) => affected.has(id.toLowerCase()))
-        ? { ...action, intendedTransform: flight.action.intendedTransform }
-        : action,
+    return Boolean(
+      reply.lastSubmissionId &&
+      sameId(reply.lastSubmissionId, flight.submissionId) &&
+      reply.actions.some((action) => sameId(action.actionId, flight.actionId)) &&
+      new Set(reply.actions.map((action) => action.actionId.toLowerCase())).size ===
+        reply.actions.length,
     )
-    if (!expected.some((action) => sameId(action.actionId, flight.actionId)))
-      expected.push(flight.action)
-    const ordered = (actions: Action[]) =>
-      actions.map(normalize).sort((a, b) => a.actionId.localeCompare(b.actionId))
-    return canonical(ordered(expected)) === canonical(ordered(reply.actions))
   }
 
   private receive(raw: unknown) {
@@ -477,15 +663,22 @@ export class LiveGame {
           return
         }
         const previews: Record<string, PreviewState> = {}
+        this.previewDeadlines.clear()
         for (const preview of reply.previews) {
           const key = preview.turnId.toLowerCase()
-          const next = applyPreview(previews[key] ?? null, preview)
+          const previous = previews[key] ?? null
+          const next = applyPreview(previous, preview)
+          if (next !== previous) this.previewDeadlines.set(key, this.previewDeadline(preview, game))
           if (next) previews[key] = next
         }
         this.history = { byVersion: new Map(), eventIds: new Set() }
+        this.clearRecoveryView()
+        this.clearPeerRecovery()
         this.publish({
           game: { ...game, snapshot: reply.snapshot },
           previews,
+          recoveryView: null,
+          peerRecoveryViews: {},
           connection: 'resyncing',
           issue: 'Service must provide identity state atomically with the subscription.',
         })
@@ -497,17 +690,25 @@ export class LiveGame {
           reply.watermark !== reply.snapshot.boardVersion ||
           reply.watermark < game.snapshot.boardVersion ||
           (reply.ownTurn && !sameId(reply.ownTurn.puzzleId, reply.snapshot.puzzleId)) ||
+          (reply.ownTurn && reply.ownTurn.boardVersion > reply.snapshot.boardVersion) ||
           (!reply.ownTurn &&
             (reply.actions.length || reply.nextSequence || reply.draftRevision !== null)) ||
-          (reply.ownTurn && reply.draftRevision === null)
+          (reply.ownTurn && reply.draftRevision === null) ||
+          (reply.turnBase &&
+            (reply.turnBase.boardVersion !== reply.ownTurn?.boardVersion ||
+              !sameId(reply.turnBase.puzzleId, reply.ownTurn.puzzleId) ||
+              !validateBoard(game.definition, reply.turnBase).valid))
         )
           throw new Error('Invalid subscription handoff')
         const previews: Record<string, PreviewState> = {}
+        this.previewDeadlines.clear()
         for (const preview of reply.previews) {
           if (!sameId(preview.puzzleId, reply.snapshot.puzzleId))
             throw new Error('Wrong preview puzzle')
           const key = preview.turnId.toLowerCase()
-          const next = applyPreview(previews[key] ?? null, preview)
+          const previous = previews[key] ?? null
+          const next = applyPreview(previous, preview)
+          if (next !== previous) this.previewDeadlines.set(key, this.previewDeadline(preview, game))
           if (next) previews[key] = next
         }
         const proof = this.draftProof
@@ -524,11 +725,14 @@ export class LiveGame {
             candidate.nextSequence === reply.nextSequence &&
             canonical(candidate.actions) === canonical(reply.actions),
           )
+        const recoveredPreview = this.matchesInterruptedPreview(reply)
+        this.recoveredPreviewId =
+          recoveredPreview && this.lostPreview ? this.lostPreview.actionId : null
         this.uncertainDraft =
           !matches(proof) &&
           !matches(undoneProof) &&
           !(this.lostPreview?.recover && matches(this.lostPreview.proof)) &&
-          !this.matchesInterruptedPreview(reply) &&
+          !recoveredPreview &&
           (reply.actions.length > 0 || Boolean(this.lostPreview?.recover))
         this.draftProof =
           reply.ownTurn && reply.draftRevision !== null && !this.uncertainDraft
@@ -544,7 +748,13 @@ export class LiveGame {
         this.draftRevision = reply.draftRevision
         this.acceptedActions = structuredClone(reply.actions)
         if (!this.uncertainDraft) this.lostPreview = null
+        this.clearRecoveryView()
+        this.clearPeerRecovery()
         this.publish({
+          turnBase: reply.ownTurn
+            ? (reply.turnBase ??
+              (reply.snapshot.boardVersion === reply.ownTurn.boardVersion ? reply.snapshot : null))
+            : null,
           game: {
             ...game,
             snapshot: reply.snapshot,
@@ -552,6 +762,8 @@ export class LiveGame {
             ownTurn: reply.ownTurn,
           },
           previews,
+          recoveryView: null,
+          peerRecoveryViews: {},
           connection: 'ready',
           previewPending: false,
           issue: this.uncertainDraft
@@ -625,7 +837,31 @@ export class LiveGame {
         )
         if (!sameId(event.puzzleId, game.snapshot.puzzleId))
           throw new Error('Preview for another puzzle')
+        const view = this.state.recoveryView
+        if (
+          type === 'previewCleared' &&
+          view &&
+          sameId(event.turnId, view.turn.turnId) &&
+          event.generation >= view.turn.generation
+        ) {
+          this.resync('Turn changed; refreshing turn and previews.', game, true)
+          return
+        }
         const key = event.turnId.toLowerCase()
+        const peerView = this.state.peerRecoveryViews[key]
+        if (
+          peerView &&
+          (event.generation < peerView.generation ||
+            (type === 'preview' &&
+              event.generation === peerView.generation &&
+              (event as Preview).sequence <= peerView.sequence))
+        )
+          return
+        const peerRecoveryViews = { ...this.state.peerRecoveryViews }
+        if (peerView && event.generation >= peerView.generation) {
+          Reflect.deleteProperty(peerRecoveryViews, key)
+          this.schedulePeerRecovery(peerRecoveryViews)
+        }
         const previous = this.state.previews[key] ?? null
         const next = applyPreview(previous, event)
         if (
@@ -638,12 +874,30 @@ export class LiveGame {
           this.uncertainDraft = true
           this.resync(
             'Turn changed without a correlated receipt; resynchronizing before cancellation.',
+            game,
+            true,
           )
           return
         }
-        if (next) this.publish({ previews: { ...this.state.previews, [key]: next } })
+        if (next !== previous) {
+          if (type === 'preview')
+            this.previewDeadlines.set(key, this.previewDeadline(event as Preview, game))
+          else this.previewDeadlines.delete(key)
+        }
+        if (next)
+          this.publish({ previews: { ...this.state.previews, [key]: next }, peerRecoveryViews })
       } else if (type === 'preview.rejected') {
         const rejection = checked<PreviewRejected>('PreviewRejected', message)
+        const view = this.state.recoveryView
+        if (
+          view &&
+          sameId(rejection.puzzleId, view.turn.puzzleId) &&
+          sameId(rejection.turnId, view.turn.turnId) &&
+          rejection.generation === view.turn.generation
+        ) {
+          this.resync('Preview rejected; refreshing turn and previews.', game, true)
+          return
+        }
         if (
           this.inFlight?.sequence === rejection.sequence &&
           sameId(rejection.puzzleId, game.snapshot.puzzleId) &&
@@ -669,6 +923,8 @@ export class LiveGame {
             this.uncertainDraft = true
             this.resync(
               `Preview rejected: ${rejection.error.code}: ${rejection.error.message}; resynchronizing.`,
+              game,
+              true,
             )
           }
         } else this.publish({ issue: `${rejection.error.code}: ${rejection.error.message}` })
@@ -686,8 +942,11 @@ export class LiveGame {
         if (result.status === 'applied') {
           this.history = result.seenEvents
           // An event does not carry this session's allowance or turn; refresh both.
-          this.publish({ game: { ...game, snapshot: result.snapshot, allowance: null } })
-          if (epoch === this.epoch) this.resync('Board changed; refreshing allowance and turn.')
+          this.resync('Board changed; refreshing allowance and turn.', {
+            ...game,
+            snapshot: result.snapshot,
+            allowance: null,
+          })
         }
       } else if (type === 'leaseRenewed') {
         const renewed = checked<LeaseRenewed>('LeaseRenewed', message)
@@ -709,16 +968,26 @@ export class LiveGame {
             !sameId(event.puzzleId, game.snapshot.puzzleId) ||
             event.day !== game.day
           ) {
-            this.publish({ game: null, previews: {} })
+            this.clearRecoveryView()
+            this.clearPeerRecovery()
+            this.previewDeadlines.clear()
+            this.publish({ game: null, previews: {}, recoveryView: null, peerRecoveryViews: {} })
             if (epoch !== this.epoch) return
           }
         } else checked('ResyncRequired', message)
         this.resync('Game changed; resynchronizing.')
       } else if (type === 'error') {
         const error = checked<{ error: { code: string; message: string } }>('SocketError', message)
+        if (error.error.code === 'PUZZLE_UNAVAILABLE') {
+          this.clearRecoveryView()
+          this.clearPeerRecovery()
+          this.previewDeadlines.clear()
+        }
         this.publish({
           issue: `${error.error.code}: ${error.error.message}`,
-          ...(error.error.code === 'PUZZLE_UNAVAILABLE' ? { game: null, previews: {} } : {}),
+          ...(error.error.code === 'PUZZLE_UNAVAILABLE'
+            ? { game: null, previews: {}, recoveryView: null, peerRecoveryViews: {} }
+            : {}),
         })
       } else throw new Error('Unsupported stream event')
     } catch (error) {
@@ -770,23 +1039,30 @@ export class LiveGame {
       requestId: this.deps.id(),
     }
     const epoch = this.epoch
+    const beginRequest = this.beginRequest
     let turn: Turn
     try {
-      turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', this.beginRequest)
+      turn = await this.request<Turn>('/api/v1/game/turns', 'Turn', beginRequest)
     } catch (error) {
       if (epoch === this.epoch && error instanceof GameRequestError && error.definitive)
         this.beginRequest = null
       throw error
     }
     if (!sameId(turn.puzzleId, game.snapshot.puzzleId)) throw new Error('Turn puzzle mismatch')
-    if (epoch !== this.epoch) return turn
-    this.beginRequest = null
-    this.sequence = 0
-    this.draftRevision = 0
-    this.acceptedActions = []
-    this.draftProof = { turn, revision: 0, nextSequence: 0, actions: [] }
-    this.uncertainDraft = false
-    this.publish({ game: { ...this.readyGame(), ownTurn: turn }, issue: null })
+    if (this.beginRequest === beginRequest) this.beginRequest = null
+    if (epoch === this.epoch) {
+      this.sequence = 0
+      this.draftRevision = 0
+      this.acceptedActions = []
+      this.draftProof = { turn, revision: 0, nextSequence: 0, actions: [] }
+      this.uncertainDraft = false
+    }
+    if (
+      this.state.connection !== 'disconnected' &&
+      this.state.game &&
+      sameId(this.state.game.snapshot.puzzleId, turn.puzzleId)
+    )
+      this.resync('Turn opened; synchronizing the latest board.')
     return turn
   }
 
@@ -814,11 +1090,13 @@ export class LiveGame {
     if (this.draftRevision === null) throw new Error('Missing draft revision')
     const epoch = this.epoch
     this.lostPreview = null
+    this.recoveredPreviewId = null
+    const submissionId = this.deps.id()
     this.inFlight = {
       sequence,
+      submissionId,
       actionId: action.actionId,
       draftRevision: this.draftRevision,
-      action: structuredClone(action),
       proof: this.draftProof,
       recover: false,
       resyncOnCollision,
@@ -835,6 +1113,7 @@ export class LiveGame {
           turnId: turn.turnId,
           generation: turn.generation,
           sequence,
+          submissionId,
           action,
         }),
       )
@@ -988,6 +1267,8 @@ export class LiveGame {
         (result.outcome === 'canceled' || result.outcome === 'already_canceled')
       ) {
         this.cancelRequest = null
+        this.clearRecoveryView()
+        this.publish({ recoveryView: null })
         return result
       }
       this.requireEpoch(epoch)
@@ -996,7 +1277,7 @@ export class LiveGame {
     if (result.outcome === 'canceled' || result.outcome === 'already_canceled') {
       this.inFlight = null
       this.uncertainDraft = false
-      this.resync('Canceled; synchronizing the latest board.')
+      this.resync('Canceled; synchronizing the latest board.', this.state.game, true)
     } else {
       this.uncertainDraft = true
       this.publish({

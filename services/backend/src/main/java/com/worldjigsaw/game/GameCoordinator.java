@@ -69,6 +69,7 @@ class GameCoordinator {
     final Set<UUID> usedActions = new HashSet<>();
     DraftRules.Draft draft;
     PendingReceipt pendingReceipt;
+    UUID lastSubmissionId;
     long generation, revision, draftRevision, lastClientSequence = -1;
     final long boardVersion;
 
@@ -217,6 +218,8 @@ class GameCoordinator {
     long generation = payload.path("generation").longValue();
     Turn turn = turn(subject, turnId, generation);
     if (!turn.puzzle.equals(puzzle)) throw error("TURN_CLOSED", "Puzzle does not match the turn");
+    UUID submissionId =
+        payload.has("submissionId") ? BoardValidator.id(payload, "submissionId") : null;
     Changed changed =
         preview(
             subject,
@@ -225,6 +228,7 @@ class GameCoordinator {
             payload.path("sequence").longValue(),
             readAction(payload.path("action")),
             streamId);
+    turn.lastSubmissionId = submissionId;
     Subscriber sender = subscribers.get(streamId);
     if (sender != null && sender.v2() && sender.subject().equals(subject)) {
       ObjectNode receipt =
@@ -377,6 +381,7 @@ class GameCoordinator {
       turn.draft = candidate;
       turn.usedActions.add(request.actionId());
       turn.lastClientSequence = clientSequence;
+      turn.lastSubmissionId = null;
       turn.draftRevision++;
       invalidateIdentity(subject, turn.puzzle, streamId);
       for (var frame : published) emit(previewJson(frame));
@@ -505,6 +510,17 @@ class GameCoordinator {
 
   synchronized void subscribe(
       UUID streamId, UUID subject, UUID puzzle, Long cursor, Sink sink, boolean v2) {
+    subscribe(streamId, subject, puzzle, cursor, sink, v2, false);
+  }
+
+  synchronized void subscribe(
+      UUID streamId,
+      UUID subject,
+      UUID puzzle,
+      Long cursor,
+      Sink sink,
+      boolean v2,
+      boolean includeTurnBase) {
     drainLeaseClears();
     JsonNode current = v2 ? mapper.valueToTree(current(subject)) : current(subject, puzzle);
     if (!puzzle.toString().equalsIgnoreCase(current.path("snapshot").path("puzzleId").asText()))
@@ -545,8 +561,11 @@ class GameCoordinator {
       if (!current.path("ownTurn").isNull()) {
         Turn turn = turns.get(BoardValidator.id(current.path("ownTurn"), "turnId"));
         if (turn == null) throw error("TURN_CLOSED", "Turn is closed");
+        if (includeTurnBase) reply.set("turnBase", turn.draft.base.deepCopy());
         nextSequence = Math.min(turn.lastClientSequence + 1, 9_007_199_254_740_991L);
         reply.put("draftRevision", turn.draftRevision);
+        if (turn.lastSubmissionId != null)
+          reply.put("lastSubmissionId", turn.lastSubmissionId.toString());
         for (var preview : leases.previews(puzzle))
           if (preview.turnId().equals(turn.id))
             actions.add(previewJson(preview).path("action").deepCopy());
@@ -1092,6 +1111,7 @@ class GameCoordinator {
     turn.revision++;
     turn.draftRevision++;
     turn.lastClientSequence = -1;
+    turn.lastSubmissionId = null;
     invalidateIdentity(turn.subject, turn.puzzle, null);
     drainLeaseClears();
     for (var preview : leases.previews(turn.puzzle))

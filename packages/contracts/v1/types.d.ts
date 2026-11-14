@@ -257,6 +257,7 @@ export interface PreviewSubmit {
   turnId: string
   generation: number
   sequence: number
+  submissionId?: string
   action: Action
 }
 export interface PreviewRejected {
@@ -519,6 +520,7 @@ export interface SubscribeV2 {
   schemaVersion: 1
   type: 'subscribe.v2'
   puzzleId: string
+  includeTurnBase?: boolean
   afterBoardVersion: number | null
 }
 export interface SubscribedV2 {
@@ -532,11 +534,13 @@ export interface SubscribedV2 {
   previews: Preview[]
   allowance: Allowance
   ownTurn: Turn | null
+  turnBase?: Snapshot
   /**
    * @maxItems 80
    */
   actions: Action[]
   nextSequence: number
+  lastSubmissionId?: string
   draftRevision: number | null
 }
 export interface PreviewAcceptedV2 {
