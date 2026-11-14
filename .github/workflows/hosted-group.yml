@@ -3,6 +3,11 @@ name: Hosted group regression
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full immutable product commit to test (blank uses this workflow ref)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -10,7 +15,15 @@ permissions:
 jobs:
   group-regression:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: product
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          [continuity, cancel, undo, expiry, failed-recovery, changed-neighbor, unrelated-change]
     services:
       postgres:
         image: postgres:18-alpine
@@ -26,12 +39,35 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: harness
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: product
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          persist-credentials: false
+      - name: Verify product and overlay only hosted test harness
+        env:
+          CANDIDATE: ${{ inputs.candidate_sha || github.sha }}
+        run: |
+          [[ "$CANDIDATE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          test -z "$(git status --porcelain)"
+          echo "product_sha=$(git rev-parse HEAD) product_tree=$(git rev-parse HEAD^{tree})"
+          echo "harness_sha=$(git -C ../harness rev-parse HEAD)"
+          sha256sum packages/generator/fixtures/hoi-an-expanded-60.json
+          echo "isolated_database=worldjigsaw job=${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/${{ matrix.scenario }}"
+          cp ../harness/apps/web/hosted-playwright.config.js apps/web/hosted-playwright.config.js
+          rm -rf apps/web/hosted-e2e
+          cp -R ../harness/apps/web/hosted-e2e apps/web/hosted-e2e
+          git status --porcelain
+          test -z "$(git status --porcelain --untracked-files=all | grep -vE '^.. apps/web/(hosted-playwright\.config\.js|hosted-e2e/)' || true)"
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: product/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: .nvmrc
-          cache: pnpm
+          node-version-file: product/.nvmrc
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -41,7 +77,7 @@ jobs:
       - run: pnpm build
       - run: pnpm --filter @world-jigsaw/web exec playwright install --with-deps chromium
       - name: Build backend
-        working-directory: services/backend
+        working-directory: product/services/backend
         run: ./gradlew bootJar
       - name: Start disposable fixture stack
         run: |
@@ -57,15 +93,17 @@ jobs:
           echo 'SETUP FAILURE: fixture stack did not become healthy' >&2
           exit 1
       - name: Exercise group interaction
+        env:
+          GROUP_SCENARIO: ${{ matrix.scenario }}
         run: pnpm --filter @world-jigsaw/web exec playwright test --config hosted-playwright.config.js 2>&1 | tee "$RUNNER_TEMP/group-logs/test.log"
         shell: bash
-      - name: Upload failure evidence
-        if: failure()
+      - name: Upload test evidence
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hosted-group-failure
+          name: hosted-group-evidence-${{ matrix.scenario }}
           path: |
             ${{ runner.temp }}/group-logs/
-            apps/web/test-results/
-            apps/web/playwright-report/
+            product/apps/web/test-results/
+            product/apps/web/playwright-report/
           retention-days: 7
