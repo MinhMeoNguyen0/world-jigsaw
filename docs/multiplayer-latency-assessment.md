@@ -35,8 +35,8 @@ do not measure actual rendering or networking. Restoring the old duplicate conve
 one-lookup assertion fail; that counterfactual verifies the removed work, not a frame-time benefit.
 An isolated two-browser profile is still needed to assess any impact on game feel.
 
-For this change, the focused Vitest file (three tests), targeted ESLint, web app TypeScript
-`--noEmit` check, and Prettier check of the changed files passed:
+For the pointer coordinate reuse change, the focused Vitest file (then three tests), targeted
+ESLint, web app TypeScript `--noEmit` check, and Prettier check of the changed files passed:
 
 ```sh
 pnpm --filter @world-jigsaw/web exec vitest run src/game/use-live-board.test.tsx --maxWorkers=1
@@ -45,15 +45,16 @@ pnpm --filter @world-jigsaw/web exec tsc --noEmit --incremental false -p tsconfi
 pnpm exec prettier --check apps/web/src/game/use-live-board.ts apps/web/src/game/use-live-board.test.tsx docs/multiplayer-latency-assessment.md
 ```
 
-The production frontend build passed before this change; it is not validation of the changed code.
-The full suite and two-player interaction remain unrun for this change.
+The production frontend build passed before the coordinate reuse change; it did not validate that
+change. The full suite and two-player interaction were not run for that change.
 
 This is a loopback laboratory measurement of the private-local prototype, not a worldwide latency
 claim. The earlier [preview assessment](multiplayer-preview-assessment.md) identified a reconnect
 on the first Begin and removed a reconnect on a known collision; it did not measure frame times.
-The local ghost masks server delay during a drag. Peers see only server-accepted previews, so they
-can lag even when the mover's ghost follows the pointer. Confirm still saves the exact acknowledged
-actions; a preview is not a commit.
+The local ghost masks server delay during a drag. Peers receive server-accepted previews, so they
+can lag even when the mover's ghost follows the pointer. During recovery, previously displayed joined
+previews can remain visible as unconfirmed; see the [adapter guide](../apps/web/src/game/README.md).
+Confirm still saves the exact acknowledged actions; a preview is not a commit.
 
 ## Finding and change
 
@@ -136,7 +137,7 @@ real pointer input, devices, and network conditions before drawing broader concl
 
 Many games display an immediate local prediction while the server remains authoritative and reconcile
 when they disagree. This game's drag ghost already hides network and server wait for the mover; a
-peer sees only accepted previews. Interpolating remote positions could make irregular updates look
+peer normally sees accepted previews. Interpolating remote positions could make irregular updates look
 smoother, but introduces display delay, and extrapolation can be wrong around collisions
 ([client prediction](https://gafferongames.com/post/what_every_programmer_needs_to_know_about_game_networking/),
 [snapshot interpolation](https://gafferongames.com/post/snapshot_interpolation/)). The first Begin
