@@ -51,20 +51,34 @@ volume while a game process is running. If the web container is recreated, recre
 as well, because they share its network namespace.
 
 A new database has no puzzle. To import the bundled synthetic fixture for today, first ensure the
-stack is running and the game database is healthy, then stop this stack's game and use a one-off
-process with the same database and writer lock:
+stack is running and the game database is healthy. Check `curl -i http://127.0.0.1:8088/api/v1/game/current`;
+proceed only if it reports `PUZZLE_UNAVAILABLE` with HTTP 503. An existing board causes the import
+to fail and cannot confirm this import succeeded. Stop this stack's game and use a one-off process
+with the same database and writer lock:
 
 ```sh
 docker compose -f deploy/local/compose.yml stop game
 docker compose -f deploy/local/compose.yml run --rm --no-deps game \
   --game-import-day="$(date -u +%F)" --game-import-file=/opt/hoi-an-compact-60.json
+```
+
+The one-off application keeps serving after import. In another terminal, run the following until it
+returns a JSON response whose `snapshot.puzzleId` is `dd4fed6c-6e43-5b70-b814-28ff5d803af6`:
+
+```sh
+curl -fsS http://127.0.0.1:8088/api/v1/game/current
+```
+
+If the import process exits or reports an error, inspect its output instead of proceeding. Once the
+expected puzzle appears, stop the one-off process with Ctrl-C, wait for it to exit, and restart the
+normal services:
+
+```sh
 docker compose -f deploy/local/compose.yml up -d game chat
 ```
 
-The import process exits after startup: the application normally keeps serving, so stop it with
-Ctrl-C once its startup log confirms success, then run the last command. Import is a deliberate
-write and fails for an existing day or conflicting puzzle ID. The fixture has a fixed puzzle ID and
-cannot be reused for another day in the same database; future days need distinct validated puzzle
+Import is a deliberate write and fails for an existing day or conflicting puzzle ID. The fixture has
+a fixed puzzle ID and cannot be reused for another day in the same database; future days need distinct validated puzzle
 definitions. Importing changes the game database; use a disposable database for integration tests.
 If no puzzle is imported for the current UTC day, the game reports it unavailable. Chat messages
 are ephemeral; chat settings and committed game state live in their respective named volumes.
