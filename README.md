@@ -32,6 +32,27 @@ The [local rules package](packages/rules/README.md) computes draft puzzle intera
 
 The [shared v1 contract](packages/contracts/README.md) describes the wire used by the local services and web client.
 
+## Local infrastructure
+
+Self-hosting currently means running the full stack on one computer with Docker Compose. Docker
+builds separate web, game and chat images and starts a private PostgreSQL database for each service:
+
+```text
+Browser on this computer
+        | 127.0.0.1:8088
+        v
+Web / gateway ---- loopback ---- game ---- game database ---- game data volume
+        |                         |
+        |                    writer-lock volume
+        +--------- loopback ---- chat ---- chat database ---- chat data volume
+```
+
+The gateway, game and chat share a network namespace; only the gateway is published on the host's
+loopback interface. The game backend owns its database and runs independently of the hosting
+tooling. Named volumes retain data on this host, but are not backups. This private setup does not
+support other computers or public access; Kubernetes and backups are deferred. See the
+[full-stack container guide](deploy/local/README.md) for startup, puzzle import, and shutdown.
+
 ## Local setup
 
 Requirements:
