@@ -57,7 +57,7 @@ process with the same database and writer lock:
 ```sh
 docker compose -f deploy/local/compose.yml stop game
 docker compose -f deploy/local/compose.yml run --rm --no-deps game \
-  --game-import-day="$(date -u +%F)" --game-import-file=/opt/hoi-an-expanded-60.json
+  --game-import-day="$(date -u +%F)" --game-import-file=/opt/hoi-an-compact-60.json
 docker compose -f deploy/local/compose.yml up -d game chat
 ```
 
