@@ -274,13 +274,10 @@ test('seeded orientations use four repeatable quarter turns', () => {
   assert.notDeepEqual(angles('review-60'), angles('another-seed'))
 })
 
-test('default expanded layout enlarges the shared surface while keeping loose contours outside', () => {
+test('expanded layout enlarges the shared surface while keeping loose contours outside', () => {
   const opts = { ...options, image: 'fixture://hoi-an-generated', placedPieces: 0 }
   const legacy = generate({ ...opts, layout: 'balanced' })
   const board = generate({ ...opts, layout: 'expanded' })
-  const { layout: _legacyLayout, ...defaultOptions } = opts
-  assert.deepEqual(generate(defaultOptions), board)
-  assert.deepEqual(generate(defaultOptions), generate(defaultOptions))
   assert.equal(board.definition.shape.generatorVersion, 'world-jigsaw-grid-8')
   assert.notEqual(board.definition.puzzleId, legacy.definition.puzzleId)
   assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
@@ -333,7 +330,7 @@ test('default expanded layout enlarges the shared surface while keeping loose co
   }
 })
 
-test('playable fixture has the expanded surface and a valid initial board', () => {
+test('expanded fixture retains its original surface and initial board', () => {
   const serialized = fixture('hoi-an-expanded-60')
   const board = JSON.parse(serialized)
   assert.equal(
@@ -351,4 +348,79 @@ test('playable fixture has the expanded surface and a valid initial board', () =
     3,
   )
   assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
+})
+
+test('default compact 60-piece boards surround the surface without overlapping contour bounds', () => {
+  const { layout: _layout, placedPieces: _placed, ...defaults } = options
+  for (const seed of ['review-60', 'another-seed', 'third-seed']) {
+    const board = generate({ ...defaults, seed, image: 'fixture://hoi-an-generated' })
+    if (seed === 'review-60')
+      assert.equal(`${JSON.stringify(board, null, 2)}\n`, fixture('hoi-an-compact-60'))
+    const expanded = generate({ ...defaults, seed, layout: 'expanded' })
+    assert.equal(board.definition.shape.generatorVersion, 'world-jigsaw-grid-9')
+    assert.notEqual(board.definition.puzzleId, expanded.definition.puzzleId)
+    assert.deepEqual(board, generate({ ...defaults, seed, image: 'fixture://hoi-an-generated' }))
+    assert.deepEqual(validateBoard(board.definition, board.snapshot), { valid: true, errors: [] })
+    const members = board.snapshot.groups.flatMap((g) => g.pieceIds)
+    assert.equal(members.length, 60)
+    assert.equal(new Set(members).size, 60)
+    assert.ok(board.snapshot.groups.every((g) => !g.finalPosition))
+    const size = (r: typeof board.definition.workspace) => ({
+      width: r.max.x - r.min.x,
+      height: r.max.y - r.min.y,
+    })
+    assert.ok(size(board.definition.workspace).height < size(expanded.definition.workspace).height)
+    const sides = new Set<string>()
+    const boxes = board.snapshot.groups.map((group) => {
+      const piece = board.definition.pieces.find((p) => p.pieceId === group.pieceIds[0])!
+      const angle = (group.transform.rotation * Math.PI) / 180000
+      const transform = (p: Point) => {
+        const x = p.x + piece.solvedPosition.x,
+          y = p.y + piece.solvedPosition.y
+        return {
+          x: Math.cos(angle) * x - Math.sin(angle) * y + group.transform.translation.x,
+          y: Math.sin(angle) * x + Math.cos(angle) * y + group.transform.translation.y,
+        }
+      }
+      const points = piece.edges
+        .flatMap((edge) => [
+          edge.start,
+          ...edge.segments.flatMap((segment) =>
+            segment.kind === 'line'
+              ? [segment.to]
+              : [segment.control1, segment.control2, segment.to],
+          ),
+        ])
+        .map(transform)
+      const box = {
+        minX: Math.min(...points.map((p) => p.x)),
+        maxX: Math.max(...points.map((p) => p.x)),
+        minY: Math.min(...points.map((p) => p.y)),
+        maxY: Math.max(...points.map((p) => p.y)),
+      }
+      const surface = board.definition.playSurface,
+        workspace = board.definition.workspace
+      if (box.maxY < surface.min.y) sides.add('top')
+      if (box.minY > surface.max.y) sides.add('bottom')
+      if (box.maxX < surface.min.x) sides.add('left')
+      if (box.minX > surface.max.x) sides.add('right')
+      assert.ok(
+        box.maxY < surface.min.y ||
+          box.minY > surface.max.y ||
+          box.maxX < surface.min.x ||
+          box.minX > surface.max.x,
+      )
+      assert.ok(
+        box.minX >= workspace.min.x &&
+          box.maxX <= workspace.max.x &&
+          box.minY >= workspace.min.y &&
+          box.maxY <= workspace.max.y,
+      )
+      return box
+    })
+    assert.deepEqual(sides, new Set(['top', 'right', 'bottom', 'left']))
+    for (const [i, a] of boxes.entries())
+      for (const b of boxes.slice(i + 1))
+        assert.ok(a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY)
+  }
 })
