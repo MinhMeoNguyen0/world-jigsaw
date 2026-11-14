@@ -13,6 +13,7 @@ test('a three-piece group stays together when its middle is clicked and dragged'
   page,
   browser,
 }, testInfo) => {
+  test.skip(['changed-neighbor', 'unrelated-change'].includes(scenario), 'Covered by neighbor race')
   const receipts = []
   const wire = []
   let socket

@@ -22,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [continuity, cancel, undo, expiry, failed-recovery]
+        scenario:
+          [continuity, cancel, undo, expiry, failed-recovery, changed-neighbor, unrelated-change]
     services:
       postgres:
         image: postgres:18-alpine
@@ -62,6 +63,8 @@ jobs:
           git status --porcelain
           test -z "$(git status --porcelain --untracked-files=all | grep -vE '^.. apps/web/(hosted-playwright\.config\.js|hosted-e2e/)' || true)"
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: product/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: product/.nvmrc
