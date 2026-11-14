@@ -19,6 +19,27 @@ published ports. Docker Desktop's dashboard should show the project and its five
 started. On Docker Desktop, the engine and volumes are managed in its Linux VM; on native Linux
 they are managed by the local Docker engine. Docker Desktop must be running before these commands.
 
+```text
+Browser on this computer
+        | 127.0.0.1:8088
+        v
+Web / gateway ---- loopback ---- game ---- game-db ---- game-db-data volume
+        |                         |  ^
+        |                writer-lock | session identity
+        +------ loopback ---- chat --+---- chat-db ---- chat-db-data volume
+```
+
+The web, game and chat containers share a network namespace, while the databases are reached by
+service name on the Compose network. The writer-lock volume belongs to the game, not chat. This
+topology is for one computer: it does not support distributing the services across three computers
+or connecting browsers on other computers. That requires a separate design for identity, secure
+transport, access control and single-writer ownership; changing the published address alone is not
+sufficient. Kubernetes is deferred.
+
+Docker's documentation explains [Compose networking](https://docs.docker.com/compose/how-tos/networking/),
+[health-based startup order](https://docs.docker.com/compose/how-tos/startup-order/), and
+[Docker Desktop networking](https://docs.docker.com/desktop/features/networking/).
+
 The gateway, game and chat share one network namespace so their existing loopback-only service and
 identity checks still apply. The gateway preserves the browser Host and Origin, upgrades game
 WebSockets and does not buffer chat streams. Game and chat use separate private databases. The
