@@ -337,7 +337,7 @@ export function useLiveBoard() {
   const flush = () => {
     const p = pending.current,
       now = client.getState()
-    if (!p || !p.moved || now.connection !== 'ready' || now.previewPending) return
+    if (!p || !p.moved || p.restoring || now.connection !== 'ready' || now.previewPending) return
     if (!p.acquiring) {
       begin(p)
       return
@@ -413,7 +413,7 @@ export function useLiveBoard() {
         p.sent = ''
     }
     if (p.interrupted) {
-      if (p.undoStarted && !p.restoring) {
+      if (p.undoStarted) {
         p.restoring = true
         void client
           .undo(p.action.actionId)
@@ -426,19 +426,16 @@ export function useLiveBoard() {
           })
           .catch((e: unknown) => {
             if (pending.current !== p) return
-            p.restoring = false
-            if (client.pendingUndoActionId() === null) {
-              discardPending()
-              setGhost(null)
-              setDragging(false)
-              setSelected(null)
-            }
+            discardPending()
+            setGhost(null)
+            setDragging(false)
+            setSelected(null)
             setError(String(e))
           })
         return
       }
       const draft = client.provenDraft()
-      if (!draft || p.restoring) return
+      if (!draft) return
       const current = draft.find(
         (action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase(),
       )
