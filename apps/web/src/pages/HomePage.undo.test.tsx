@@ -39,10 +39,10 @@ vi.mock('../game/live-game.ts', () => ({
     newAction(action: object) {
       return { ...action, actionId: 'action' }
     }
-    sendCursor() {}
-    recoverInterruptedPreview() {}
-    abandonInterruptedPreview() {}
-    heartbeat() {}
+    sendCursor = vi.fn()
+    recoverInterruptedPreview = vi.fn()
+    abandonInterruptedPreview = vi.fn()
+    heartbeat = vi.fn()
     preview = mock.preview
     undo = mock.undo
     begin = mock.begin
@@ -56,7 +56,7 @@ vi.mock('../game/live-game.ts', () => ({
     connect() {
       return Promise.resolve()
     }
-    disconnect() {}
+    disconnect = vi.fn()
   },
 }))
 
@@ -71,7 +71,11 @@ let root: Root | undefined
 let container: HTMLDivElement | undefined
 
 afterEach(async () => {
-  if (root) await act(async () => root?.unmount())
+  if (root)
+    await act(async () => {
+      root?.unmount()
+      await Promise.resolve()
+    })
   container?.remove()
   root = undefined
   container = undefined
@@ -107,7 +111,12 @@ async function interruptedDrag(kind: 'opening' | 'existing') {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => new Promise(() => {})),
+    vi.fn(
+      () =>
+        new Promise(() => {
+          // Leave the unrelated request pending for the duration of the test.
+        }),
+    ),
   )
   vi.stubGlobal(
     'DOMPoint',
@@ -138,8 +147,12 @@ async function interruptedDrag(kind: 'opening' | 'existing') {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
-  await act(async () => root?.render(createElement(HomePage)))
-  const svg = container.querySelector('svg.board') as SVGSVGElement
+  await act(async () => {
+    root?.render(createElement(HomePage))
+    await Promise.resolve()
+  })
+  const svg = container.querySelector<SVGSVGElement>('svg.board')
+  if (!svg) throw new Error('Missing board')
   svg.getScreenCTM = () => ({ inverse: () => ({}) }) as DOMMatrix
   svg.setPointerCapture = vi.fn()
   const piece = container.querySelector('[data-group-id]')
@@ -154,7 +167,10 @@ async function interruptedDrag(kind: 'opening' | 'existing') {
   const action = mock.preview.mock.calls[0]?.[0]
   if (!action) throw new Error('Expected a preview')
   mock.actions = [action]
-  await act(async () => svg.dispatchEvent(pointer('pointercancel', 30, 50)))
+  await act(async () => {
+    svg.dispatchEvent(pointer('pointercancel', 30, 50))
+    await Promise.resolve()
+  })
   expect(mock.undo).toHaveBeenCalledOnce()
   const button = container.querySelector<HTMLButtonElement>('[aria-label="Undo last change"]')
   if (!button) throw new Error('Missing Undo button')
@@ -194,7 +210,10 @@ describe('interrupted drag undo', () => {
       })
       expect(button.disabled).toBe(false)
       mock.undo.mockResolvedValueOnce({})
-      await act(async () => button.click())
+      await act(async () => {
+        button.click()
+        await Promise.resolve()
+      })
       expect(mock.undo).toHaveBeenCalledTimes(2)
       expect(mock.undo).toHaveBeenLastCalledWith('action')
     },
