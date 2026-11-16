@@ -6,7 +6,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/generator/package.json packages/generator/package.json
 COPY packages/rules/package.json packages/rules/package.json
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --network-concurrency=4
 COPY apps/web apps/web
 COPY packages packages
 RUN pnpm build
