@@ -20,7 +20,7 @@
     "ajv-formats": "3.0.1"
   },
   "devDependencies": {
-    "json-schema-to-typescript": "15.0.4",
+    "json-schema-to-typescript": "16.0.0",
     "prettier": "3.9.10",
     "typescript": "npm:@typescript/typescript6@6.0.2"
   }
