@@ -337,7 +337,7 @@ export function useLiveBoard() {
   const flush = () => {
     const p = pending.current,
       now = client.getState()
-    if (!p || !p.moved || now.connection !== 'ready' || now.previewPending) return
+    if (!p || !p.moved || p.restoring || now.connection !== 'ready' || now.previewPending) return
     if (!p.acquiring) {
       begin(p)
       return

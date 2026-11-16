@@ -21,20 +21,35 @@ const mock = vi.hoisted(() => ({
   abandon: vi.fn(),
   effects: [] as (() => undefined | (() => void))[],
   listener: null as ((state: LiveGameState) => void) | null,
+  undoPending: false,
+  stateUpdates: [] as unknown[],
 }))
-vi.mock('react', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('react')>()),
-  useEffect: (effect: () => undefined | (() => void)) => {
-    mock.effects.push(effect)
-  },
-}))
+vi.mock('react', async (importOriginal) => {
+  const react = await importOriginal<typeof import('react')>()
+  return {
+    ...react,
+    useState: <T,>(initial: T | (() => T)) => {
+      const [value, setValue] = react.useState(initial)
+      return [
+        value,
+        (next: T | ((previous: T) => T)) => {
+          mock.stateUpdates.push(next)
+          setValue(next)
+        },
+      ]
+    },
+    useEffect: (effect: () => undefined | (() => void)) => {
+      mock.effects.push(effect)
+    },
+  }
+})
 vi.mock('./live-game.ts', () => ({
   LiveGame: class {
     getState() {
       return mock.state
     }
     provenDraft() {
-      return mock.actions
+      return mock.undoPending ? null : mock.actions
     }
     provenDraftRevision() {
       return 0
@@ -43,7 +58,7 @@ vi.mock('./live-game.ts', () => ({
       return mock.recoveredId
     }
     pendingUndoActionId() {
-      return null
+      return mock.undoPending ? 'action' : null
     }
     newAction(action: object) {
       return { ...action, actionId: 'action' }
@@ -165,6 +180,8 @@ afterEach(() => {
   mock.abandon.mockReset()
   mock.effects = []
   mock.listener = null
+  mock.undoPending = false
+  mock.stateUpdates = []
 })
 
 describe('three-piece group interaction', () => {
@@ -1269,6 +1286,39 @@ describe('three-piece group interaction', () => {
     await Promise.resolve()
     expect(board.pending.current).toBeNull()
     expect(mock.preview).not.toHaveBeenCalled()
+    cleanup?.()
+  })
+
+  it('reports a rejected undo when an opening drag is interrupted', async () => {
+    vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+    const { board, group } = setup()
+    vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+    const cleanup = mock.effects[3]?.()
+    const old = mock.state as LiveGameState
+    mock.begin.mockImplementation(() => {
+      mock.state = { ...old, game: { ...requireGame(old), ownTurn: turn } }
+      mock.listener?.(mock.state as LiveGameState)
+      return Promise.resolve(turn)
+    })
+    let rejectUndo!: (error: Error) => void
+    mock.undo.mockImplementation(() => {
+      mock.undoPending = true
+      return new Promise((_, reject) => {
+        rejectUndo = reject
+      })
+    })
+    board.down(pointer(10, 20), group)
+    board.move(pointer(30, 50))
+    await Promise.resolve()
+    mock.actions = [firstPreview()]
+    board.abort()
+    expect(mock.undo).toHaveBeenCalledOnce()
+    board.up(pointer(30, 50))
+    mock.undoPending = false
+    rejectUndo(new Error('Undo rejected by server'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mock.stateUpdates).toContain('Error: Undo rejected by server')
     cleanup?.()
   })
 
