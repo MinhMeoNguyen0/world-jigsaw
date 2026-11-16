@@ -1322,6 +1322,56 @@ describe('three-piece group interaction', () => {
     cleanup?.()
   })
 
+  it.each([
+    ['opening', true],
+    ['opening', false],
+    ['existing', true],
+    ['existing', false],
+  ] as const)(
+    'allows retrying an unresolved undo after an interrupted %s turn (published: %s)',
+    async (kind, published) => {
+      vi.spyOn(moveAvailability, 'canMoveGroup').mockReturnValue(true)
+      const { board, group } = setup({ ownTurn: kind === 'existing' ? turn : null })
+      vi.stubGlobal('sessionStorage', { getItem: () => null, removeItem: vi.fn(), setItem: vi.fn() })
+      const cleanup = mock.effects[3]?.()
+      const old = mock.state as LiveGameState
+      mock.begin.mockImplementation(() => {
+        mock.state = { ...old, game: { ...requireGame(old), ownTurn: turn } }
+        mock.listener?.(mock.state as LiveGameState)
+        return Promise.resolve(turn)
+      })
+      let rejectUndo!: (error: Error) => void
+      mock.undo.mockImplementationOnce(() => {
+        mock.undoPending = true
+        return new Promise((_, reject) => {
+          rejectUndo = reject
+        })
+      })
+      board.down(pointer(10, 20), group)
+      board.move(pointer(30, 50))
+      await Promise.resolve()
+      mock.actions = [firstPreview()]
+      board.abort()
+      expect(mock.undo).toHaveBeenCalledOnce()
+      if (published) {
+        mock.listener?.({ ...(mock.state as LiveGameState), issue: 'Network failure' })
+        await Promise.resolve()
+      }
+      const updatesBeforeFailure = mock.stateUpdates.length
+      rejectUndo(new Error(published ? 'Network failure' : 'Undo response mismatch'))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(board.pending.current).toBeNull()
+      expect(mock.stateUpdates.slice(updatesBeforeFailure)).toContain(false)
+      expect(mock.undoPending).toBe(true)
+      mock.undo.mockResolvedValueOnce({})
+      board.undo()
+      expect(mock.undo).toHaveBeenLastCalledWith('action')
+      expect(mock.undo).toHaveBeenCalledTimes(2)
+      cleanup?.()
+    },
+  )
+
   it.each(['restore', 'undo'] as const)(
     'reconciles a canceled drag after the lost preview is recovered: %s',
     async (outcome) => {
