@@ -21,7 +21,6 @@ const mock = vi.hoisted(() => ({
   abandon: vi.fn(),
   effects: [] as (() => undefined | (() => void))[],
   listener: null as ((state: LiveGameState) => void) | null,
-  undoPending: false,
 }))
 vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
@@ -35,7 +34,7 @@ vi.mock('./live-game.ts', () => ({
       return mock.state
     }
     provenDraft() {
-      return mock.undoPending ? null : mock.actions
+      return mock.actions
     }
     provenDraftRevision() {
       return 0
@@ -44,7 +43,7 @@ vi.mock('./live-game.ts', () => ({
       return mock.recoveredId
     }
     pendingUndoActionId() {
-      return mock.undoPending ? 'action' : null
+      return null
     }
     newAction(action: object) {
       return { ...action, actionId: 'action' }
@@ -166,7 +165,6 @@ afterEach(() => {
   mock.abandon.mockReset()
   mock.effects = []
   mock.listener = null
-  mock.undoPending = false
 })
 
 describe('three-piece group interaction', () => {
