@@ -413,7 +413,7 @@ export function useLiveBoard() {
         p.sent = ''
     }
     if (p.interrupted) {
-      if (p.undoStarted && !p.restoring) {
+      if (p.undoStarted) {
         p.restoring = true
         void client
           .undo(p.action.actionId)
@@ -435,7 +435,7 @@ export function useLiveBoard() {
         return
       }
       const draft = client.provenDraft()
-      if (!draft || p.restoring) return
+      if (!draft) return
       const current = draft.find(
         (action) => action.actionId.toLowerCase() === p.action.actionId.toLowerCase(),
       )
