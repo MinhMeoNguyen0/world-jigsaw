@@ -7,8 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
+import com.networknt.schema.InputFormat;
 import java.nio.file.Path;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -20,12 +19,78 @@ class GameWireValidatorTest {
   GameWireValidatorTest() throws Exception {}
 
   @Test
+  void selectedDefinitionsEnforceShapeFormatsAndIntegerBounds() throws Exception {
+    String id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    ObjectNode begin =
+        mapper.createObjectNode().put("schemaVersion", 1).put("puzzleId", id).put("requestId", id);
+    assertThat(wire.parse("BeginTurn", begin.toString())).isEqualTo(begin);
+    assertThatThrownBy(() -> wire.parse("Subscribe", begin.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    ObjectNode extra = begin.deepCopy().put("unexpected", true);
+    assertThatThrownBy(() -> wire.parse("BeginTurn", extra.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    ObjectNode missing = begin.deepCopy();
+    missing.remove("requestId");
+    assertThatThrownBy(() -> wire.parse("BeginTurn", missing.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    ObjectNode badId = begin.deepCopy().put("puzzleId", "not-a-uuid");
+    assertThatThrownBy(() -> wire.parse("BeginTurn", badId.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> wire.parse("BeginTurn", "{"))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    ObjectNode subscribe =
+        mapper
+            .createObjectNode()
+            .put("schemaVersion", 1)
+            .put("type", "subscribe")
+            .put("puzzleId", id)
+            .put("afterBoardVersion", 9007199254740991L);
+    assertThat(wire.parse("Subscribe", subscribe.toString())).isEqualTo(subscribe);
+    subscribe.put("afterBoardVersion", 1.0);
+    assertThat(wire.parse("Subscribe", subscribe.toString())).isEqualTo(subscribe);
+    subscribe.put("afterBoardVersion", 1.5);
+    assertThatThrownBy(() -> wire.parse("Subscribe", subscribe.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    subscribe.put("afterBoardVersion", 9007199254740992L);
+    assertThatThrownBy(() -> wire.parse("Subscribe", subscribe.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    subscribe.put("afterBoardVersion", 1);
+    subscribe.put("type", "heartbeat");
+    assertThatThrownBy(() -> wire.parse("Subscribe", subscribe.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    String padded = begin + " ".repeat(65536 - begin.toString().length());
+    assertThat(wire.parse("BeginTurn", padded)).isEqualTo(begin);
+    assertThatThrownBy(() -> wire.parse("BeginTurn", padded + " "))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void cachedDefinitionsResolveReferencesAndValidateDateTime() throws Exception {
+    JsonNode fixture =
+        mapper.readTree(
+            Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
+    ContractSchemas contracts = new ContractSchemas();
+    var definition = contracts.definition("Definition");
+    var snapshot = contracts.definition("Snapshot");
+    var preview = contracts.definition("Preview");
+    assertThat(definition.validate(fixture.path("definition").toString(), InputFormat.JSON))
+        .isEmpty();
+    assertThat(snapshot.validate(fixture.path("snapshot").toString(), InputFormat.JSON)).isEmpty();
+    assertThat(definition.validate(fixture.path("snapshot").toString(), InputFormat.JSON))
+        .isNotEmpty();
+    assertThat(snapshot.validate(fixture.path("definition").toString(), InputFormat.JSON))
+        .isNotEmpty();
+    ObjectNode invalid = fixture.path("preview").deepCopy();
+    assertThat(preview.validate(invalid.toString(), InputFormat.JSON)).isEmpty();
+    invalid.put("expiresAt", "not-a-dateZ");
+    assertThat(preview.validate(invalid.toString(), InputFormat.JSON)).isNotEmpty();
+  }
+
+  @Test
   void undoReceiptAcceptsUpToEightySurvivors() throws Exception {
-    ObjectNode schema =
-        (ObjectNode) mapper.readTree(getClass().getResourceAsStream("/contracts/v1/schema.json"));
-    schema.remove("oneOf");
-    schema.put("$ref", "#/$defs/UndoResult");
-    var validator = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7).getSchema(schema);
+    var validator = new ContractSchemas().definition("UndoResult");
     JsonNode fixture =
         mapper.readTree(
             Path.of("../../packages/contracts/v1/fixtures/board-and-batch.json").toFile());
@@ -44,9 +109,10 @@ class GameWireValidatorTest {
       ObjectNode action = fixture.path("confirm").path("actions").get(0).deepCopy();
       action.put("actionId", UUID.randomUUID().toString());
       actions.add(action);
-      if (i == 5 || i == 79) assertThat(validator.validate(result)).isEmpty();
+      if (i == 5 || i == 79)
+        assertThat(validator.validate(result.toString(), InputFormat.JSON)).isEmpty();
     }
-    assertThat(validator.validate(result)).isNotEmpty();
+    assertThat(validator.validate(result.toString(), InputFormat.JSON)).isNotEmpty();
   }
 
   @Test

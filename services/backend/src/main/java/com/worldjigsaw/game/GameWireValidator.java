@@ -3,10 +3,8 @@ package com.worldjigsaw.game;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
+import com.networknt.schema.InputFormat;
+import com.networknt.schema.Schema;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -35,19 +33,12 @@ class GameWireValidator {
       Set.of("pieceIds", "affectedPieceIds", "removedGroupIds");
   private final ObjectMapper mapper =
       new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-  private final Map<String, JsonSchema> schemas = new HashMap<>();
+  private final Map<String, Schema> schemas = new HashMap<>();
 
   GameWireValidator() throws IOException {
-    JsonNode original;
-    try (var input = getClass().getResourceAsStream("/contracts/v1/schema.json")) {
-      original = mapper.readTree(input);
-    }
+    ContractSchemas contracts = new ContractSchemas();
     for (String type : TYPES) {
-      ObjectNode schema = original.deepCopy();
-      schema.remove("oneOf");
-      schema.put("$ref", "#/$defs/" + type);
-      schemas.put(
-          type, JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7).getSchema(schema));
+      schemas.put(type, contracts.definition(type));
     }
   }
 
@@ -57,7 +48,10 @@ class GameWireValidator {
     try {
       JsonNode value = mapper.readTree(raw);
       if (value == null
-          || !schemas.get(type).validate(value).isEmpty()
+          || !schemas
+              .get(type)
+              .validate(mapper.writeValueAsString(value), InputFormat.JSON)
+              .isEmpty()
           || !uniqueIdentifiers(value)) {
         throw new IllegalArgumentException("Invalid request");
       }
