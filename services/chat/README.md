@@ -44,8 +44,8 @@ these claims require integration with that owner and a trusted key provisioning 
 
 Do not expose this service publicly: the identity boundary, origin policy, resource controls, abuse
 prevention, key management, transport security and moderation require security review. The service
-accepts only loopback Host and Origin values and does not add CORS headers. A future private proxy
-must be deliberately configured and reviewed; container networking is not configured here.
+accepts only loopback Host and Origin values and does not add CORS headers. For the private
+container setup and its proxy constraints, see the [full-stack guide](../../deploy/local/README.md).
 
 ## Live protocol
 

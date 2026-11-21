@@ -4,11 +4,12 @@
 
 The repository describes a private-local prototype, not a completed production deployment; public
 authentication, TLS, authorization and deployment security remain open ([handoff](HANDOFF.md)).
-The local Compose file defines only two PostgreSQL containers. The README starts the game service,
-chat service and web client separately on the host, so those processes would not appear as Compose
-containers in Docker Desktop. Testcontainers creates temporary database containers for integration
-tests. The recorded latency experiment instead used a separate local PostgreSQL cluster and host
-processes; its Docker-backed coordinator test could not initialize because Docker was unavailable.
+At the time of this assessment, the root Compose file defined only two PostgreSQL containers and
+the game service, chat service and web client ran separately on the host. For the current full-stack
+container setup, see the [infrastructure overview](../README.md#local-infrastructure).
+Testcontainers creates temporary database containers for integration tests. The recorded latency
+experiment instead used a separate local PostgreSQL cluster and host processes; its Docker-backed
+coordinator test could not initialize because Docker was unavailable.
 
 A read-only inspection on November 10, 2026 found the active Docker context `default` pointing to
 `unix:///var/run/docker.sock`. That daemon listed two stopped World Jigsaw test stacks, each with
