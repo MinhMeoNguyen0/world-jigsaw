@@ -19,6 +19,19 @@ class GameWireValidatorTest {
   GameWireValidatorTest() throws Exception {}
 
   @Test
+  void rejectsDuplicateKeysInAnOtherwiseValidCommand() throws Exception {
+    String id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    ObjectNode begin =
+        mapper.createObjectNode().put("schemaVersion", 1).put("puzzleId", id).put("requestId", id);
+    assertThat(wire.parse("BeginTurn", begin.toString())).isEqualTo(begin);
+
+    String duplicate = "{\"schemaVersion\":1," + begin.toString().substring(1);
+    assertThat(mapper.readTree(duplicate)).isEqualTo(begin);
+    assertThatThrownBy(() -> wire.parse("BeginTurn", duplicate))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void selectedDefinitionsEnforceShapeFormatsAndIntegerBounds() throws Exception {
     String id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     ObjectNode begin =
@@ -137,8 +150,6 @@ class GameWireValidatorTest {
     revisions.addObject().put("groupId", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA").put("revision", 3);
     ObjectNode invalid = confirm;
     assertThatThrownBy(() -> wire.parse("Confirm", invalid.toString()))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> wire.parse("BeginTurn", "{\"schemaVersion\":1,\"schemaVersion\":1}"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> wire.parse("BeginTurn", " ".repeat(65537)))
         .isInstanceOf(IllegalArgumentException.class);
