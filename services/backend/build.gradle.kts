@@ -28,6 +28,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("com.fasterxml.jackson.core:jackson-databind")
+    implementation("tools.jackson.core:jackson-databind")
     implementation("com.networknt:json-schema-validator:3.0.9")
     implementation("io.github.erdtman:java-json-canonicalization:1.1")
     implementation("org.locationtech.jts:jts-core:1.20.0")

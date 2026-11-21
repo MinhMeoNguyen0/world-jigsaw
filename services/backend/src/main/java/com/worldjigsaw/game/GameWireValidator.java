@@ -3,7 +3,6 @@ package com.worldjigsaw.game;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.networknt.schema.InputFormat;
 import com.networknt.schema.Schema;
 import java.io.IOException;
 import java.util.HashMap;
@@ -48,10 +47,7 @@ class GameWireValidator {
     try {
       JsonNode value = mapper.readTree(raw);
       if (value == null
-          || !schemas
-              .get(type)
-              .validate(mapper.writeValueAsString(value), InputFormat.JSON)
-              .isEmpty()
+          || !ContractSchemas.matches(schemas.get(type), value)
           || !uniqueIdentifiers(value)) {
         throw new IllegalArgumentException("Invalid request");
       }

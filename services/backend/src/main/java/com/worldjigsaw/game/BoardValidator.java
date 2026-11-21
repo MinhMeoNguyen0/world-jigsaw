@@ -3,7 +3,6 @@ package com.worldjigsaw.game;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.networknt.schema.InputFormat;
 import com.networknt.schema.Schema;
 import java.io.IOException;
 import java.security.MessageDigest;
@@ -31,12 +30,8 @@ public class BoardValidator {
   }
 
   public void validate(JsonNode definition, JsonNode snapshot) {
-    require(
-        definitionSchema.validate(definition.toString(), InputFormat.JSON).isEmpty(),
-        "invalid definition shape");
-    require(
-        snapshotSchema.validate(snapshot.toString(), InputFormat.JSON).isEmpty(),
-        "invalid snapshot shape");
+    require(ContractSchemas.matches(definitionSchema, definition), "invalid definition shape");
+    require(ContractSchemas.matches(snapshotSchema, snapshot), "invalid snapshot shape");
     require(id(definition, "puzzleId").equals(id(snapshot, "puzzleId")), "puzzle mismatch");
     require(
         definition.path("definitionVersion").longValue()

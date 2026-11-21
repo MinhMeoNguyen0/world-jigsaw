@@ -25,6 +25,12 @@ class BoardValidatorTest {
     BoardValidator validator = new BoardValidator();
 
     validator.validate(definition, snapshot);
+    ObjectNode numericImage = definition.deepCopy();
+    numericImage.set("image", mapper.readTree("1e400"));
+    assertThat(
+            assertThrows(
+                IllegalArgumentException.class, () -> validator.validate(numericImage, snapshot)))
+        .hasMessage("invalid definition shape");
     snapshot.put("definitionVersion", 1.0);
     validator.validate(definition, snapshot);
     snapshot.put("definitionVersion", 1);
