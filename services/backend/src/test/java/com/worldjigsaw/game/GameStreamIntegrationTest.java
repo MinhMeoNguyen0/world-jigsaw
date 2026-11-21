@@ -642,15 +642,10 @@ class GameStreamIntegrationTest {
   }
 
   private void assertSchema(String type, JsonNode value) throws Exception {
-    ObjectNode schema =
-        (ObjectNode) mapper.readTree(Path.of("../../packages/contracts/v1/schema.json").toFile());
-    schema.remove("oneOf");
-    schema.put("$ref", "#/$defs/" + type);
-    var compiled =
-        com.networknt.schema.JsonSchemaFactory.getInstance(
-                com.networknt.schema.SpecVersion.VersionFlag.V7)
-            .getSchema(schema);
-    assertThat(compiled.validate(value)).as(type + ": " + value).isEmpty();
+    var compiled = new ContractSchemas().definition(type);
+    assertThat(compiled.validate(value.toString(), com.networknt.schema.InputFormat.JSON))
+        .as(type + ": " + value)
+        .isEmpty();
   }
 
   private ObjectNode begin(String puzzle) {

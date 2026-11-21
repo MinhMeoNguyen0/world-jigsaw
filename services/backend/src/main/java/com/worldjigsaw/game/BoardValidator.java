@@ -3,9 +3,7 @@ package com.worldjigsaw.game;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
+import com.networknt.schema.Schema;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -22,28 +20,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class BoardValidator {
   private final ObjectMapper mapper = new ObjectMapper();
-  private final JsonSchema definitionSchema;
-  private final JsonSchema snapshotSchema;
+  private final Schema definitionSchema;
+  private final Schema snapshotSchema;
 
   public BoardValidator() throws IOException {
-    JsonNode schema;
-    try (var input = getClass().getResourceAsStream("/contracts/v1/schema.json")) {
-      schema = mapper.readTree(input);
-    }
-    definitionSchema = schemaFor(schema, "Definition");
-    snapshotSchema = schemaFor(schema, "Snapshot");
-  }
-
-  private JsonSchema schemaFor(JsonNode original, String type) {
-    ObjectNode schema = original.deepCopy();
-    schema.remove("oneOf");
-    schema.put("$ref", "#/$defs/" + type);
-    return JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7).getSchema(schema);
+    ContractSchemas schemas = new ContractSchemas();
+    definitionSchema = schemas.definition("Definition");
+    snapshotSchema = schemas.definition("Snapshot");
   }
 
   public void validate(JsonNode definition, JsonNode snapshot) {
-    require(definitionSchema.validate(definition).isEmpty(), "invalid definition shape");
-    require(snapshotSchema.validate(snapshot).isEmpty(), "invalid snapshot shape");
+    require(ContractSchemas.matches(definitionSchema, definition), "invalid definition shape");
+    require(ContractSchemas.matches(snapshotSchema, snapshot), "invalid snapshot shape");
     require(id(definition, "puzzleId").equals(id(snapshot, "puzzleId")), "puzzle mismatch");
     require(
         definition.path("definitionVersion").longValue()
