@@ -19,6 +19,6 @@
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm test:e2e"
   },
   "devDependencies": {
-    "prettier": "3.9.10"
+    "prettier": "3.10.1"
   }
 }
